@@ -101,7 +101,7 @@ GitHub Actions compile Quark, crée le paquet
 l'onglet **Actions** du dépôt.
 
 ```bash
-tar -xzf quark-0.2.0-linux-x86_64.tar.gz
+tar -xzf quark-0.2.1-linux-x86_64.tar.gz
 cd quark && ./quark
 ```
 
