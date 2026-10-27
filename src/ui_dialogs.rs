@@ -5,7 +5,7 @@
 use crate::app::{AddStep, PickerTarget, QuarkApp, SearchState};
 use crate::config::{self, ProtonMode, ThemeMode, ViewMode};
 use crate::proton::{self, ProtonRuntime};
-use crate::theme::Palette;
+use crate::theme::{self, Palette};
 use crate::widgets::{self, Icon};
 use eframe::egui::{self, Align, Align2, FontId, Layout, Pos2, Rect, RichText, Sense, Vec2};
 use std::path::PathBuf;
@@ -945,7 +945,8 @@ fn search_result_row(
             widgets::monogram(
                 &painter,
                 Rect::from_min_size(Pos2::new(thumb_rect.left(), rect.center().y - 14.0), Vec2::splat(28.0)),
-                &hit.title.chars().next().unwrap_or('?').to_uppercase().to_string(),
+                &config::monogram_letter(&hit.title),
+                theme::monogram_color(&hit.title),
                 pal,
             );
         }

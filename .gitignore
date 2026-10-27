@@ -1,1 +1,4 @@
 /target
+
+# Rendus de controle de l'interface (quark --ui)
+artifacts/

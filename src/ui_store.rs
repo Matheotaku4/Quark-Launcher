@@ -19,7 +19,8 @@ impl QuarkApp {
                         let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::hover());
                         let painter = ui.painter_at(rect);
                         painter.rect_filled(rect, 0.0, pal.surface);
-                        theme::bottom_gradient(&painter, rect, 0.85);
+                        let gradient = self.gradient_texture(ui.ctx());
+                        theme::bottom_gradient(ui, &gradient, rect, 0.85);
                         painter.text(
                             egui::pos2(rect.left() + 34.0, rect.bottom() - 78.0),
                             Align2::LEFT_BOTTOM,

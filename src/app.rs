@@ -35,6 +35,8 @@ pub enum ToastKind {
 pub struct Toast {
     pub text: String,
     pub kind: ToastKind,
+    /// Apparition du message (animation d'entrée).
+    pub created: Instant,
     pub until: Instant,
 }
 
@@ -196,6 +198,8 @@ pub struct QuarkApp {
     pub job_queue: VecDeque<(String, SearchHit)>,
     /// Textures des artworks (décodées par Quark lui-même).
     pub textures: crate::images::TextureCache,
+    /// Rampe de dégradé des bannières (créée au premier usage).
+    pub gradient: Option<egui::TextureHandle>,
     /// Actualités par jeu (chargées une fois, mises en cache).
     pub news: HashMap<String, NewsState>,
     /// Chargement d'actualités en cours.
@@ -203,11 +207,13 @@ pub struct QuarkApp {
 }
 
 impl QuarkApp {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    /// Construit l'application. Seul le contexte egui est nécessaire : il vient
+    /// de la fenêtre réelle ou du rendu hors écran (`quark --ui`).
+    pub fn new(ctx: &egui::Context) -> Self {
         let lib = Library::load();
         let runtimes = proton::detect_runtimes();
         let selected = lib.games.first().map(|g| g.id.clone());
-        theme::apply(&cc.egui_ctx, lib.settings.theme);
+        theme::apply(ctx, lib.settings.theme);
         let pal = theme::palette(lib.settings.theme);
         Self {
             applied_theme: Some(lib.settings.theme),
@@ -234,6 +240,7 @@ impl QuarkApp {
             show_info: false,
             job_queue: VecDeque::new(),
             textures: crate::images::TextureCache::default(),
+            gradient: None,
             news: HashMap::new(),
             news_job: None,
         }
@@ -245,18 +252,22 @@ impl QuarkApp {
     }
 
     pub fn toast_info(&mut self, text: impl Into<String>) {
+        let now = Instant::now();
         self.toasts.push(Toast {
             text: text.into(),
             kind: ToastKind::Info,
-            until: Instant::now() + Duration::from_secs(6),
+            created: now,
+            until: now + Duration::from_secs(6),
         });
     }
 
     pub fn toast_error(&mut self, text: impl Into<String>) {
+        let now = Instant::now();
         self.toasts.push(Toast {
             text: text.into(),
             kind: ToastKind::Error,
-            until: Instant::now() + Duration::from_secs(10),
+            created: now,
+            until: now + Duration::from_secs(10),
         });
     }
 
@@ -978,15 +989,31 @@ impl QuarkApp {
             .order(egui::Order::Foreground)
             .anchor(Align2::RIGHT_BOTTOM, Vec2::new(-18.0, -18.0))
             .show(ctx, |ui| {
+                let now = Instant::now();
                 ui.with_layout(Layout::bottom_up(Align::RIGHT), |ui| {
                     for toast in self.toasts.iter().rev().take(4) {
                         let color = match toast.kind {
                             ToastKind::Info => pal.border,
                             ToastKind::Error => pal.danger,
                         };
+                        // Apparition puis disparition en fondu. Aucune image
+                        // n'est demandée en dehors de ces deux transitions.
+                        let age = now.saturating_duration_since(toast.created).as_secs_f32();
+                        let left = toast.until.saturating_duration_since(now).as_secs_f32();
+                        let alpha = (age / 0.18)
+                            .clamp(0.0, 1.0)
+                            .min((left / 0.45).clamp(0.0, 1.0));
+                        if alpha < 1.0 {
+                            ui.ctx().request_repaint_after(Duration::from_millis(16));
+                        }
+                        let text_color = if toast.kind == ToastKind::Error {
+                            pal.danger
+                        } else {
+                            pal.text
+                        };
                         egui::Frame::new()
-                            .fill(pal.surface)
-                            .stroke(Stroke::new(1.0_f32, color))
+                            .fill(pal.surface.gamma_multiply(alpha))
+                            .stroke(Stroke::new(1.0_f32, color.gamma_multiply(alpha)))
                             .corner_radius(6.0)
                             .inner_margin(egui::Margin::symmetric(14, 9))
                             .show(ui, |ui| {
@@ -994,11 +1021,7 @@ impl QuarkApp {
                                 ui.label(
                                     RichText::new(&toast.text)
                                         .size(12.5)
-                                        .color(if toast.kind == ToastKind::Error {
-                                            pal.danger
-                                        } else {
-                                            pal.text
-                                        }),
+                                        .color(text_color.gamma_multiply(alpha)),
                                 );
                             });
                         ui.add_space(6.0);
@@ -1028,8 +1051,10 @@ impl QuarkApp {
     }
 }
 
-impl eframe::App for QuarkApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+impl QuarkApp {
+    /// Une image de l'interface. Le rendu est le même à l'écran et hors écran
+    /// (`quark --ui`), qui n'a pas de `eframe::Frame`.
+    pub fn ui(&mut self, ctx: &egui::Context) {
         self.tick(ctx);
 
         if self.applied_theme != Some(self.lib.settings.theme) {
@@ -1049,6 +1074,12 @@ impl eframe::App for QuarkApp {
         self.game_settings_dialog(ctx);
         self.confirm_remove_dialog(ctx);
         self.toasts_ui(ctx);
+    }
+}
+
+impl eframe::App for QuarkApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.ui(ctx);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
@@ -1077,6 +1108,16 @@ impl QuarkApp {
 
     pub fn running_since(&self, id: &str) -> u64 {
         self.running.get(id).map(|r| r.session).unwrap_or(0)
+    }
+
+    /// Rampe de dégradé des bannières, créée une seule fois.
+    pub fn gradient_texture(&mut self, ctx: &egui::Context) -> egui::TextureHandle {
+        if self.gradient.is_none() {
+            self.gradient = Some(theme::gradient_texture(ctx));
+        }
+        self.gradient
+            .clone()
+            .expect("la rampe de dégradé vient d'être créée")
     }
 
     /// Vue par défaut = réglage ; la vue courante est stockée dans les réglages.

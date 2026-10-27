@@ -216,11 +216,19 @@ impl QuarkApp {
             .unwrap_or(false);
         let launch_label = match &resolved {
             Ok(r) => r.label(),
-            Err(err) => format!("⚠ {err}"),
+            Err(err) => format!("\u{26a0} {err}"),
         };
         let prefix = game.prefix_path(&settings);
         let running_secs = self.running_since(&id);
         let is_running = self.is_running(&id);
+        // Fondu d'entrée à chaque changement de jeu, comme la fiche Steam. La
+        // transition ne demande des images que pendant son déroulement.
+        let entrance = ui.ctx().animate_bool_with_time(
+            egui::Id::new(("quark_detail_entrance", game.id.as_str())),
+            true,
+            0.22,
+        );
+        let slide = (1.0 - entrance) * 10.0;
 
         egui::ScrollArea::vertical()
             .id_salt("quark_detail_scroll")
@@ -228,83 +236,139 @@ impl QuarkApp {
             .show(ui, |ui| {
                 let width = ui.available_width();
                 let hero_height = theme::hero_height(width);
-                let (hero_rect, _) =
-                    ui.allocate_exact_size(Vec2::new(width, hero_height), Sense::hover());
-                let painter = ui.painter_at(hero_rect);
+                let hero_rect = Rect::from_min_size(ui.cursor().min, Vec2::new(width, hero_height));
 
-                painter.rect_filled(hero_rect, 0.0, pal.surface);
-                let hero_path = game
-                    .artwork
-                    .get(AssetKind::Hero)
-                    .filter(|p| p.exists())
-                    .cloned();
-                let hero_tex = hero_path
-                    .as_ref()
-                    .and_then(|path| self.texture(ui.ctx(), path));
-                if let Some(texture) = hero_tex {
-                    draw_fill(ui, &texture, hero_rect);
-                } else {
-                    painter.rect_filled(hero_rect, 0.0, pal.surface_hover);
-                }
-                theme::bottom_gradient(&painter, hero_rect, if hero_rect.height() > 0.0 { 0.62 } else { 1.0 });
-
-                // Logo (ou titre) au-dessus du bouton Jouer.
-                let row_height = 44.0;
-                let row_y = hero_rect.bottom() - 26.0 - row_height;
-                let logo_rect = Rect::from_min_size(
-                    Pos2::new(hero_rect.left() + 32.0, (row_y - 14.0 - 86.0).max(hero_rect.top() + 14.0)),
-                    Vec2::new((width * 0.55).min(540.0), 86.0),
-                );
-                let logo_path = game
-                    .artwork
-                    .get(AssetKind::Logo)
-                    .filter(|p| p.exists())
-                    .cloned();
-                match logo_path {
-                    Some(logo) => {
-                        if let Some(texture) = self.texture(ui.ctx(), &logo) {
-                            draw_fit(ui, &texture, logo_rect);
-                        }
-                    }
-                    None => {
-                        painter.text(
-                            Pos2::new(hero_rect.left() + 34.0, logo_rect.bottom()),
-                            Align2::LEFT_BOTTOM,
-                            &game.name,
-                            FontId::proportional(34.0),
-                            pal.text,
-                        );
-                    }
-                }
-
-                // Bouton Jouer + temps de jeu (comme Steam).
-                let (label, icon) = if is_running {
-                    ("Arrêter", Icon::Stop)
-                } else {
-                    ("Jouer", Icon::Play)
-                };
-                let play_area = Rect::from_min_size(
-                    Pos2::new(hero_rect.left() + 32.0, row_y),
-                    Vec2::new((hero_rect.width() - 64.0).max(120.0), row_height),
-                );
+                // La bannière est dessinée dans un enfant dont la zone couvre
+                // exactement la bannière. C'est ce qui garantit que les
+                // actualités et les informations démarrent *sous* la bannière :
+                // sans cet enfant, les éléments positionnés en absolu dans la
+                // bannière faisaient reculer le curseur et le contenu suivant
+                // s'affichait par-dessus l'image.
                 let mut play_clicked = false;
+                let mut info_clicked = false;
+                let mut gear_clicked = false;
                 ui.scope_builder(
                     egui::UiBuilder::new()
-                        .max_rect(play_area)
-                        .layout(Layout::left_to_right(Align::Center)),
+                        .max_rect(hero_rect)
+                        .layout(Layout::top_down(Align::Min)),
                     |ui| {
-                        let response =
-                            widgets::accent_button(ui, Vec2::new(176.0, row_height), label, &pal, true, icon);
-                        play_clicked = response.clicked();
-                        ui.add_space(20.0);
-                        let text = if is_running {
-                            format!("En jeu depuis {}", config::human_playtime(running_secs.max(1)))
+                        let (hero, _) = ui.allocate_exact_size(hero_rect.size(), Sense::hover());
+                        let painter = ui.painter_at(hero);
+                        painter.rect_filled(hero, 0.0, pal.surface);
+                        let hero_path = game
+                            .artwork
+                            .get(AssetKind::Hero)
+                            .filter(|p| p.exists())
+                            .cloned();
+                        let hero_tex = hero_path
+                            .as_ref()
+                            .and_then(|path| self.texture(ui.ctx(), path));
+                        if let Some(texture) = hero_tex {
+                            draw_fill(ui, &texture, hero);
                         } else {
-                            format!("{} de jeu", game.playtime_label())
+                            painter.rect_filled(hero, 0.0, pal.surface_hover);
+                        }
+                        let gradient = self.gradient_texture(ui.ctx());
+                        theme::bottom_gradient(ui, &gradient, hero, 0.62);
+
+                        // Logo (ou titre) au-dessus du bouton Jouer.
+                        let row_height = 44.0;
+                        let row_y = hero.bottom() - 26.0 - row_height;
+                        let logo_rect = Rect::from_min_size(
+                            Pos2::new(
+                                hero.left() + 32.0,
+                                (row_y - 14.0 - 86.0).max(hero.top() + 14.0) + slide,
+                            ),
+                            Vec2::new((width * 0.55).min(540.0), 86.0),
+                        );
+                        let logo_path = game
+                            .artwork
+                            .get(AssetKind::Logo)
+                            .filter(|p| p.exists())
+                            .cloned();
+                        match logo_path {
+                            Some(logo) => {
+                                if let Some(texture) = self.texture(ui.ctx(), &logo) {
+                                    draw_fit(ui, &texture, logo_rect);
+                                }
+                            }
+                            None => {
+                                painter.text(
+                                    Pos2::new(hero.left() + 34.0, logo_rect.bottom()),
+                                    Align2::LEFT_BOTTOM,
+                                    &game.name,
+                                    FontId::proportional(34.0),
+                                    pal.text,
+                                );
+                            }
+                        }
+
+                        // Bouton Jouer + temps de jeu (comme Steam).
+                        let (label, icon) = if is_running {
+                            ("Arr\u{ea}ter", Icon::Stop)
+                        } else {
+                            ("Jouer", Icon::Play)
                         };
-                        ui.label(RichText::new(text).size(13.0).color(pal.text_dim));
+                        let play_area = Rect::from_min_size(
+                            Pos2::new(hero.left() + 32.0, row_y),
+                            Vec2::new((hero.width() - 64.0).max(120.0), row_height),
+                        );
+                        ui.scope_builder(
+                            egui::UiBuilder::new()
+                                .max_rect(play_area)
+                                .layout(Layout::left_to_right(Align::Center)),
+                            |ui| {
+                                play_clicked = widgets::accent_button(
+                                    ui,
+                                    Vec2::new(176.0, row_height),
+                                    label,
+                                    &pal,
+                                    true,
+                                    icon,
+                                )
+                                .clicked();
+                                ui.add_space(20.0);
+                                let text = if is_running {
+                                    format!(
+                                        "En jeu depuis {}",
+                                        config::human_playtime(running_secs.max(1))
+                                    )
+                                } else {
+                                    format!("{} de jeu", game.playtime_label())
+                                };
+                                ui.label(RichText::new(text).size(13.0).color(pal.text_dim));
+                            },
+                        );
+
+                        // Infos (\u{24d8}) puis engrenage, à droite de la bannière (comme Steam).
+                        let info_rect = Rect::from_min_size(
+                            Pos2::new(hero.right() - 92.0, hero.top() + 14.0),
+                            Vec2::splat(34.0),
+                        );
+                        ui.scope_builder(egui::UiBuilder::new().max_rect(info_rect), |ui| {
+                            info_clicked =
+                                widgets::icon_button(ui, 34.0, Icon::Info, &pal, "Informations du jeu")
+                                    .clicked();
+                        });
+
+                        let gear_rect = Rect::from_min_size(
+                            Pos2::new(hero.right() - 50.0, hero.top() + 14.0),
+                            Vec2::splat(34.0),
+                        );
+                        ui.scope_builder(egui::UiBuilder::new().max_rect(gear_rect), |ui| {
+                            gear_clicked =
+                                widgets::icon_button(ui, 34.0, Icon::Gear, &pal, "Paramètres du jeu")
+                                    .clicked();
+                        });
                     },
                 );
+
+                if info_clicked {
+                    self.show_info = !self.show_info;
+                }
+                if gear_clicked {
+                    self.editing = Some(game.clone());
+                }
                 if play_clicked {
                     if is_running {
                         self.stop(&id);
@@ -313,45 +377,15 @@ impl QuarkApp {
                     }
                 }
 
-                // Infos (ⓘ) puis engrenage, à droite de la bannière (comme Steam).
-                let info_rect = Rect::from_min_size(
-                    Pos2::new(hero_rect.right() - 92.0, hero_rect.top() + 14.0),
-                    Vec2::splat(34.0),
-                );
-                let mut info_clicked = false;
-                ui.scope_builder(egui::UiBuilder::new().max_rect(info_rect), |ui| {
-                    info_clicked =
-                        widgets::icon_button(ui, 34.0, Icon::Info, &pal, "Informations du jeu")
-                            .clicked();
-                });
-                if info_clicked {
-                    self.show_info = !self.show_info;
-                }
-
-                // Engrenage : paramètres du jeu, à droite (comme Steam).
-                let gear_rect = Rect::from_min_size(
-                    Pos2::new(hero_rect.right() - 50.0, hero_rect.top() + 14.0),
-                    Vec2::splat(34.0),
-                );
-                let mut gear_clicked = false;
-                ui.scope_builder(egui::UiBuilder::new().max_rect(gear_rect), |ui| {
-                    gear_clicked =
-                        widgets::icon_button(ui, 34.0, Icon::Gear, &pal, "Paramètres du jeu").clicked();
-                });
-                if gear_clicked {
-                    self.editing = Some(game.clone());
-                }
-
                 // -----------------------------------------------------------------
-                // Actualités du jeu, sous la bannière (comme la fiche Steam)
+                // Actualités du jeu, juste sous la bannière (comme la fiche Steam)
                 // -----------------------------------------------------------------
                 self.news_section(ui, &game, &pal, width);
 
                 // -----------------------------------------------------------------
-                // Bloc d'informations (masqué par défaut, bouton ⓘ)
+                // Bloc d'informations (masqué par défaut, bouton \u{24d8})
+                // -----------------------------------------------------------------
                 if self.show_info {
-                    // Bloc d'informations
-                    // -----------------------------------------------------------------
                     ui.add_space(22.0);
                     ui.horizontal(|ui| {
                         ui.add_space(32.0);
@@ -360,7 +394,9 @@ impl QuarkApp {
                     ui.add_space(12.0);
 
                     let artworks_label = match (game.steam_app_id, game.sgdb_id) {
-                        (Some(appid), Some(sgdb)) => format!("Steam AppID {appid} · SteamGridDB #{sgdb}"),
+                        (Some(appid), Some(sgdb)) => {
+                            format!("Steam AppID {appid} \u{b7} SteamGridDB #{sgdb}")
+                        }
                         (Some(appid), None) => format!("Steam AppID {appid}"),
                         (None, Some(sgdb)) => format!("SteamGridDB #{sgdb}"),
                         (None, None) => "aucun (assets manuels)".to_string(),
@@ -373,7 +409,7 @@ impl QuarkApp {
                             if is_proton {
                                 prefix.display().to_string()
                             } else {
-                                "— (pas de Proton pour ce jeu)".to_string()
+                                "\u{2014} (pas de Proton pour ce jeu)".to_string()
                             },
                         ),
                         ("Artworks", artworks_label),
@@ -408,6 +444,15 @@ impl QuarkApp {
                             }
                         }
                     });
+                }
+
+                // Voile de fondu pendant l'entrée du jeu : rien à faire au repos.
+                if entrance < 1.0 {
+                    ui.painter().rect_filled(
+                        ui.clip_rect(),
+                        0.0,
+                        Color32::from_black_alpha(((1.0 - entrance) * 255.0).round() as u8),
+                    );
                 }
 
                 ui.add_space(40.0);
@@ -448,7 +493,7 @@ impl QuarkApp {
         ui.add_space(26.0);
         ui.horizontal(|ui| {
             ui.add_space(32.0);
-            ui.label(RichText::new("ACTUALITÉS").size(11.0).color(pal.text_faint));
+            ui.label(RichText::new("ACTUALIT\u{c9}S").size(11.0).color(pal.text_faint));
             if linked {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.add_space(32.0);
@@ -481,7 +526,7 @@ impl QuarkApp {
                 ui.spinner();
                 ui.add_space(6.0);
                 ui.label(
-                    RichText::new("Chargement des actualités…")
+                    RichText::new("Chargement des actualités\u{2026}")
                         .size(12.0)
                         .color(pal.text_dim),
                 );
@@ -493,7 +538,7 @@ impl QuarkApp {
             ui.horizontal(|ui| {
                 ui.add_space(32.0);
                 ui.label(
-                    RichText::new(format!("Actualités indisponibles · {message}"))
+                    RichText::new(format!("Actualités indisponibles \u{b7} {message}"))
                         .size(12.0)
                         .color(pal.danger),
                 );
@@ -516,40 +561,62 @@ impl QuarkApp {
         let card_width = (width - 64.0).max(220.0);
         for (index, item) in items.iter().enumerate() {
             let id = ui.make_persistent_id(("quark_news", index, item.url.as_str()));
-            // Le fond est posé d'après l'état du tour précédent : egui redessine
-            // aussitôt que la souris entre, le décalage est invisible.
-            let hovered = ui.data(|data| data.get_temp::<bool>(id).unwrap_or(false));
+            // L'état de survol est lu du tour précédent (la carte n'est connue
+            // qu'après sa mise en page), mais c'est l'animation qui lisse le
+            // changement : le décalage d'une image reste invisible.
+            let was_hovered = ui.data(|data| data.get_temp::<bool>(id).unwrap_or(false));
+            let anim = ui
+                .ctx()
+                .animate_bool_with_time(id.with("hover"), was_hovered, 0.14);
+
             ui.horizontal(|ui| {
                 ui.add_space(32.0);
                 let frame = egui::Frame::new()
-                    .fill(if hovered {
-                        pal.surface_hover
-                    } else {
-                        Color32::TRANSPARENT
-                    })
+                    .fill(theme::lerp_color(
+                        Color32::TRANSPARENT,
+                        pal.surface_hover,
+                        anim,
+                    ))
                     .corner_radius(6.0)
                     .inner_margin(egui::Margin::symmetric(12, 10));
+                // Le `Frame` hérite du layout horizontal de la rangée : sans ce
+                // `vertical`, les trois lignes se retrouvaient côte à côte et
+                // débordaient de la fenêtre.
                 let inner = frame.show(ui, |ui| {
-                    ui.set_width(card_width);
-                    let mut meta = vec![item.feed.clone()];
-                    if !item.author.is_empty() {
-                        meta.push(item.author.clone());
-                    }
-                    meta.push(config::human_ago(item.date));
-                    ui.label(RichText::new(meta.join("  ·  ")).size(11.0).color(pal.text_faint));
-                    ui.add_space(4.0);
-                    ui.label(RichText::new(&item.title).size(14.5).color(pal.text));
-                    if !item.excerpt.is_empty() {
+                    ui.vertical(|ui| {
+                        ui.set_width(card_width);
+                        let mut meta = vec![item.feed.clone()];
+                        if !item.author.is_empty() {
+                            meta.push(item.author.clone());
+                        }
+                        meta.push(config::human_ago(item.date));
+                        ui.label(RichText::new(meta.join("  \u{b7}  ")).size(11.0).color(pal.text_faint));
                         ui.add_space(4.0);
-                        ui.label(RichText::new(&item.excerpt).size(12.0).color(pal.text_dim));
-                    }
+                        ui.label(single_line(&item.title, 14.5, pal.text, card_width));
+                        if !item.excerpt.is_empty() {
+                            ui.add_space(4.0);
+                            ui.label(paragraph(&item.excerpt, 12.0, pal.text_dim, 3));
+                        }
+                    });
                 });
+
+                // Liseré d'accent qui s'allume au survol.
+                if anim > 0.0 {
+                    let rect = inner.response.rect;
+                    ui.painter().rect_filled(
+                        Rect::from_min_size(rect.left_top(), Vec2::new(2.0, rect.height())),
+                        1.0,
+                        pal.accent.gamma_multiply(anim),
+                    );
+                }
+
                 let response = ui
                     .interact(inner.response.rect, id, Sense::click())
                     .on_hover_cursor(egui::CursorIcon::PointingHand);
-                let is_hovered = response.hovered();
-                ui.data_mut(|data| data.insert_temp(id, is_hovered));
-                if is_hovered {
+                let hovered = response.hovered();
+                if hovered != was_hovered {
+                    ui.data_mut(|data| data.insert_temp(id, hovered));
+                    // Une seule image de plus : l'animation prend le relais.
                     ui.ctx().request_repaint();
                 }
                 if response.clicked() {
@@ -568,6 +635,7 @@ impl QuarkApp {
             }
         }
     }
+
 }
 
 // ---------------------------------------------------------------------------
@@ -585,22 +653,38 @@ fn game_row(
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 46.0), Sense::click());
     let painter = ui.painter_at(rect);
+    let id = egui::Id::new(("quark_row", game.id.as_str()));
+    let hover = ui
+        .ctx()
+        .animate_bool_with_time(id.with("hover"), response.hovered(), 0.12);
+    let mark = ui
+        .ctx()
+        .animate_bool_with_time(id.with("selected"), selected, 0.16);
 
-    if selected {
-        painter.rect_filled(rect, 4.0, pal.row_selected);
-    } else if response.hovered() {
-        painter.rect_filled(rect, 4.0, pal.surface_hover);
-    }
-    if selected {
+    if hover > 0.0 {
         painter.rect_filled(
-            Rect::from_min_size(Pos2::new(rect.left(), rect.top() + 5.0), Vec2::new(3.0, rect.height() - 10.0)),
+            rect,
+            4.0,
+            theme::lerp_color(Color32::TRANSPARENT, pal.surface_hover, hover),
+        );
+    }
+    if mark > 0.0 {
+        painter.rect_filled(rect, 4.0, pal.row_selected.gamma_multiply(mark));
+        // Le trait d'accent grandit depuis le centre de la ligne.
+        let height = (rect.height() - 10.0) * mark;
+        painter.rect_filled(
+            Rect::from_min_size(
+                Pos2::new(rect.left(), rect.center().y - height / 2.0),
+                Vec2::new(3.0, height),
+            ),
             1.5,
-            pal.accent,
+            pal.accent.gamma_multiply(mark),
         );
     }
 
     // Comme Steam : la petite vignette du jeu (capsule) plutôt que le logo
-    // transparent, qui reste réservé à la bannière.
+    // transparent, réservé à la bannière. Sans icône, la première lettre du
+    // titre prend sa place, dans un rectangle identique : rien ne bouge.
     let thumb_box = Rect::from_min_size(
         Pos2::new(rect.left() + 18.0, rect.center().y - 16.0),
         Vec2::new(74.0, 32.0),
@@ -609,38 +693,34 @@ fn game_row(
         .artwork
         .get(AssetKind::Icon)
         .filter(|p| p.exists())
-        .cloned()
-        .or_else(|| {
-            game.artwork
-                .get(AssetKind::Logo)
-                .filter(|p| p.exists())
-                .cloned()
-        });
-    match thumb {
-        Some(path) => {
-            if let Some(texture) = textures.get(ui.ctx(), &path) {
-                draw_fit(ui, texture, thumb_box);
-            }
-        }
-        None => {
-            widgets::monogram(
-                &painter,
-                Rect::from_min_size(
-                    Pos2::new(thumb_box.left(), rect.center().y - 14.0),
-                    Vec2::splat(28.0),
-                ),
-                &game.initials(),
-                pal,
-            );
-        }
+        .cloned();
+    let texture = thumb.as_ref().and_then(|path| textures.get(ui.ctx(), path));
+    match texture {
+        Some(texture) => draw_fit(ui, texture, thumb_box),
+        None => widgets::monogram(
+            &painter,
+            thumb_box,
+            &game.monogram_letter(),
+            theme::monogram_color(&game.name),
+            pal,
+        ),
     }
 
-    painter.text(
-        Pos2::new(rect.left() + 118.0, rect.center().y),
-        Align2::LEFT_CENTER,
+    // Titre sur une seule ligne, coupé par une ellipsis : les noms longs ne
+    // débordent plus de la colonne.
+    let title_x = rect.left() + 118.0;
+    let title_color = theme::lerp_color(pal.text_dim, pal.text, mark.max(hover * 0.7));
+    let job = single_line(
         &game.name,
-        FontId::proportional(13.5),
-        if selected { pal.text } else { pal.text_dim },
+        13.5,
+        title_color,
+        (rect.right() - 14.0 - title_x).max(24.0),
+    );
+    let galley = painter.layout_job(job);
+    painter.galley(
+        Pos2::new(title_x, rect.center().y - galley.size().y / 2.0),
+        galley,
+        title_color,
     );
 
     if running {
@@ -662,21 +742,43 @@ fn game_tile(
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     let painter = ui.painter_at(rect);
+    let id = egui::Id::new(("quark_tile", game.id.as_str()));
+    let hover = ui
+        .ctx()
+        .animate_bool_with_time(id.with("hover"), response.hovered(), 0.12);
+    let mark = ui
+        .ctx()
+        .animate_bool_with_time(id.with("selected"), selected, 0.16);
 
+    // Le survol « soulève » la tuile : la couverture se resserre d'un ou deux
+    // pixels et un liseré s'allume. Tout est peint, la grille ne bouge pas.
+    let cover_rect = rect.shrink(2.0 * hover);
     painter.rect_filled(rect, 6.0, pal.surface);
-    let cover = game.artwork.get(AssetKind::Cover).filter(|p| p.exists()).cloned();
-    match cover {
-        Some(path) => match textures.get(ui.ctx(), &path) {
-            Some(texture) => draw_fill(ui, texture, rect),
-            None => widgets::monogram(&painter, rect.shrink(12.0), &game.initials(), pal),
-        },
-        None => {
-            widgets::monogram(&painter, rect.shrink(12.0), &game.initials(), pal);
-        }
+    let cover = game
+        .artwork
+        .get(AssetKind::Cover)
+        .filter(|p| p.exists())
+        .cloned();
+    let texture = cover.as_ref().and_then(|path| textures.get(ui.ctx(), path));
+    match texture {
+        Some(texture) => draw_fill(ui, texture, cover_rect),
+        None => widgets::monogram(
+            &painter,
+            cover_rect,
+            &game.monogram_letter(),
+            theme::monogram_color(&game.name),
+            pal,
+        ),
     }
 
-    if selected || response.hovered() {
-        widgets::border_rect(&painter, rect, if selected { 3.0 } else { 2.0 }, pal.accent);
+    let accent = mark.max(hover);
+    if accent > 0.0 {
+        widgets::border_rect(
+            &painter,
+            rect,
+            (2.0 + mark).min(3.0),
+            pal.accent.gamma_multiply(accent),
+        );
     }
     if running {
         let badge = Rect::from_min_size(
@@ -694,4 +796,28 @@ fn game_tile(
     }
 
     response.on_hover_text(game.name.clone())
+}
+
+/// Texte sur une seule ligne, coupé par une ellipsis s'il dépasse `max_width`.
+fn single_line(text: &str, size: f32, color: Color32, max_width: f32) -> egui::text::LayoutJob {
+    let mut job = paragraph(text, size, color, 1);
+    job.wrap.max_width = max_width;
+    job
+}
+
+/// Paragraphe limité à `max_rows` lignes, la dernière terminée par « \u{2026} ».
+fn paragraph(text: &str, size: f32, color: Color32, max_rows: usize) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    job.wrap.max_rows = max_rows;
+    job.wrap.overflow_character = Some('\u{2026}');
+    job.append(
+        text,
+        0.0,
+        egui::TextFormat {
+            font_id: FontId::proportional(size),
+            color,
+            ..Default::default()
+        },
+    );
+    job
 }

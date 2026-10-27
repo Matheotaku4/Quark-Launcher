@@ -10,6 +10,7 @@ mod images;
 mod news;
 mod proton;
 mod scan;
+mod snapshot;
 mod theme;
 mod ui_dialogs;
 mod ui_library;
@@ -38,7 +39,7 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(|cc| {
             egui_extras::install_image_loaders(&cc.egui_ctx);
-            Ok(Box::new(QuarkApp::new(cc)))
+            Ok(Box::new(QuarkApp::new(&cc.egui_ctx)))
         }),
     )
 }
@@ -59,7 +60,141 @@ fn cli(args: &[String]) -> Option<i32> {
             );
             println!("  quark --scan <dossier>   Liste les jeux détectés dans un dossier");
             println!("  quark --news <nom|appid> Affiche les actualités Steam d'un jeu");
+            println!("\nVérification du rendu (sans écran, aucun GPU) :");
+            print!("{}", snapshot::HELP);
             Some(0)
+        }
+        "--ui" => {
+            let Some(out) = args.get(1).filter(|a| !a.starts_with("--")) else {
+                eprintln!("Usage : quark --ui <fichier.png> [options]");
+                print!("{}", snapshot::HELP);
+                return Some(2);
+            };
+            let mut opts = snapshot::SnapshotOptions {
+                out: std::path::PathBuf::from(out),
+                ..snapshot::SnapshotOptions::default()
+            };
+            let mut index = 2;
+            while index < args.len() {
+                let key = args[index].clone();
+                let value = args.get(index + 1).cloned();
+                // Options sans valeur : un seul argument à avancer.
+                match key.as_str() {
+                    "--info" => {
+                        opts.info = true;
+                        index += 1;
+                        continue;
+                    }
+                    "--running" => {
+                        opts.running = true;
+                        index += 1;
+                        continue;
+                    }
+                    "--demo" => {
+                        opts.demo = true;
+                        index += 1;
+                        continue;
+                    }
+                    _ => {}
+                }
+                match key.as_str() {
+                    "--size" => match value.as_deref().and_then(parse_size) {
+                        Some(size) => opts.size = size,
+                        None => {
+                            eprintln!("--size attend la forme 1360x860");
+                            return Some(2);
+                        }
+                    },
+                    "--scale" => match value.as_deref().and_then(|v| v.parse::<f32>().ok()) {
+                        Some(scale) => opts.scale = scale,
+                        None => {
+                            eprintln!("--scale attend un nombre (ex. 1.5)");
+                            return Some(2);
+                        }
+                    },
+                    "--frames" => match value.as_deref().and_then(|v| v.parse::<u32>().ok()) {
+                        Some(frames) => opts.frames = frames,
+                        None => {
+                            eprintln!("--frames attend un entier (ex. 20)");
+                            return Some(2);
+                        }
+                    },
+                    "--hover" => match value.as_deref().and_then(parse_point) {
+                        Some(point) => opts.hover = Some(point),
+                        None => {
+                            eprintln!("--hover attend des coordonnées X,Y");
+                            return Some(2);
+                        }
+                    },
+                    "--click" => match value.as_deref().and_then(parse_point) {
+                        Some(point) => {
+                            opts.click = Some(point);
+                            opts.hover = Some(point);
+                        }
+                        None => {
+                            eprintln!("--click attend des coordonnées X,Y");
+                            return Some(2);
+                        }
+                    },
+                    "--view" => {
+                        opts.view = match value.as_deref() {
+                            Some("list") => Some(config::ViewMode::List),
+                            Some("grid") => Some(config::ViewMode::Grid),
+                            _ => {
+                                eprintln!("--view attend list ou grid");
+                                return Some(2);
+                            }
+                        }
+                    }
+                    "--tab" => {
+                        opts.tab = match value.as_deref() {
+                            Some("library") => Some(app::Tab::Library),
+                            Some("store") => Some(app::Tab::Store),
+                            _ => {
+                                eprintln!("--tab attend library ou store");
+                                return Some(2);
+                            }
+                        }
+                    }
+                    "--theme" => {
+                        opts.theme = match value.as_deref() {
+                            Some("amoled") => Some(config::ThemeMode::Amoled),
+                            Some("graphite") => Some(config::ThemeMode::Graphite),
+                            _ => {
+                                eprintln!("--theme attend amoled ou graphite");
+                                return Some(2);
+                            }
+                        }
+                    }
+                    "--select" => match value {
+                        Some(name) => opts.select = Some(name),
+                        None => {
+                            eprintln!("--select attend un nom de jeu");
+                            return Some(2);
+                        }
+                    },
+                    "--dialog" => match value {
+                        Some(dialog) => opts.dialog = Some(dialog),
+                        None => {
+                            eprintln!("--dialog attend un nom de fenêtre");
+                            return Some(2);
+                        }
+                    },
+                    _ => {
+                        eprintln!("Option inconnue : {key}");
+                        print!("{}", snapshot::HELP);
+                        return Some(2);
+                    }
+                }
+                index += 2;
+            }
+            match snapshot::run(&opts) {
+                Ok(()) => Some(0),
+                Err(err) => {
+                    eprintln!("Rendu impossible : {err}");
+                    Some(1)
+                }
+            }
         }
         "--doctor" => {
             let lib = config::Library::load();
@@ -240,4 +375,22 @@ fn cli(args: &[String]) -> Option<i32> {
         }
         _ => None,
     }
+}
+
+/// « 1360x860 » -> taille.
+fn parse_size(text: &str) -> Option<eframe::egui::Vec2> {
+    let (width, height) = text.split_once(|c| c == 'x' || c == 'X')?;
+    Some(eframe::egui::Vec2::new(
+        width.trim().parse().ok()?,
+        height.trim().parse().ok()?,
+    ))
+}
+
+/// « 120,340 » -> point.
+fn parse_point(text: &str) -> Option<eframe::egui::Pos2> {
+    let (x, y) = text.split_once(',')?;
+    Some(eframe::egui::Pos2::new(
+        x.trim().parse().ok()?,
+        y.trim().parse().ok()?,
+    ))
 }

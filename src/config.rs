@@ -319,15 +319,54 @@ impl Game {
         }
     }
 
-    pub fn initials(&self) -> String {
-        let mut out = String::new();
-        for word in self.name.split_whitespace().take(2) {
-            if let Some(c) = word.chars().next() {
-                out.extend(c.to_uppercase());
+    /// Lettre de secours quand le jeu n'a pas d'icône (voir [`monogram_letter`]).
+    pub fn monogram_letter(&self) -> String {
+        monogram_letter(&self.name)
+    }
+}
+
+/// Articles ignorés pour choisir la lettre d'un jeu sans icône.
+const ARTICLES: [&str; 16] = [
+    "the", "a", "an", "le", "la", "les", "l", "un", "une", "des", "el", "los", "las", "il",
+    "lo", "der",
+];
+
+/// Première lettre d'un titre, articles initiaux ignorés : « The Witcher 3 »
+/// donne « W », « Les Chevaliers de Baphomet » donne « C », « 7 Days to Die »
+/// donne « 7 ». Un titre vide donne « ? ».
+pub fn monogram_letter(name: &str) -> String {
+    let mut rest = name.trim();
+    loop {
+        let mut stripped: Option<&str> = None;
+        for article in ARTICLES {
+            let length = article.len();
+            // L'article doit être un mot à part entière : suivi d'un espace, d'une
+            // apostrophe ou d'un tiret (« l'Abbaye », « Les-Chevaliers »).
+            if rest.len() <= length || !rest.is_char_boundary(length) {
+                continue;
+            }
+            if !rest[..length].eq_ignore_ascii_case(article) {
+                continue;
+            }
+            let tail = &rest[length..];
+            let separateur = matches!(tail.chars().next(), Some(' ' | '\'' | '\u{2019}' | '-'));
+            if separateur {
+                stripped = Some(tail.trim_start_matches(|c: char| {
+                    c == ' ' || c == '\'' || c == '\u{2019}' || c == '-'
+                }));
+                break;
             }
         }
-        if out.is_empty() { "?".to_string() } else { out }
+        match stripped {
+            Some(next) if !next.is_empty() => rest = next,
+            _ => break,
+        }
     }
+    rest.chars()
+        .find(|c| c.is_alphanumeric())
+        .or_else(|| name.trim().chars().next())
+        .map(|c| c.to_uppercase().to_string())
+        .unwrap_or_else(|| "?".to_string())
 }
 
 pub fn human_playtime(secs: u64) -> String {
@@ -430,6 +469,24 @@ mod tests {
             id: id.to_string(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn lettre_ignore_les_articles_initiaux() {
+        assert_eq!(monogram_letter("The Witcher 3: Wild Hunt"), "W");
+        assert_eq!(monogram_letter("A Short Hike"), "S");
+        assert_eq!(monogram_letter("An Anno 1800"), "A");
+        assert_eq!(monogram_letter("Les Chevaliers de Baphomet"), "C");
+        assert_eq!(monogram_letter("l'Abbaye des Morts"), "A");
+    }
+
+    #[test]
+    fn lettre_sans_article_ou_vide() {
+        assert_eq!(monogram_letter("Celeste"), "C");
+        assert_eq!(monogram_letter("7 Days to Die"), "7");
+        assert_eq!(monogram_letter("Another World"), "A");
+        assert_eq!(monogram_letter("   "), "?");
+        assert_eq!(monogram_letter("A"), "A");
     }
 
     #[test]

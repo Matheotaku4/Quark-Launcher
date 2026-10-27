@@ -1,7 +1,7 @@
 //! Composants dessinés à la main (icônes vectorielles, boutons, onglets).
 //! Aucune dépendance à une police d'icônes : tout est tracé.
 
-use crate::theme::Palette;
+use crate::theme::{self, Palette};
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Response, Sense, Shape, Stroke, Vec2};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,6 +17,13 @@ pub enum Icon {
     List,
     Grid,
     Folder,
+}
+
+/// Identifiant stable d'un contrôle animé : sa place et son libellé. Le bloc de
+/// mise en page ne change pas, donc l'état de l'animation n'est jamais perdu.
+fn control_id(ui: &egui::Ui, rect: Rect, label: &str, kind: &str) -> egui::Id {
+    ui.id()
+        .with((kind, label, rect.left().to_bits(), rect.top().to_bits()))
 }
 
 /// Contour rectangulaire (4 bandes) : évite `rect_stroke` et son `StrokeKind`.
@@ -219,17 +226,31 @@ pub fn accent_button(
     let sense = if enabled { Sense::click() } else { Sense::hover() };
     let (rect, resp) = ui.allocate_exact_size(size, sense);
     let fg = if enabled { Color32::WHITE } else { pal.text_faint };
-    let bg = if !enabled {
-        pal.surface
-    } else if resp.is_pointer_button_down_on() {
+    let pressed = enabled && resp.is_pointer_button_down_on();
+    // Transition douce vers l'état survolé. egui ne redemande une image que
+    // pendant la transition : au repos, aucun repaint supplémentaire.
+    let hover = ui.ctx().animate_bool_with_time(
+        control_id(ui, rect, label, "accent"),
+        enabled && resp.hovered(),
+        0.12,
+    );
+    let base = if enabled { pal.accent } else { pal.surface };
+    let bg = if pressed {
         pal.accent_pressed
-    } else if resp.hovered() {
-        pal.accent_hover
     } else {
-        pal.accent
+        theme::lerp_color(base, pal.accent_hover, hover)
     };
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 4.0, bg);
+    // L'enfoncement est peint, jamais alloué : la mise en page ne bouge pas.
+    painter.rect_filled(rect.shrink(if pressed { 1.0 } else { 0.0 }), 4.0, bg);
+    if enabled && hover > 0.0 && !pressed {
+        border_rect(
+            &painter,
+            rect.shrink(0.5),
+            1.0,
+            pal.accent_hover.gamma_multiply(0.30 * hover),
+        );
+    }
 
     let galley = painter.layout_no_wrap(label.to_string(), FontId::proportional(15.0), fg);
     let icon_w = if icon == Icon::None { 0.0 } else { 15.0 };
@@ -264,17 +285,19 @@ pub fn danger_button(
     let sense = if enabled { Sense::click() } else { Sense::hover() };
     let (rect, resp) = ui.allocate_exact_size(size, sense);
     let fg = Color32::WHITE;
-    let bg = if !enabled {
-        pal.surface
-    } else if resp.is_pointer_button_down_on() {
-        pal.danger.gamma_multiply(0.8)
-    } else if resp.hovered() {
-        pal.danger.gamma_multiply(1.25)
+    let pressed = enabled && resp.is_pointer_button_down_on();
+    let hover = ui.ctx().animate_bool_with_time(
+        control_id(ui, rect, label, "danger"),
+        enabled && resp.hovered(),
+        0.12,
+    );
+    let bg = if pressed {
+        pal.danger.gamma_multiply(0.80)
     } else {
-        pal.danger
+        theme::lerp_color(pal.danger, pal.danger.gamma_multiply(1.30), hover)
     };
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 4.0, bg);
+    painter.rect_filled(rect.shrink(if pressed { 1.0 } else { 0.0 }), 4.0, bg);
 
     let galley = painter.layout_no_wrap(label.to_string(), FontId::proportional(14.0), fg);
     let icon_w = if icon == Icon::None { 0.0 } else { 15.0 };
@@ -308,11 +331,16 @@ pub fn ghost_button(ui: &mut egui::Ui, label: &str, pal: &Palette, icon: Icon) -
     let size = Vec2::new(galley.size().x + icon_w + gap + 22.0, 30.0);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let painter = ui.painter_at(rect);
-    if resp.hovered() {
-        painter.rect_filled(rect, 4.0, pal.surface_hover);
-        border_rect(&painter, rect, 1.0, pal.border);
+    let hover = ui.ctx().animate_bool_with_time(
+        control_id(ui, rect, label, "ghost"),
+        resp.hovered(),
+        0.12,
+    );
+    if hover > 0.0 {
+        painter.rect_filled(rect, 4.0, pal.surface_hover.gamma_multiply(hover));
+        border_rect(&painter, rect, 1.0, pal.border.gamma_multiply(hover));
     }
-    let color = if resp.hovered() { pal.text } else { pal.text_dim };
+    let color = theme::lerp_color(pal.text_dim, pal.text, hover);
     let x0 = rect.center().x - (icon_w + gap + galley.size().x) / 2.0;
     if icon != Icon::None {
         paint_icon(
@@ -334,14 +362,21 @@ pub fn ghost_button(ui: &mut egui::Ui, label: &str, pal: &Palette, icon: Icon) -
 pub fn icon_button(ui: &mut egui::Ui, size: f32, icon: Icon, pal: &Palette, tooltip: &str) -> Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
     let painter = ui.painter_at(rect);
-    if resp.hovered() {
-        painter.rect_filled(rect, 4.0, pal.surface_hover);
+    let hover = ui.ctx().animate_bool_with_time(
+        control_id(ui, rect, tooltip, "icon"),
+        resp.hovered(),
+        0.12,
+    );
+    if hover > 0.0 {
+        painter.rect_filled(rect, 4.0, pal.surface_hover.gamma_multiply(hover));
     }
+    // Le symbole se resserre légèrement au survol : un effet de « prise », sans
+    // aucune conséquence sur la mise en page.
     paint_icon(
         &painter,
-        rect.shrink(size * 0.24),
+        rect.shrink(size * (0.24 + 0.03 * hover)),
         icon,
-        if resp.hovered() { pal.text } else { pal.text_dim },
+        theme::lerp_color(pal.text_dim, pal.text, hover),
     );
     if tooltip.is_empty() {
         resp
@@ -361,27 +396,50 @@ pub fn tab(ui: &mut egui::Ui, label: &str, selected: bool, pal: &Palette) -> Res
         .x;
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width + 26.0, 34.0), Sense::click());
     let painter = ui.painter_at(rect);
-    let color = if selected || resp.hovered() { pal.text } else { pal.text_dim };
+    let hover = ui.ctx().animate_bool_with_time(
+        ui.id().with(("quark-tab-hover", label)),
+        resp.hovered(),
+        0.12,
+    );
+    // Le trait d'onglet s'étire depuis le centre quand l'onglet est choisi.
+    let mark = ui
+        .ctx()
+        .animate_bool_with_time(ui.id().with(("quark-tab-mark", label)), selected, 0.16);
+    let color = if selected {
+        pal.text
+    } else {
+        theme::lerp_color(pal.text_dim, pal.text, hover)
+    };
     painter.text(rect.center(), Align2::CENTER_CENTER, text, font, color);
-    if selected {
+    if mark > 0.0 {
+        let width = (rect.width() - 6.0) * (0.55 + 0.45 * mark);
         painter.rect_filled(
-            Rect::from_min_size(Pos2::new(rect.left() + 3.0, rect.bottom() - 2.0), Vec2::new(rect.width() - 6.0, 2.0)),
+            Rect::from_min_size(
+                Pos2::new(
+                    rect.center().x - width / 2.0,
+                    rect.bottom() - 2.0 - (1.0 - mark) * 2.0,
+                ),
+                Vec2::new(width, 2.0),
+            ),
             1.0,
-            pal.accent,
+            pal.accent.gamma_multiply(mark),
         );
     }
     resp
 }
 
 /// Vignette de secours quand le jeu n'a pas d'artwork.
-pub fn monogram(painter: &egui::Painter, rect: Rect, initials: &str, pal: &Palette) {
-    painter.rect_filled(rect, 5.0, pal.surface_hover);
-    border_rect(painter, rect, 1.0, pal.border);
+/// Vignette de secours d'un jeu sans artwork : la première lettre du titre sur
+/// la couleur assignée au jeu. Le rectangle reçu est exactement celui de
+/// l'artwork, donc la vignette occupe toujours la même place.
+pub fn monogram(painter: &egui::Painter, rect: Rect, text: &str, fill: Color32, pal: &Palette) {
+    painter.rect_filled(rect, 5.0, fill);
+    border_rect(painter, rect, 1.0, theme::lerp_color(fill, pal.text, 0.25));
     painter.text(
         rect.center(),
         Align2::CENTER_CENTER,
-        initials,
-        FontId::proportional((rect.height() * 0.40).clamp(10.0, 34.0)),
-        pal.text_dim,
+        text,
+        FontId::proportional((rect.height() * 0.30).clamp(11.0, 96.0)),
+        Color32::from_rgb(0xF0, 0xF3, 0xF8),
     );
 }

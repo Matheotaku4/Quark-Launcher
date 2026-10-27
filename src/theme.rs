@@ -128,26 +128,52 @@ pub fn apply(ctx: &egui::Context, mode: ThemeMode) {
     style.spacing.item_spacing = Vec2::new(8.0, 6.0);
     style.spacing.button_padding = Vec2::new(10.0, 5.0);
     style.spacing.scroll.bar_width = 8.0;
+    // Transitions courtes : assez visibles pour être agréables, assez rapides
+    // pour ne jamais retarder un clic. Les animations d'egui n'entretiennent un
+    // repaint que tant qu'elles bougent, donc aucun coût au repos.
+    style.animation_time = 0.12;
 
     ctx.set_style(style);
 }
 
-/// Dégradé noir vers le bas du rectangle (lisibilité du titre sur la bannière).
-pub fn bottom_gradient(painter: &egui::Painter, rect: Rect, fraction: f32) {
-    let steps = 40;
-    let h = rect.height() * fraction;
-    let top = rect.bottom() - h;
-    for i in 0..steps {
-        let t = i as f32 / (steps - 1) as f32;
-        let a = (t * t * 235.0) as u8;
-        let y0 = top + h * (i as f32 / steps as f32);
-        let y1 = top + h * ((i + 1) as f32 / steps as f32);
-        painter.rect_filled(
-            Rect::from_min_max(Pos2::new(rect.left(), y0), Pos2::new(rect.right(), y1)),
-            0.0,
-            Color32::from_black_alpha(a),
-        );
+/// Rampe de dégradé noir (alpha 0 en haut, presque opaque en bas). Créée une
+/// seule fois puis étirée sur la bannière : un seul rectangle à dessiner, donc
+/// aucun bord de bande visible et un coût négligeable.
+pub fn gradient_texture(ctx: &egui::Context) -> egui::TextureHandle {
+    const HEIGHT: usize = 256;
+    let mut pixels = Vec::with_capacity(HEIGHT);
+    for i in 0..HEIGHT {
+        let t = i as f32 / (HEIGHT - 1) as f32;
+        // Profil quadratique : le noir ne monte vraiment qu'en bas.
+        pixels.push(Color32::from_black_alpha((t * t * 244.0).round() as u8));
     }
+    ctx.load_texture(
+        "quark-bottom-gradient",
+        egui::ColorImage::new([1, HEIGHT], pixels),
+        egui::TextureOptions::LINEAR,
+    )
+}
+
+/// Assombrit le bas du rectangle avec la rampe (lisibilité du titre et des
+/// actualités posés sur la bannière).
+pub fn bottom_gradient(
+    ui: &mut egui::Ui,
+    texture: &egui::TextureHandle,
+    rect: Rect,
+    fraction: f32,
+) {
+    let height = rect.height() * fraction.clamp(0.0, 1.0);
+    if height <= 1.0 {
+        return;
+    }
+    let area = Rect::from_min_max(
+        Pos2::new(rect.left(), rect.bottom() - height),
+        Pos2::new(rect.right(), rect.bottom()),
+    );
+    ui.put(
+        area,
+        egui::Image::new(egui::load::SizedTexture::new(texture.id(), area.size())),
+    );
 }
 
 /// Hauteur de bannière : ratio 3.1:1 comme les `library_hero` de Steam.
@@ -156,3 +182,42 @@ pub fn hero_height(width: f32) -> f32 {
 }
 
 pub const COVER_RATIO: f32 = 1.5; // 600x900 comme Steam
+
+/// Couleurs de secours des jeux sans icône. Une par jeu, choisie de façon
+/// stable : le même titre donne toujours la même couleur.
+pub const MONOGRAM_COLORS: [Color32; 10] = [
+    rgb(0x2B, 0x4A, 0x7A), // bleu
+    rgb(0x6B, 0x2A, 0x4C), // magenta
+    rgb(0x2C, 0x59, 0x3C), // vert
+    rgb(0x7A, 0x56, 0x1F), // ambre
+    rgb(0x3C, 0x33, 0x6E), // violet
+    rgb(0x77, 0x32, 0x2A), // rouille
+    rgb(0x1C, 0x55, 0x5E), // sarcelle
+    rgb(0x5A, 0x2E, 0x63), // prune
+    rgb(0x40, 0x4C, 0x22), // olive
+    rgb(0x2E, 0x3F, 0x63), // ardoise
+];
+
+/// Couleur associée à un jeu (hash FNV-1a du titre, insensible à la casse).
+pub fn monogram_color(seed: &str) -> Color32 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in seed.trim().to_lowercase().bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01B3);
+    }
+    MONOGRAM_COLORS[(hash % MONOGRAM_COLORS.len() as u64) as usize]
+}
+
+/// Mélange linéaire de deux couleurs, pour les transitions (survol, sélection).
+pub fn lerp_color(from: Color32, to: Color32, t: f32) -> Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round().clamp(0.0, 255.0) as u8;
+    let [r1, g1, b1, a1] = from.to_array();
+    let [r2, g2, b2, a2] = to.to_array();
+    Color32::from_rgba_premultiplied(
+        mix(r1, r2),
+        mix(g1, g2),
+        mix(b1, b2),
+        mix(a1, a2),
+    )
+}
