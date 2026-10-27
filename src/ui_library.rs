@@ -312,6 +312,21 @@ impl QuarkApp {
                     }
                 }
 
+                // Infos (ⓘ) puis engrenage, à droite de la bannière (comme Steam).
+                let info_rect = Rect::from_min_size(
+                    Pos2::new(hero_rect.right() - 92.0, hero_rect.top() + 14.0),
+                    Vec2::splat(34.0),
+                );
+                let mut info_clicked = false;
+                ui.scope_builder(egui::UiBuilder::new().max_rect(info_rect), |ui| {
+                    info_clicked =
+                        widgets::icon_button(ui, 34.0, Icon::Info, &pal, "Informations du jeu")
+                            .clicked();
+                });
+                if info_clicked {
+                    self.show_info = !self.show_info;
+                }
+
                 // Engrenage : paramètres du jeu, à droite (comme Steam).
                 let gear_rect = Rect::from_min_size(
                     Pos2::new(hero_rect.right() - 50.0, hero_rect.top() + 14.0),
@@ -327,64 +342,68 @@ impl QuarkApp {
                 }
 
                 // -----------------------------------------------------------------
-                // Bloc d'informations
-                // -----------------------------------------------------------------
-                ui.add_space(22.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(32.0);
-                    ui.label(RichText::new("INFORMATIONS").size(11.0).color(pal.text_faint));
-                });
-                ui.add_space(12.0);
-
-                let artworks_label = match (game.steam_app_id, game.sgdb_id) {
-                    (Some(appid), Some(sgdb)) => format!("Steam AppID {appid} · SteamGridDB #{sgdb}"),
-                    (Some(appid), None) => format!("Steam AppID {appid}"),
-                    (None, Some(sgdb)) => format!("SteamGridDB #{sgdb}"),
-                    (None, None) => "aucun (assets manuels)".to_string(),
-                };
-                let rows: Vec<(&str, String)> = vec![
-                    ("Exécutable", game.exe.clone()),
-                    ("Lancement", launch_label),
-                    (
-                        "Préfixe Proton",
-                        if is_proton {
-                            prefix.display().to_string()
-                        } else {
-                            "— (pas de Proton pour ce jeu)".to_string()
-                        },
-                    ),
-                    ("Artworks", artworks_label),
-                    ("Temps de jeu", game.playtime_label()),
-                    ("Dernière session", game.last_played_label()),
-                ];
-
-                for (label, value) in &rows {
+                // Bloc d'informations (masqué par défaut, bouton ⓘ)
+                if self.show_info {
+                    // Bloc d'informations
+                    // -----------------------------------------------------------------
+                    ui.add_space(22.0);
                     ui.horizontal(|ui| {
                         ui.add_space(32.0);
-                        ui.vertical(|ui| {
-                            ui.set_max_width((width - 64.0).max(200.0));
-                            ui.label(RichText::new(*label).size(11.5).color(pal.text_dim));
-                            ui.label(RichText::new(value).size(13.0).color(pal.text));
-                            ui.add_space(8.0);
+                        ui.label(RichText::new("INFORMATIONS").size(11.0).color(pal.text_faint));
+                    });
+                    ui.add_space(12.0);
+
+                    let artworks_label = match (game.steam_app_id, game.sgdb_id) {
+                        (Some(appid), Some(sgdb)) => format!("Steam AppID {appid} · SteamGridDB #{sgdb}"),
+                        (Some(appid), None) => format!("Steam AppID {appid}"),
+                        (None, Some(sgdb)) => format!("SteamGridDB #{sgdb}"),
+                        (None, None) => "aucun (assets manuels)".to_string(),
+                    };
+                    let rows: Vec<(&str, String)> = vec![
+                        ("Exécutable", game.exe.clone()),
+                        ("Lancement", launch_label),
+                        (
+                            "Préfixe Proton",
+                            if is_proton {
+                                prefix.display().to_string()
+                            } else {
+                                "— (pas de Proton pour ce jeu)".to_string()
+                            },
+                        ),
+                        ("Artworks", artworks_label),
+                        ("Temps de jeu", game.playtime_label()),
+                        ("Dernière session", game.last_played_label()),
+                    ];
+
+                    for (label, value) in &rows {
+                        ui.horizontal(|ui| {
+                            ui.add_space(32.0);
+                            ui.vertical(|ui| {
+                                ui.set_max_width((width - 64.0).max(200.0));
+                                ui.label(RichText::new(*label).size(11.5).color(pal.text_dim));
+                                ui.label(RichText::new(value).size(13.0).color(pal.text));
+                                ui.add_space(8.0);
+                            });
                         });
+                    }
+
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(32.0);
+                        if widgets::ghost_button(ui, "Paramètres du jeu", &pal, Icon::Gear).clicked() {
+                            self.editing = Some(game.clone());
+                        }
+                        if game.steam_app_id.is_some() || game.sgdb_id.is_some() {
+                            if widgets::ghost_button(ui, "Rafraîchir les artworks", &pal, Icon::Refresh)
+                                .clicked()
+                            {
+                                let hit = crate::artwork::SearchHit::from_game(&game);
+                                self.start_asset_job(ui.ctx(), &id, hit);
+                            }
+                        }
                     });
                 }
 
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(32.0);
-                    if widgets::ghost_button(ui, "Paramètres du jeu", &pal, Icon::Gear).clicked() {
-                        self.editing = Some(game.clone());
-                    }
-                    if game.steam_app_id.is_some() || game.sgdb_id.is_some() {
-                        if widgets::ghost_button(ui, "Rafraîchir les artworks", &pal, Icon::Refresh)
-                            .clicked()
-                        {
-                            let hit = crate::artwork::SearchHit::from_game(&game);
-                            self.start_asset_job(ui.ctx(), &id, hit);
-                        }
-                    }
-                });
                 ui.add_space(40.0);
             });
     }

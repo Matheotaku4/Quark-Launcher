@@ -35,9 +35,12 @@ impl QuarkApp {
         let mut back = false;
         let mut browse_exe = false;
         let mut browse_prefix = false;
+        let mut browse_folder = false;
+        let mut scan_action = ScanAction::default();
 
         let title = match step {
             AddStep::Name => "Ajouter un jeu",
+            AddStep::Scan => "Ajouter un jeu · dossier",
             AddStep::Exe => "Ajouter un jeu · exécutable",
         };
 
@@ -143,6 +146,25 @@ impl QuarkApp {
                                 close = true;
                             }
                         });
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
+                            if widgets::ghost_button(ui, "Choisir un dossier…", &pal, Icon::Folder)
+                                .clicked()
+                            {
+                                browse_folder = true;
+                            }
+                            ui.add_space(8.0);
+                            ui.label(
+                                RichText::new(
+                                    "analyse un dossier et propose les jeux qu'il contient",
+                                )
+                                .size(11.0)
+                                .color(pal.text_faint),
+                            );
+                        });
+                    }
+                    AddStep::Scan => {
+                        scan_action = self.scan_step(ui, &pal);
                     }
                     AddStep::Exe => {
                         ui.label(RichText::new("Nom affiché").size(12.0).color(pal.text_dim));
@@ -276,6 +298,9 @@ impl QuarkApp {
             let start = own_dir(&self.add.prefix);
             self.pick_directory(ctx, start, PickerTarget::AddPrefix);
         }
+        if browse_folder {
+            self.pick_directory(ctx, config::home_dir(), PickerTarget::ScanFolder);
+        }
 
         if submit {
             let name = if self.add.name.trim().is_empty() {
@@ -303,6 +328,17 @@ impl QuarkApp {
                 Some(hit) => self.start_asset_job(ctx, &id, hit),
                 None => self.toast_info("Jeu ajouté sans artwork (assets manuels)"),
             }
+        }
+
+        if scan_action.back {
+            self.add.step = AddStep::Name;
+            self.add.scan = crate::app::ScanJob::default();
+        }
+        if let Some(index) = scan_action.research {
+            self.start_scan_search(ctx, index);
+        }
+        if scan_action.submit {
+            self.add_scanned(ctx);
         }
 
         if close || !window_open {
@@ -929,4 +965,151 @@ fn search_result_row(
     );
 
     response
+}
+
+#[derive(Default)]
+pub struct ScanAction {
+    pub research: Option<usize>,
+    pub back: bool,
+    pub submit: bool,
+}
+
+/// Ligne de l'analyse d'un dossier : titre corrigeable, source reconnue et
+/// verdict « c'est un jeu » / « ce n'est pas un jeu ».
+fn scan_row(ui: &mut egui::Ui, pal: &Palette, candidate: &mut crate::app::ScanCandidate) -> bool {
+    let mut research = false;
+    egui::Frame::new()
+        .fill(pal.surface)
+        .corner_radius(4.0)
+        .inner_margin(egui::Margin::symmetric(10, 8))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut candidate.title)
+                            .desired_width(330.0)
+                            .font(FontId::proportional(13.5)),
+                    );
+                    ui.label(
+                        RichText::new(candidate.exe.display().to_string())
+                            .size(10.5)
+                            .color(pal.text_faint),
+                    );
+                    let detail = if candidate.searching {
+                        "recherche en cours…".to_string()
+                    } else {
+                        candidate.detail.clone()
+                    };
+                    ui.label(
+                        RichText::new(detail)
+                            .size(11.0)
+                            .color(if candidate.hit.is_some() {
+                                pal.text_dim
+                            } else {
+                                pal.text_faint
+                            }),
+                    );
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if widgets::ghost_button(ui, "Rechercher", pal, Icon::Refresh).clicked() {
+                        research = true;
+                    }
+                    ui.add_space(6.0);
+                    let mut is_game = candidate.include;
+                    if ui.selectable_label(is_game, "C'est un jeu").clicked() {
+                        is_game = true;
+                    }
+                    if ui.selectable_label(!candidate.include, "Pas un jeu").clicked() {
+                        is_game = false;
+                    }
+                    candidate.include = is_game;
+                });
+            });
+        });
+    ui.add_space(4.0);
+    research
+}
+
+impl QuarkApp {
+    /// Étape « dossier » : liste des jeux détectés avec leur correspondance.
+    fn scan_step(&mut self, ui: &mut egui::Ui, pal: &Palette) -> ScanAction {
+        let mut action = ScanAction::default();
+        let folder = self
+            .add
+            .scan
+            .folder
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Dossier").size(12.0).color(pal.text_dim));
+            ui.add_space(6.0);
+            ui.label(RichText::new(folder).size(12.0).color(pal.text));
+        });
+        ui.add_space(8.0);
+
+        if self.add.scan.running {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(
+                    RichText::new("Analyse du dossier et recherche des titres…")
+                        .size(12.5)
+                        .color(pal.text_dim),
+                );
+            });
+        } else if let Some(error) = self.add.scan.error.clone() {
+            ui.label(RichText::new(error).size(12.0).color(pal.danger));
+        } else if self.add.scan.candidates.is_empty() {
+            ui.label(
+                RichText::new(
+                    "Aucun exécutable de jeu trouvé ici. Choisis le dossier qui contient le jeu \
+                     lui-même (pas la racine de ta bibliothèque).",
+                )
+                .size(12.0)
+                .color(pal.text_dim),
+            );
+        } else {
+            ui.label(
+                RichText::new(
+                    "Vérifie les titres proposés, corrige-les si besoin puis relance la recherche.",
+                )
+                .size(11.0)
+                .color(pal.text_faint),
+            );
+            ui.add_space(8.0);
+            let count = self.add.scan.candidates.len();
+            egui::ScrollArea::vertical()
+                .id_salt("quark_scan_results")
+                .max_height(340.0)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    for index in 0..count {
+                        if let Some(candidate) = self.add.scan.candidates.get_mut(index) {
+                            if scan_row(ui, pal, candidate) {
+                                action.research = Some(index);
+                            }
+                        }
+                    }
+                });
+        }
+
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            if widgets::ghost_button(ui, "← Autre nom", pal, Icon::None).clicked() {
+                action.back = true;
+            }
+            ui.add_space(10.0);
+            let selected = self.add.scan.candidates.iter().filter(|c| c.include).count();
+            let ready = selected > 0 && !self.add.scan.running;
+            let label = format!("Ajouter {selected} jeu(x)");
+            if widgets::accent_button(ui, Vec2::new(230.0, 36.0), &label, pal, ready, Icon::Plus)
+                .clicked()
+                && ready
+            {
+                action.submit = true;
+            }
+        });
+
+        action
+    }
 }

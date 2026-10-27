@@ -13,6 +13,7 @@ pub enum Icon {
     Refresh,
     Trash,
     Gear,
+    Info,
     List,
     Grid,
     Folder,
@@ -127,6 +128,18 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
                 ));
             }
             ring(painter, c, r * 0.66, r * 0.30, color, 0.0, std::f32::consts::TAU);
+        }
+        Icon::Info => {
+            ring(painter, c, s * 0.40, s * 0.31, color, 0.0, std::f32::consts::TAU);
+            painter.circle_filled(Pos2::new(c.x, c.y - s * 0.17), s * 0.055, color);
+            painter.rect_filled(
+                Rect::from_center_size(
+                    Pos2::new(c.x, c.y + s * 0.06),
+                    Vec2::new(s * 0.11, s * 0.32),
+                ),
+                1.0,
+                color,
+            );
         }
         Icon::List => {
             for i in 0..3 {

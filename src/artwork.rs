@@ -21,6 +21,71 @@ pub fn http() -> Client {
         .unwrap_or_else(|_| Client::new())
 }
 
+/// Dimensions d'une image PNG ou JPEG, lues dans l'en-tête (aucun décodage).
+/// Sert à refuser un artwork qui n'a pas la forme attendue.
+pub fn image_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    if bytes.len() > 24 && bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        let w = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
+        let h = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
+        return Some((w, h));
+    }
+    if bytes.len() > 4 && bytes[0] == 0xFF && bytes[1] == 0xD8 {
+        let mut i = 2usize;
+        while i + 9 < bytes.len() {
+            if bytes[i] != 0xFF {
+                i += 1;
+                continue;
+            }
+            let marker = bytes[i + 1];
+            if marker == 0xFF {
+                i += 1;
+                continue;
+            }
+            // Marqueurs sans segment (RST, EOI, TEM).
+            if (0xD0..=0xD9).contains(&marker) || marker == 0x01 {
+                i += 2;
+                continue;
+            }
+            let len = u16::from_be_bytes([bytes[i + 2], bytes[i + 3]]) as usize;
+            let is_sof = matches!(
+                marker,
+                0xC0 | 0xC1 | 0xC2 | 0xC3 | 0xC5 | 0xC6 | 0xC7 | 0xC9 | 0xCA | 0xCB | 0xCD | 0xCE
+                    | 0xCF
+            );
+            if is_sof && i + 9 < bytes.len() {
+                let h = u16::from_be_bytes([bytes[i + 5], bytes[i + 6]]) as u32;
+                let w = u16::from_be_bytes([bytes[i + 7], bytes[i + 8]]) as u32;
+                return Some((w, h));
+            }
+            if len < 2 {
+                return None;
+            }
+            i += 2 + len;
+        }
+    }
+    None
+}
+
+/// Vérifie qu'une image a la forme attendue pour ce type d'artwork.
+fn fits(kind: AssetKind, size: Option<(u32, u32)>) -> bool {
+    let Some((w, h)) = size else {
+        return false;
+    };
+    if w < 32 || h < 32 {
+        return false;
+    }
+    let ratio = h as f32 / w as f32;
+    match kind {
+        // Couverture verticale (Steam : 2:3, SteamGridDB : 600x900).
+        AssetKind::Cover => ratio > 1.15,
+        // Bannière large (Steam : 1920x620).
+        AssetKind::Hero => ratio < 0.8,
+        // Logos et icônes : pas de contrainte de forme, seulement une taille.
+        AssetKind::Logo => w * h > 10_000,
+        AssetKind::Icon => w * h > 1_000,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
     Steam,
@@ -320,19 +385,41 @@ pub fn build_plan(client: &Client, hit: &SearchHit, s: &Settings) -> AssetPlan {
         }
     }
 
-    // Assets officiels Steam (CDN) : utilisés en second choix ou si pas de clé.
+    // Assets officiels Steam (CDN puis `appdetails`) : second choix, ou seule
+    // source quand aucune clé SteamGridDB n'est configurée.
     if let Some(appid) = hit.steam_app_id {
         for (kind, files) in [
-            (AssetKind::Cover, &["library_600x900.jpg", "library_600x900_2x.jpg"][..]),
+            (
+                AssetKind::Cover,
+                &["library_600x900_2x.jpg", "library_600x900.jpg"][..],
+            ),
             (AssetKind::Hero, &["library_hero.jpg"][..]),
-            (AssetKind::Logo, &["logo.png", "logo.jpg"][..]),
-            (AssetKind::Icon, &["header.jpg"][..]),
+            (AssetKind::Logo, &["logo.png", "logo_2x.png", "logo.jpg"][..]),
+            (
+                AssetKind::Icon,
+                &["header.jpg", "capsule_231x87.jpg", "capsule_sm_120.jpg"][..],
+            ),
         ] {
             if plan.candidates(kind).is_empty() {
                 for file in files {
                     for url in steam_cdn(appid, file) {
                         plan.add(kind, url);
                     }
+                }
+            }
+        }
+
+        // `appdetails` donne des URL signées qui survivent aux jeux dont les
+        // fichiers `library_*` n'existent pas.
+        if let Some(details) = steam_details(client, appid, s) {
+            for (kind, url) in [
+                (AssetKind::Cover, &details.capsule_image),
+                (AssetKind::Hero, &details.background_raw),
+                (AssetKind::Hero, &details.background),
+                (AssetKind::Icon, &details.header_image),
+            ] {
+                if !url.is_empty() {
+                    plan.add(kind, url.clone());
                 }
             }
         }
@@ -346,6 +433,68 @@ pub fn build_plan(client: &Client, hit: &SearchHit, s: &Settings) -> AssetPlan {
     }
 
     plan
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct SteamDetails {
+    #[serde(default)]
+    header_image: String,
+    #[serde(default)]
+    capsule_image: String,
+    #[serde(default)]
+    background: String,
+    #[serde(default)]
+    background_raw: String,
+}
+
+/// Fiche Steam d'un jeu : sert de repli pour les artworks manquants.
+fn steam_details(client: &Client, appid: u32, s: &Settings) -> Option<SteamDetails> {
+    #[derive(Deserialize)]
+    struct Envelope {
+        #[serde(default)]
+        success: bool,
+        #[serde(default)]
+        data: Option<SteamDetails>,
+    }
+
+    let resp = client
+        .get("https://store.steampowered.com/api/appdetails")
+        .query(&[
+            ("appids", appid.to_string()),
+            ("l", s.language.clone()),
+            ("cc", s.country.clone()),
+            ("filters", "basic".to_string()),
+        ])
+        .send()
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let mut body: std::collections::HashMap<String, Envelope> = resp.json().ok()?;
+    let envelope = body.remove(&appid.to_string())?;
+    if envelope.success {
+        envelope.data
+    } else {
+        None
+    }
+}
+
+/// Meilleur résultat pour un titre donné : correspondance exacte d'abord,
+/// puis première fiche Steam, puis n'importe quel résultat.
+pub fn best_hit(outcome: &SearchOutcome, title: &str) -> Option<SearchHit> {
+    let needle = crate::scan::normalize(title);
+    let mut steam: Option<&SearchHit> = None;
+    let mut any: Option<&SearchHit> = None;
+    for hit in &outcome.hits {
+        any.get_or_insert(hit);
+        if hit.source == Source::Steam {
+            if !needle.is_empty() && crate::scan::normalize(&hit.title) == needle {
+                return Some(hit.clone());
+            }
+            steam.get_or_insert(hit);
+        }
+    }
+    steam.or(any).cloned()
 }
 
 fn steam_cdn(appid: u32, file: &str) -> Vec<String> {
@@ -450,7 +599,22 @@ pub fn apply_plan(client: &Client, dir: &Path, plan: &AssetPlan) -> (Artwork, Ve
         let mut last_error = String::new();
         let mut done = false;
         for url in candidates {
-            match download_to(client, url, dir, kind) {
+            let (bytes, ext) = match download_image(client, url) {
+                Ok(value) => value,
+                Err(err) => {
+                    last_error = err;
+                    continue;
+                }
+            };
+            let size = image_size(&bytes);
+            if !fits(kind, size) {
+                last_error = match size {
+                    Some((w, h)) => format!("format inattendu ({w}×{h})"),
+                    None => "image illisible".to_string(),
+                };
+                continue;
+            }
+            match save_image(dir, kind, &bytes, ext) {
                 Ok(path) => {
                     artwork.set(kind, path);
                     done = true;
@@ -474,12 +638,7 @@ pub fn fetch(client: &Client, game_id: &str, hit: &SearchHit, s: &Settings) -> (
     apply_plan(client, &dir, &plan)
 }
 
-fn download_to(
-    client: &Client,
-    url: &str,
-    dir: &Path,
-    kind: AssetKind,
-) -> Result<PathBuf, String> {
+fn download_image(client: &Client, url: &str) -> Result<(Vec<u8>, &'static str), String> {
     let resp = client.get(url).send().map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
         return Err(format!("HTTP {}", resp.status().as_u16()));
@@ -507,15 +666,19 @@ fn download_to(
     if bytes.len() < 512 {
         return Err("fichier vide".to_string());
     }
+    Ok((bytes.to_vec(), ext))
+}
 
+/// Écrit l'artwork retenu dans le dossier du jeu, en supprimant l'ancienne
+/// extension pour ne pas laisser deux fichiers concurrents.
+fn save_image(dir: &Path, kind: AssetKind, bytes: &[u8], ext: &str) -> Result<PathBuf, String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    // Supprime un éventuel artwork précédent avec une autre extension.
     for old_ext in ["jpg", "png", "webp"] {
         if old_ext != ext {
             let _ = std::fs::remove_file(dir.join(format!("{}.{old_ext}", kind.stem())));
         }
     }
     let path = dir.join(format!("{}.{ext}", kind.stem()));
-    std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
     Ok(path)
 }

@@ -7,6 +7,7 @@ mod app;
 mod artwork;
 mod config;
 mod proton;
+mod scan;
 mod theme;
 mod ui_dialogs;
 mod ui_library;
@@ -54,6 +55,7 @@ fn cli(args: &[String]) -> Option<i32> {
                  quark --fetch <nom>      Télécharge les artworks du premier résultat\n",
                 env!("CARGO_PKG_VERSION")
             );
+            println!("  quark --scan <dossier>   Liste les jeux détectés dans un dossier");
             Some(0)
         }
         "--doctor" => {
@@ -125,6 +127,35 @@ fn cli(args: &[String]) -> Option<i32> {
             }
             Some(0)
         }
+        "--scan" => {
+            let folder = args.get(1).cloned().unwrap_or_else(|| {
+                eprintln!("Usage : quark --scan <dossier>");
+                std::process::exit(2);
+            });
+            let lib = config::Library::load();
+            let client = artwork::http();
+            let found = scan::scan(std::path::Path::new(&folder), 4, 10);
+            println!("{} candidat(s) dans {folder}", found.len());
+            for item in &found {
+                let outcome = artwork::search(&client, &item.title, &lib.settings);
+                match artwork::best_hit(&outcome, &item.title) {
+                    Some(hit) => println!(
+                        "  - {:<28} {:<10} {} [{}]",
+                        item.title,
+                        hit.title,
+                        item.exe.display(),
+                        hit.source.label()
+                    ),
+                    None => println!(
+                        "  - {:<28} {:<10} {}",
+                        item.title,
+                        "?",
+                        item.exe.display()
+                    ),
+                }
+            }
+            Some(0)
+        }
         "--fetch" => {
             let query = args.get(1).cloned().unwrap_or_else(|| {
                 eprintln!("Usage : quark --fetch <nom du jeu>");
@@ -146,8 +177,15 @@ fn cli(args: &[String]) -> Option<i32> {
             let (artwork, warnings) = artwork::apply_plan(&client, &dir, &plan);
             for kind in config::AssetKind::ALL {
                 match artwork.get(kind) {
-                    Some(path) => println!("  {:<12} {}", kind.label(), path.display()),
-                    None => println!("  {:<12} absent", kind.label()),
+                    Some(path) => {
+                        let size = std::fs::read(path)
+                            .ok()
+                            .and_then(|bytes| artwork::image_size(&bytes))
+                            .map(|(w, h)| format!("{w}×{h}"))
+                            .unwrap_or_else(|| "?".to_string());
+                        println!("  {:<12} {:<12} {}", kind.label(), size, path.display());
+                    }
+                    None => println!("  {:<12} {:<12} absent", kind.label(), ""),
                 }
             }
             for warning in &warnings {

@@ -8,7 +8,7 @@ use crate::proton::{self, ProtonRuntime};
 use crate::theme::{self, Palette};
 use crate::widgets::{self, Icon};
 use eframe::egui::{self, Align, Align2, Color32, FontId, Layout, Pos2, RichText, Sense, Stroke, Vec2};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::{Duration, Instant};
@@ -46,6 +46,7 @@ pub enum SearchState {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AddStep {
     Name,
+    Scan,
     Exe,
 }
 
@@ -67,6 +68,46 @@ pub struct AddGame {
     pub custom_prefix: bool,
     pub prefix: String,
     pub error: Option<String>,
+    /// Analyse de dossier en cours (ajout par lot).
+    pub scan: ScanJob,
+}
+
+/// Un jeu pressenti lors de l'analyse d'un dossier.
+pub struct ScanCandidate {
+    pub exe: PathBuf,
+    pub title: String,
+    pub include: bool,
+    pub hit: Option<SearchHit>,
+    pub detail: String,
+    pub searching: bool,
+}
+
+/// Résultat de l'analyse d'un dossier (thread → interface).
+pub struct ScanOutcome {
+    pub candidates: Vec<ScanCandidate>,
+    pub error: Option<String>,
+}
+
+pub struct ScanJob {
+    pub folder: Option<PathBuf>,
+    pub running: bool,
+    pub rx: Option<Receiver<ScanOutcome>>,
+    pub candidates: Vec<ScanCandidate>,
+    pub search_rx: Option<(usize, Receiver<SearchOutcome>)>,
+    pub error: Option<String>,
+}
+
+impl Default for ScanJob {
+    fn default() -> Self {
+        Self {
+            folder: None,
+            running: false,
+            rx: None,
+            candidates: Vec::new(),
+            search_rx: None,
+            error: None,
+        }
+    }
 }
 
 impl AddGame {
@@ -86,6 +127,7 @@ impl AddGame {
             custom_prefix: false,
             prefix: String::new(),
             error: None,
+            scan: ScanJob::default(),
         }
     }
 }
@@ -105,6 +147,7 @@ pub enum PickerTarget {
     GameExe,
     GamePrefix,
     DefaultPrefix,
+    ScanFolder,
 }
 
 /// Sélecteur de fichiers du système, exécuté dans un thread dédié pour ne pas
@@ -133,6 +176,10 @@ pub struct QuarkApp {
     pub dirty: bool,
     pub last_change: Instant,
     pub applied_theme: Option<ThemeMode>,
+    /// Panneau d'informations du jeu (masqué par défaut, bouton ⓘ).
+    pub show_info: bool,
+    /// Artworks à télécharger après le job en cours.
+    pub job_queue: VecDeque<(String, SearchHit)>,
 }
 
 impl QuarkApp {
@@ -164,6 +211,8 @@ impl QuarkApp {
             toasts: Vec::new(),
             dirty: false,
             last_change: Instant::now(),
+            show_info: false,
+            job_queue: VecDeque::new(),
         }
     }
 
@@ -198,10 +247,15 @@ impl QuarkApp {
 
     fn tick(&mut self, ctx: &egui::Context) {
         self.poll_running_games();
-        self.poll_asset_job();
+        self.poll_asset_job(ctx);
         self.poll_picker(ctx);
         self.poll_search();
+        self.poll_scan();
         self.auto_search(ctx);
+
+        if self.add.scan.running || self.add.scan.search_rx.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(120));
+        }
 
         // Recherche en cours : entretient l'animation du spinner.
         if matches!(self.add.state, SearchState::Loading) {
@@ -252,7 +306,7 @@ impl QuarkApp {
         }
     }
 
-    fn poll_asset_job(&mut self) {
+    fn poll_asset_job(&mut self, ctx: &egui::Context) {
         let received = match self.job.as_ref() {
             Some(job) => Some((job.game_id.clone(), job.label.clone(), job.rx.try_recv())),
             None => None,
@@ -277,10 +331,25 @@ impl QuarkApp {
             }
         }
         self.touch();
-        if warnings.is_empty() {
+        let got_any = AssetKind::ALL
+            .iter()
+            .any(|kind| artwork.get(*kind).is_some());
+        if !got_any {
+            self.toast_error(format!("Artworks introuvables pour {label}"));
+        } else if warnings.is_empty() {
             self.toast_info(format!("Artworks de {label} importés"));
         } else {
             self.toast_error(format!("{label} : {}", warnings.join(" · ")));
+        }
+        self.start_next_job(ctx);
+    }
+
+    fn start_next_job(&mut self, ctx: &egui::Context) {
+        if self.job.is_some() {
+            return;
+        }
+        if let Some((id, hit)) = self.job_queue.pop_front() {
+            self.start_asset_job(ctx, &id, hit);
         }
     }
 
@@ -422,7 +491,7 @@ impl QuarkApp {
         match result {
             Ok(Some(path)) => {
                 self.picker = None;
-                self.apply_pick(target, path);
+                self.apply_pick(ctx, target, path);
             }
             Ok(None) => self.picker = None,
             Err(TryRecvError::Empty) => {
@@ -438,9 +507,10 @@ impl QuarkApp {
         }
     }
 
-    fn apply_pick(&mut self, target: PickerTarget, path: PathBuf) {
+    fn apply_pick(&mut self, ctx: &egui::Context, target: PickerTarget, path: PathBuf) {
         let text = path.display().to_string();
         match target {
+            PickerTarget::ScanFolder => self.start_scan(ctx, path),
             PickerTarget::AddExe => self.add.exe = text,
             PickerTarget::AddPrefix => {
                 self.add.prefix = text;
@@ -464,6 +534,11 @@ impl QuarkApp {
     }
 
     pub fn start_asset_job(&mut self, ctx: &egui::Context, game_id: &str, hit: SearchHit) {
+        // Un seul téléchargement à la fois : les suivants attendent leur tour.
+        if self.job.is_some() {
+            self.job_queue.push_back((game_id.to_string(), hit));
+            return;
+        }
         let (tx, rx) = channel();
         let settings = self.lib.settings.clone();
         let id = game_id.to_string();
@@ -481,6 +556,172 @@ impl QuarkApp {
             game_id: game_id.to_string(),
             label,
         });
+    }
+
+    // -----------------------------------------------------------------------
+    // Ajout par dossier : analyse, correspondances, ajout en lot
+    // -----------------------------------------------------------------------
+
+    /// Analyse un dossier : détecte les exécutables et cherche chaque titre.
+    pub fn start_scan(&mut self, ctx: &egui::Context, folder: PathBuf) {
+        self.add.step = AddStep::Scan;
+        self.add.scan = ScanJob {
+            folder: Some(folder.clone()),
+            running: true,
+            ..ScanJob::default()
+        };
+        let (tx, rx) = channel();
+        let settings = self.lib.settings.clone();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let client = artwork::http();
+            let discovered = crate::scan::scan(&folder, 4, 8);
+            let mut candidates = Vec::new();
+            for item in discovered {
+                let outcome = artwork::search(&client, &item.title, &settings);
+                let hit = artwork::best_hit(&outcome, &item.title);
+                let (title, detail) = match &hit {
+                    Some(h) => (h.title.clone(), format!("{} · {}", h.source.label(), h.detail)),
+                    None => (item.title.clone(), "aucune correspondance".to_string()),
+                };
+                candidates.push(ScanCandidate {
+                    exe: item.exe,
+                    title,
+                    include: true,
+                    hit,
+                    detail,
+                    searching: false,
+                });
+            }
+            let _ = tx.send(ScanOutcome {
+                candidates,
+                error: None,
+            });
+            repaint.request_repaint();
+        });
+        self.add.scan.rx = Some(rx);
+        ctx.request_repaint_after(Duration::from_millis(150));
+    }
+
+    fn poll_scan(&mut self) {
+        if let Some(rx) = self.add.scan.rx.as_ref() {
+            match rx.try_recv() {
+                Ok(outcome) => {
+                    self.add.scan.rx = None;
+                    self.add.scan.running = false;
+                    self.add.scan.candidates = outcome.candidates;
+                    self.add.scan.error = outcome.error;
+                }
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => {
+                    self.add.scan.rx = None;
+                    self.add.scan.running = false;
+                    self.add.scan.error = Some("Analyse interrompue".to_string());
+                }
+            }
+        }
+
+        let pending = self
+            .add
+            .scan
+            .search_rx
+            .as_ref()
+            .map(|(index, rx)| (*index, rx.try_recv()));
+        match pending {
+            Some((index, Ok(outcome))) => {
+                self.add.scan.search_rx = None;
+                let title = self
+                    .add
+                    .scan
+                    .candidates
+                    .get(index)
+                    .map(|c| c.title.clone())
+                    .unwrap_or_default();
+                let hit = artwork::best_hit(&outcome, &title);
+                if let Some(candidate) = self.add.scan.candidates.get_mut(index) {
+                    candidate.searching = false;
+                    candidate.detail = match &hit {
+                        Some(h) => format!("{} · {}", h.source.label(), h.detail),
+                        None => "aucune correspondance".to_string(),
+                    };
+                    if let Some(hit) = hit.clone() {
+                        candidate.title = hit.title.clone();
+                    }
+                    candidate.hit = hit;
+                }
+            }
+            Some((_, Err(TryRecvError::Disconnected))) => {
+                self.add.scan.search_rx = None;
+                self.add.scan.error = Some("Recherche interrompue".to_string());
+            }
+            _ => {}
+        }
+    }
+
+    /// Relance la recherche pour un candidat dont le titre a été corrigé.
+    pub fn start_scan_search(&mut self, ctx: &egui::Context, index: usize) {
+        let Some(title) = self
+            .add
+            .scan
+            .candidates
+            .get(index)
+            .map(|c| c.title.trim().to_string())
+        else {
+            return;
+        };
+        if title.is_empty() {
+            return;
+        }
+        let (tx, rx) = channel();
+        let settings = self.lib.settings.clone();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let client = artwork::http();
+            let _ = tx.send(artwork::search(&client, &title, &settings));
+            repaint.request_repaint();
+        });
+        if let Some(candidate) = self.add.scan.candidates.get_mut(index) {
+            candidate.searching = true;
+        }
+        self.add.scan.search_rx = Some((index, rx));
+        ctx.request_repaint_after(Duration::from_millis(120));
+    }
+
+    /// Ajoute tous les candidats retenus comme jeux.
+    pub fn add_scanned(&mut self, ctx: &egui::Context) {
+        let picked: Vec<(String, PathBuf, Option<SearchHit>)> = self
+            .add
+            .scan
+            .candidates
+            .iter()
+            .filter(|c| c.include && !c.title.trim().is_empty())
+            .map(|c| (c.title.trim().to_string(), c.exe.clone(), c.hit.clone()))
+            .collect();
+        if picked.is_empty() {
+            self.toast_error("Aucun jeu sélectionné");
+            return;
+        }
+        let proton = self.add.proton.clone();
+        let mut added = 0usize;
+        for (title, exe, hit) in picked {
+            let mut game = Game::new(title, exe.display().to_string());
+            game.proton = proton.clone();
+            if let Some(hit) = &hit {
+                game.steam_app_id = hit.steam_app_id;
+                game.sgdb_id = hit.sgdb_id;
+            }
+            let id = game.id.clone();
+            self.selected = Some(id.clone());
+            self.lib.games.push(game);
+            if let Some(hit) = hit {
+                self.start_asset_job(ctx, &id, hit);
+            }
+            added += 1;
+        }
+        self.add.open = false;
+        self.add.scan = ScanJob::default();
+        self.touch();
+        self.toast_info(format!("{added} jeu(x) ajouté(s)"));
     }
 
     // -----------------------------------------------------------------------

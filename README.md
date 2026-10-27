@@ -13,9 +13,16 @@ Windows via **Proton**.
      puis sur **SteamGridDB**, et récupère les **artworks originaux** (bannière `library_hero`,
      logo, couverture `library_600x900`, icône) ;
   2. tu indiques l'**exécutable** (champ texte, sélecteur de fichiers du système, ou glisser-déposer).
+- **Ajout par dossier** : tu choisis un dossier, Quark détecte les exécutables, propose un
+  titre reconnu par la recherche, et tu peux corriger le titre, dire « c'est un jeu » ou
+  « ce n'est pas un jeu », puis tout ajouter d'un coup.
+- **Artworks contrôlés** : chaque image téléchargée est vérifiée (dimensions réelles) pour
+  écarter une vignette de mauvaise forme, avec repli sur la fiche `appdetails` de Steam ;
+  couverture `library_600x900_2x`, bannière `library_hero`, logo transparent et petite capsule.
 - **Affichage façon Steam** : liste à gauche (logo + titre, la ligne sélectionnée a un liseré
   bleu), panneau du jeu à droite ; bannière en haut, bouton **Jouer** avec le **temps de jeu**
-  juste à droite, et l'**engrenage des paramètres en haut à droite**.
+  juste à droite, l'**engrenage des paramètres en haut à droite** et le bouton **ⓘ** juste à sa
+  gauche, qui affiche ou masque les informations détaillées du jeu.
 - **Bascule Liste / Grille** depuis la colonne de gauche (la grille élargit la colonne et
   affiche les couvertures 2:3).
 - **Thème AMOLED** (`#000000`) par défaut, variante « Graphite » (noir doux) dans les paramètres.
@@ -113,6 +120,7 @@ src/ui_store.rs     onglet Boutique (emplacement réservé)
 src/ui_dialogs.rs   ajout de jeu, paramètres globaux, paramètres du jeu (sélecteurs natifs)
 src/config.rs       modèle de données, thème, persistance JSON, formats (temps de jeu, dates)
 src/artwork.rs      recherche Steam/SteamGridDB + téléchargement et cache des artworks
+src/scan.rs         découverte des jeux d'un dossier (ajout par lot)
 src/proton.rs       détection des runtimes Proton + construction de la ligne de commande
 src/theme.rs        thème AMOLED/Graphite
 src/widgets.rs      icônes vectorielles et boutons dessinés à la main (aucune police d'icônes)
