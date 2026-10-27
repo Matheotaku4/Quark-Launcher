@@ -5,7 +5,7 @@
 //!   * `~/.local/share/quark/`            -> artworks mis en cache + préfixes Proton par défaut
 
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -67,16 +67,6 @@ pub fn expand_tilde(p: &str) -> String {
         home_dir().display().to_string()
     } else {
         trimmed.to_string()
-    }
-}
-
-/// URI exploitable par le chargeur d'images d'egui.
-pub fn file_uri(path: &Path) -> String {
-    let s = path.display().to_string();
-    if s.starts_with("file://") {
-        s
-    } else {
-        format!("file://{s}")
     }
 }
 

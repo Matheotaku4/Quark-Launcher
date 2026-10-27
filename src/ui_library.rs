@@ -1,7 +1,8 @@
 //! Onglet Bibliothèque : colonne de gauche (liste ou grille) + panneau du jeu.
 
 use crate::app::QuarkApp;
-use crate::config::{self, AssetKind, Game, ViewMode, file_uri};
+use crate::config::{self, AssetKind, Game, ViewMode};
+use crate::images::{draw_fill, draw_fit};
 use crate::proton::{self, LaunchKind};
 use crate::theme::{self, Palette};
 use crate::widgets::{self, Icon};
@@ -114,7 +115,8 @@ impl QuarkApp {
                             };
                             let selected = self.selected.as_deref() == Some(id.as_str());
                             let running = self.is_running(id);
-                            let response = game_row(ui, &pal, &game, selected, running);
+                            let response =
+                                game_row(ui, &pal, &game, selected, running, &mut self.textures);
                             if response.clicked() {
                                 self.select(id);
                             }
@@ -153,6 +155,7 @@ impl QuarkApp {
                                         Vec2::new(tile_w, tile_h),
                                         selected,
                                         running,
+                                        &mut self.textures,
                                     );
                                     if response.clicked() {
                                         self.select(id);
@@ -234,11 +237,11 @@ impl QuarkApp {
                     .get(AssetKind::Hero)
                     .filter(|p| p.exists())
                     .cloned();
-                if let Some(hero) = hero_path {
-                    ui.put(
-                        hero_rect,
-                        egui::Image::new(file_uri(&hero)).fit_to_exact_size(hero_rect.size()),
-                    );
+                let hero_tex = hero_path
+                    .as_ref()
+                    .and_then(|path| self.texture(ui.ctx(), path));
+                if let Some(texture) = hero_tex {
+                    draw_fill(ui, &texture, hero_rect);
                 } else {
                     painter.rect_filled(hero_rect, 0.0, pal.surface_hover);
                 }
@@ -258,12 +261,9 @@ impl QuarkApp {
                     .cloned();
                 match logo_path {
                     Some(logo) => {
-                        ui.put(
-                            logo_rect,
-                            egui::Image::new(file_uri(&logo))
-                                .max_size(logo_rect.size())
-                                .maintain_aspect_ratio(true),
-                        );
+                        if let Some(texture) = self.texture(ui.ctx(), &logo) {
+                            draw_fit(ui, &texture, logo_rect);
+                        }
                     }
                     None => {
                         painter.text(
@@ -440,6 +440,7 @@ fn game_row(
     game: &Game,
     selected: bool,
     running: bool,
+    textures: &mut crate::images::TextureCache,
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 46.0), Sense::click());
     let painter = ui.painter_at(rect);
@@ -464,25 +465,25 @@ fn game_row(
     let logo = game.artwork.get(AssetKind::Logo).filter(|p| p.exists()).cloned();
     match logo {
         Some(path) => {
-            ui.put(
-                logo_box,
-                egui::Image::new(file_uri(&path))
-                    .max_size(logo_box.size())
-                    .maintain_aspect_ratio(true),
-            );
+            if let Some(texture) = textures.get(ui.ctx(), &path) {
+                draw_fit(ui, texture, logo_box);
+            }
         }
         None => {
             let icon = game.artwork.get(AssetKind::Icon).filter(|p| p.exists()).cloned();
             match icon {
                 Some(path) => {
                     let box_size = Vec2::splat(28.0);
-                    ui.put(
-                        Rect::from_min_size(
-                            Pos2::new(logo_box.left(), rect.center().y - box_size.y / 2.0),
-                            box_size,
-                        ),
-                        egui::Image::new(file_uri(&path)).max_size(box_size),
-                    );
+                    if let Some(texture) = textures.get(ui.ctx(), &path) {
+                        draw_fit(
+                            ui,
+                            texture,
+                            Rect::from_min_size(
+                                Pos2::new(logo_box.left(), rect.center().y - box_size.y / 2.0),
+                                box_size,
+                            ),
+                        );
+                    }
                 }
                 None => {
                     widgets::monogram(
@@ -522,6 +523,7 @@ fn game_tile(
     size: Vec2,
     selected: bool,
     running: bool,
+    textures: &mut crate::images::TextureCache,
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     let painter = ui.painter_at(rect);
@@ -529,14 +531,10 @@ fn game_tile(
     painter.rect_filled(rect, 6.0, pal.surface);
     let cover = game.artwork.get(AssetKind::Cover).filter(|p| p.exists()).cloned();
     match cover {
-        Some(path) => {
-            ui.put(
-                rect,
-                egui::Image::new(file_uri(&path))
-                    .fit_to_exact_size(rect.size())
-                    .corner_radius(6.0),
-            );
-        }
+        Some(path) => match textures.get(ui.ctx(), &path) {
+            Some(texture) => draw_fill(ui, texture, rect),
+            None => widgets::monogram(&painter, rect.shrink(12.0), &game.initials(), pal),
+        },
         None => {
             widgets::monogram(&painter, rect.shrink(12.0), &game.initials(), pal);
         }

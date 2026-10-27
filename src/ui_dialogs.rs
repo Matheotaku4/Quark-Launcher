@@ -27,7 +27,6 @@ impl QuarkApp {
 
         let pal = self.pal;
         let step = self.add.step;
-        let mut window_open = true;
         let mut close = false;
         let mut continue_to_exe = false;
         let mut pick_hit: Option<usize> = None;
@@ -44,14 +43,10 @@ impl QuarkApp {
             AddStep::Exe => "Ajouter un jeu · exécutable",
         };
 
-        egui::Window::new(title)
-            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-            .collapsible(false)
-            .resizable(false)
-            .open(&mut window_open)
-            .default_width(660.0)
-            .show(ctx, |ui| {
+        let modal = egui::Modal::new(egui::Id::new("quark_add_game")).show(ctx, |ui| {
                 ui.set_min_width(660.0);
+                ui.label(RichText::new(title).size(17.0).color(pal.text));
+                ui.add_space(10.0);
 
                 match step {
                     AddStep::Name => {
@@ -263,6 +258,9 @@ impl QuarkApp {
                     }
                 }
             });
+        if modal.should_close() {
+            close = true;
+        }
 
         if ctx.input(|i| i.raw.dropped_files.len() > 0) && self.add.step == AddStep::Exe {
             let dropped = ctx.input(|i| i.raw.dropped_files.clone());
@@ -341,7 +339,7 @@ impl QuarkApp {
             self.add_scanned(ctx);
         }
 
-        if close || !window_open {
+        if close {
             self.add.open = false;
         }
     }
@@ -359,20 +357,19 @@ impl QuarkApp {
             return;
         }
         let pal = self.pal;
-        let mut open = true;
         let mut close_requested = false;
         let mut browse_prefix = false;
         let mut redetect = false;
 
-        egui::Window::new("Paramètres")
-            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-            .collapsible(false)
-            .resizable(false)
-            .open(&mut open)
-            .default_width(680.0)
-            .show(ctx, |ui| {
+        let max_height = (ctx.screen_rect().height() * 0.72).max(280.0);
+        let modal = egui::Modal::new(egui::Id::new("quark_settings")).show(ctx, |ui| {
                 ui.set_min_width(680.0);
-
+                ui.label(RichText::new("Paramètres").size(17.0).color(pal.text));
+                ui.add_space(10.0);
+                egui::ScrollArea::vertical()
+                    .max_height(max_height)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
                 section(ui, "APPARENCE", &pal);
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Thème").size(12.5).color(pal.text_dim));
@@ -552,7 +549,11 @@ impl QuarkApp {
                         close_requested = true;
                     }
                 });
+                    });
             });
+        if modal.should_close() {
+            close_requested = true;
+        }
 
         if redetect {
             self.runtimes = proton::detect_runtimes();
@@ -569,7 +570,7 @@ impl QuarkApp {
                 .unwrap_or_else(config::prefix_root);
             self.pick_directory(ctx, start, PickerTarget::DefaultPrefix);
         }
-        if !open || close_requested {
+        if close_requested {
             self.settings_open = false;
         }
     }
@@ -588,22 +589,25 @@ impl QuarkApp {
             return;
         }
         let pal = self.pal;
-        let mut open = true;
         let mut cancel = false;
         let mut save = false;
         let mut browse_exe = false;
         let mut browse_prefix = false;
         let mut remove = false;
 
-        egui::Window::new(format!("Paramètres · {}", game.name))
-            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-            .collapsible(false)
-            .resizable(false)
-            .open(&mut open)
-            .default_width(660.0)
-            .show(ctx, |ui| {
+        let max_height = (ctx.screen_rect().height() * 0.62).max(260.0);
+        let modal = egui::Modal::new(egui::Id::new("quark_game_settings")).show(ctx, |ui| {
                 ui.set_min_width(660.0);
-
+                ui.label(
+                    RichText::new(format!("Paramètres · {}", game.name))
+                        .size(17.0)
+                        .color(pal.text),
+                );
+                ui.add_space(10.0);
+                egui::ScrollArea::vertical()
+                    .max_height(max_height)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
                 section(ui, "JEU", &pal);
                 ui.label(RichText::new("Nom affiché").size(12.5).color(pal.text_dim));
                 ui.add(
@@ -690,6 +694,7 @@ impl QuarkApp {
                     .color(pal.text_dim),
                 );
 
+                });
                 ui.add_space(16.0);
                 ui.horizontal(|ui| {
                     let ready = !game.exe.trim().is_empty();
@@ -732,6 +737,9 @@ impl QuarkApp {
                         .color(pal.text_faint),
                 );
             });
+        if modal.should_close() {
+            cancel = true;
+        }
 
         if browse_exe {
             self.pick_file(ctx, own_dir(&game.exe), PickerTarget::GameExe);
@@ -759,7 +767,7 @@ impl QuarkApp {
             return;
         }
         // Toujours ouvert : on remet le brouillon en place pour la frame suivante.
-        if open && !cancel {
+        if !cancel {
             self.editing = Some(game);
         }
     }
@@ -781,12 +789,7 @@ impl QuarkApp {
         let mut cancel = false;
         let mut confirm = false;
 
-        egui::Window::new("Supprimer le jeu")
-            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-            .collapsible(false)
-            .resizable(false)
-            .default_width(520.0)
-            .show(ctx, |ui| {
+        let modal = egui::Modal::new(egui::Id::new("quark_confirm_remove")).show(ctx, |ui| {
                 ui.set_min_width(520.0);
                 ui.label(RichText::new(format!("Retirer « {name} » de la bibliothèque ?")).size(14.0));
                 ui.add_space(6.0);
@@ -811,12 +814,17 @@ impl QuarkApp {
                     }
                 });
             });
+        if modal.should_close() {
+            cancel = true;
+        }
 
         if confirm {
             self.lib.remove(&id);
             let _ = std::fs::remove_dir_all(config::artwork_root().join(&id));
+            // Plus rien à télécharger pour ce jeu, et le job en cours est ignoré.
+            self.job_queue.retain(|(queued, _)| queued != &id);
             if self.selected.as_deref() == Some(id.as_str()) {
-                self.selected = None;
+                self.selected = self.lib.games.first().map(|g| g.id.clone());
             }
             self.confirm_remove = None;
             self.touch();

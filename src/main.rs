@@ -6,6 +6,7 @@
 mod app;
 mod artwork;
 mod config;
+mod images;
 mod proton;
 mod scan;
 mod theme;

@@ -58,6 +58,9 @@ cargo build --release      # binaire : target/release/quark
 - `reqwest` (bloquant, rustls) pour Steam et SteamGridDB, `serde` pour `config.json`.
 - `rfd` pour les sélecteurs de fichiers **natifs** (XDG Desktop Portal : dialogue GTK ou KDE
   selon le bureau, `zenity` en secours). Aucune dépendance GTK à la compilation.
+- `image` (codecs PNG/JPEG/WebP) : Quark décode lui-même les artworks et les envoie à egui
+  sous forme de textures, sans dépendre du chargeur `file://` d'`egui_extras`, qui n'est pas
+  compilé par défaut et affichait une icône d'erreur à la place des bannières.
 
 À noter : `egui` 0.37 réorganise son API (panneaux/`App::ui`) ; Quark vise volontairement la
 série 0.32 dont l'API est stable et suffisante ici.
@@ -88,6 +91,19 @@ et reste dans ton fichier de configuration local.
 | `~/.config/quark/config.json` | réglages + jeux (JSON lisible et éditable à la main) |
 | `~/.local/share/quark/artwork/<id>/` | artworks téléchargés (aucune requête réseau à l'affichage) |
 | `~/.local/share/quark/prefixes/<id>/` | préfixes Proton créés automatiquement |
+
+## Releases
+
+Chaque push sur `main` déclenche [`.github/workflows/release.yml`](.github/workflows/release.yml) :
+GitHub Actions compile Quark, crée le paquet
+`quark-<version>-linux-x86_64.tar.gz` (+ empreinte SHA-256) et publie une release taguée
+`v<version>` (numéro lu dans `Cargo.toml`). On peut aussi la lancer à la main depuis
+l'onglet **Actions** du dépôt.
+
+```bash
+tar -xzf quark-0.2.0-linux-x86_64.tar.gz
+cd quark && ./quark
+```
 
 ## Proton, concrètement
 
@@ -121,6 +137,7 @@ src/ui_dialogs.rs   ajout de jeu, paramètres globaux, paramètres du jeu (séle
 src/config.rs       modèle de données, thème, persistance JSON, formats (temps de jeu, dates)
 src/artwork.rs      recherche Steam/SteamGridDB + téléchargement et cache des artworks
 src/scan.rs         découverte des jeux d'un dossier (ajout par lot)
+src/images.rs       cache de textures : décodage des artworks par Quark lui-même
 src/proton.rs       détection des runtimes Proton + construction de la ligne de commande
 src/theme.rs        thème AMOLED/Graphite
 src/widgets.rs      icônes vectorielles et boutons dessinés à la main (aucune police d'icônes)

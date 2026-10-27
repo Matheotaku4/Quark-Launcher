@@ -7,7 +7,7 @@ use crate::config::{
 use crate::proton::{self, ProtonRuntime};
 use crate::theme::{self, Palette};
 use crate::widgets::{self, Icon};
-use eframe::egui::{self, Align, Align2, Color32, FontId, Layout, Pos2, RichText, Sense, Stroke, Vec2};
+use eframe::egui::{self, Align, Align2, FontId, Layout, RichText, Sense, Stroke, Vec2};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
@@ -180,6 +180,8 @@ pub struct QuarkApp {
     pub show_info: bool,
     /// Artworks à télécharger après le job en cours.
     pub job_queue: VecDeque<(String, SearchHit)>,
+    /// Textures des artworks (décodées par Quark lui-même).
+    pub textures: crate::images::TextureCache,
 }
 
 impl QuarkApp {
@@ -213,6 +215,7 @@ impl QuarkApp {
             last_change: Instant::now(),
             show_info: false,
             job_queue: VecDeque::new(),
+            textures: crate::images::TextureCache::default(),
         }
     }
 
@@ -859,18 +862,6 @@ impl QuarkApp {
             });
     }
 
-    fn backdrop(&mut self, ctx: &egui::Context) {
-        egui::Area::new(egui::Id::new("quark_backdrop"))
-            .order(egui::Order::Middle)
-            .fixed_pos(Pos2::ZERO)
-            .show(ctx, |ui| {
-                let rect = ctx.screen_rect();
-                ui.allocate_response(rect.size(), Sense::click());
-                ui.painter()
-                    .rect_filled(rect, 0.0, Color32::from_black_alpha(175));
-            });
-    }
-
     fn toasts_ui(&mut self, ctx: &egui::Context) {
         if self.toasts.is_empty() {
             return;
@@ -944,15 +935,6 @@ impl eframe::App for QuarkApp {
         match self.tab {
             Tab::Store => self.store_tab(ctx),
             Tab::Library => self.library_tab(ctx),
-        }
-
-        let modal = self.settings_open
-            || self.add.open
-            || self.editing.is_some()
-            || self.picker.is_some()
-            || self.confirm_remove.is_some();
-        if modal {
-            self.backdrop(ctx);
         }
 
         self.add_dialog(ctx);

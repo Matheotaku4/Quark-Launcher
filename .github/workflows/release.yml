@@ -1,0 +1,55 @@
+name: release
+
+# Construit Quark sous Linux et publie une release GitHub à chaque push sur
+# main (ou manuellement depuis l'onglet Actions). Le numéro de version vient
+# de Cargo.toml : le tag `v<version>` est créé/actualisé automatiquement.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Dépendances système (X11, Wayland, GL)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libx11-dev libxkbcommon-dev \
+            libwayland-dev libgl1-mesa-dev
+
+      - name: Version
+        id: version
+        run: echo "value=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: Compilation
+        run: cargo build --release --locked
+
+      - name: Paquet
+        run: |
+          mkdir -p dist/quark
+          cp target/release/quark dist/quark/
+          cp README.md dist/quark/
+          tar -czf "quark-${{ steps.version.outputs.value }}-linux-x86_64.tar.gz" -C dist quark
+          sha256sum "quark-${{ steps.version.outputs.value }}-linux-x86_64.tar.gz" > "quark-${{ steps.version.outputs.value }}-linux-x86_64.tar.gz.sha256"
+
+      - name: Publication de la release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.value }}
+          name: Quark v${{ steps.version.outputs.value }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            quark-${{ steps.version.outputs.value }}-linux-x86_64.tar.gz
+            quark-${{ steps.version.outputs.value }}-linux-x86_64.tar.gz.sha256

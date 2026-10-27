@@ -1,12 +1,15 @@
 [package]
 name = "quark"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 [dependencies]
 dirs = "7.0.0"
 eframe = { version = "0.32", default-features = false, features = ["glow", "x11", "wayland", "default_fonts"] }
-egui_extras = { version = "0.32", features = ["image", "http"] }
+egui_extras = { version = "0.32", features = ["file", "image", "http"] }
+# Décodage des artworks : egui_extras dépend d'`image` sans codec, on les
+# active ici pour pouvoir décoder les JPEG/PNG servis par Steam et SteamGridDB.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["blocking", "json", "query", "rustls"] }
 # Sélecteur de fichiers natif : XDG Desktop Portal (GTK ou KDE du bureau), sans
 # dépendance GTK à la compilation.
