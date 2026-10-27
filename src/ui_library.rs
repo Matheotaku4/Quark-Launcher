@@ -1,12 +1,13 @@
 //! Onglet Bibliothèque : colonne de gauche (liste ou grille) + panneau du jeu.
 
-use crate::app::QuarkApp;
+use crate::app::{NewsState, QuarkApp};
 use crate::config::{self, AssetKind, Game, ViewMode};
 use crate::images::{draw_fill, draw_fit};
+use crate::news;
 use crate::proton::{self, LaunchKind};
 use crate::theme::{self, Palette};
 use crate::widgets::{self, Icon};
-use eframe::egui::{self, Align, Align2, FontId, Layout, Pos2, Rect, RichText, Sense, Vec2};
+use eframe::egui::{self, Align, Align2, Color32, FontId, Layout, Pos2, Rect, RichText, Sense, Vec2};
 
 impl QuarkApp {
     pub(crate) fn library_tab(&mut self, ctx: &egui::Context) {
@@ -342,6 +343,11 @@ impl QuarkApp {
                 }
 
                 // -----------------------------------------------------------------
+                // Actualités du jeu, sous la bannière (comme la fiche Steam)
+                // -----------------------------------------------------------------
+                self.news_section(ui, &game, &pal, width);
+
+                // -----------------------------------------------------------------
                 // Bloc d'informations (masqué par défaut, bouton ⓘ)
                 if self.show_info {
                     // Bloc d'informations
@@ -420,12 +426,147 @@ impl QuarkApp {
                     .color(pal.text_faint),
             );
             ui.add_space(18.0);
-            if widgets::accent_button(ui, Vec2::new(190.0, 40.0), "Ajouter un jeu", &pal, true, Icon::Plus)
-                .clicked()
+            if widgets::accent_button(ui, Vec2::new(190.0, 40.0), "Ajouter un jeu", &pal, true, Icon::Plus)                    .clicked()
             {
                 self.open_add_dialog();
             }
         });
+    }
+
+    /// Actualités du jeu (flux public Steam), affichées sous la bannière.
+    fn news_section(&mut self, ui: &mut egui::Ui, game: &Game, pal: &Palette, width: f32) {
+        let (loading, failure, items) = match self.news.get(&game.id) {
+            Some(NewsState::Loading) => (true, None, Vec::new()),
+            Some(NewsState::Failed(message)) => (false, Some(message.clone()), Vec::new()),
+            Some(NewsState::Loaded(items)) => (false, None, items.clone()),
+            None => (false, None, Vec::new()),
+        };
+        let linked = game.steam_app_id.is_some();
+        let mut reload = false;
+        let mut open: Option<String> = None;
+
+        ui.add_space(26.0);
+        ui.horizontal(|ui| {
+            ui.add_space(32.0);
+            ui.label(RichText::new("ACTUALITÉS").size(11.0).color(pal.text_faint));
+            if linked {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.add_space(32.0);
+                    let label = if failure.is_some() { "Réessayer" } else { "Actualiser" };
+                    if widgets::ghost_button(ui, label, pal, Icon::Refresh).clicked() {
+                        reload = true;
+                    }
+                });
+            }
+        });
+        ui.add_space(10.0);
+
+        if !linked {
+            ui.horizontal(|ui| {
+                ui.add_space(32.0);
+                ui.label(
+                    RichText::new(
+                        "Ce jeu n'est pas lié à la fiche Steam : pas d'actualités à afficher.",
+                    )
+                    .size(12.0)
+                    .color(pal.text_faint),
+                );
+            });
+            return;
+        }
+
+        if loading {
+            ui.horizontal(|ui| {
+                ui.add_space(32.0);
+                ui.spinner();
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new("Chargement des actualités…")
+                        .size(12.0)
+                        .color(pal.text_dim),
+                );
+            });
+            return;
+        }
+
+        if let Some(message) = failure {
+            ui.horizontal(|ui| {
+                ui.add_space(32.0);
+                ui.label(
+                    RichText::new(format!("Actualités indisponibles · {message}"))
+                        .size(12.0)
+                        .color(pal.danger),
+                );
+            });
+            return;
+        }
+
+        if items.is_empty() {
+            ui.horizontal(|ui| {
+                ui.add_space(32.0);
+                ui.label(
+                    RichText::new("Aucune actualité pour ce jeu.")
+                        .size(12.0)
+                        .color(pal.text_faint),
+                );
+            });
+            return;
+        }
+
+        let card_width = (width - 64.0).max(220.0);
+        for (index, item) in items.iter().enumerate() {
+            let id = ui.make_persistent_id(("quark_news", index, item.url.as_str()));
+            // Le fond est posé d'après l'état du tour précédent : egui redessine
+            // aussitôt que la souris entre, le décalage est invisible.
+            let hovered = ui.data(|data| data.get_temp::<bool>(id).unwrap_or(false));
+            ui.horizontal(|ui| {
+                ui.add_space(32.0);
+                let frame = egui::Frame::new()
+                    .fill(if hovered {
+                        pal.surface_hover
+                    } else {
+                        Color32::TRANSPARENT
+                    })
+                    .corner_radius(6.0)
+                    .inner_margin(egui::Margin::symmetric(12, 10));
+                let inner = frame.show(ui, |ui| {
+                    ui.set_width(card_width);
+                    let mut meta = vec![item.feed.clone()];
+                    if !item.author.is_empty() {
+                        meta.push(item.author.clone());
+                    }
+                    meta.push(config::human_ago(item.date));
+                    ui.label(RichText::new(meta.join("  ·  ")).size(11.0).color(pal.text_faint));
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(&item.title).size(14.5).color(pal.text));
+                    if !item.excerpt.is_empty() {
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(&item.excerpt).size(12.0).color(pal.text_dim));
+                    }
+                });
+                let response = ui
+                    .interact(inner.response.rect, id, Sense::click())
+                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                let is_hovered = response.hovered();
+                ui.data_mut(|data| data.insert_temp(id, is_hovered));
+                if is_hovered {
+                    ui.ctx().request_repaint();
+                }
+                if response.clicked() {
+                    open = Some(item.url.clone());
+                }
+            });
+            ui.add_space(4.0);
+        }
+
+        if reload {
+            self.reload_news(ui.ctx());
+        }
+        if let Some(url) = open {
+            if let Err(err) = news::open_in_browser(&url) {
+                self.toast_error(format!("Ouverture du lien impossible : {err}"));
+            }
+        }
     }
 }
 
@@ -433,7 +574,7 @@ impl QuarkApp {
 // Lignes / tuiles
 // ---------------------------------------------------------------------------
 
-/// Ligne de la vue liste : logo à gauche, titre à côté (comme Steam).
+/// Ligne de la vue liste : vignette à gauche, titre à côté (comme Steam).
 fn game_row(
     ui: &mut egui::Ui,
     pal: &Palette,

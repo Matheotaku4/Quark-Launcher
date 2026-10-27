@@ -22,15 +22,17 @@ Windows via **Proton**.
 - **Affichage façon Steam** : liste à gauche (logo + titre, la ligne sélectionnée a un liseré
   bleu), panneau du jeu à droite ; bannière en haut, bouton **Jouer** avec le **temps de jeu**
   juste à droite, l'**engrenage des paramètres en haut à droite** et le bouton **ⓘ** juste à sa
-  gauche, qui affiche ou masque les informations détaillées du jeu.
-- **Bascule Liste / Grille** depuis la colonne de gauche (la grille élargit la colonne et
-  affiche les couvertures 2:3).
+  gauche, qui affiche ou masque les informations détaillées du jeu.- **Bascule Liste / Grille** depuis la colonne de gauche (la grille élargit la colonne et
+affiche les couvertures 2:3).
+- **Actualités du jeu** : sous la bannière, les dernières nouvelles officielles (flux public
+  Steam `ISteamNews`) — source, auteur, date, aperçu en texte brut ; un clic ouvre l'article
+  dans le navigateur du bureau.
 - **Thème AMOLED** (`#000000`) par défaut, variante « Graphite » (noir doux) dans les paramètres.
 - **Proton** : détection automatique des runtimes (`steamapps/common/Proton*` et
   `compatibilitytools.d/*`, y compris Flatpak/Snap), choix du runtime **par jeu** ou global,
   **préfixe Proton par défaut** dans les paramètres et **surcharge par jeu**.
 - **Suivi du temps de jeu** : chaque session est chronométrée (relance, temps total, dernière session).
-- **Diagnostic en ligne de commande** : `--doctor`, `--search`, `--fetch` (aucun écran requis).
+- **Diagnostic en ligne de commande** : `--doctor`, `--search`, `--fetch`, `--news` (aucun écran requis).
 
 ## Compilation
 
@@ -101,7 +103,7 @@ GitHub Actions compile Quark, crée le paquet
 l'onglet **Actions** du dépôt.
 
 ```bash
-tar -xzf quark-0.2.2-linux-x86_64.tar.gz
+tar -xzf quark-0.2.3-linux-x86_64.tar.gz
 cd quark && ./quark
 ```
 
@@ -124,12 +126,13 @@ cd quark && ./quark
 target/release/quark --doctor          # dossiers, runtimes Proton détectés, état des jeux
 target/release/quark --search portal   # résultats Steam + SteamGridDB et plan d'artworks
 target/release/quark --fetch portal    # télécharge réellement les artworks dans /tmp
+target/release/quark --news portal     # dernières actualités Steam du jeu (appid ou titre)
 ```
 
 ## Structure du code
 
 ```
-src/main.rs         point d'entrée + CLI (--doctor/--search/--fetch)
+src/main.rs         point d'entrée + CLI (--doctor/--search/--fetch/--news)
 src/app.rs          état de l'application, boucle egui, lancement, temps de jeu, toasts
 src/ui_library.rs   onglet Bibliothèque : colonne liste/grille + panneau du jeu (bannière, Jouer)
 src/ui_store.rs     onglet Boutique (emplacement réservé)
@@ -137,6 +140,7 @@ src/ui_dialogs.rs   ajout de jeu, paramètres globaux, paramètres du jeu (séle
 src/config.rs       modèle de données, thème, persistance JSON, formats (temps de jeu, dates)
 src/artwork.rs      recherche Steam/SteamGridDB + téléchargement et cache des artworks
 src/scan.rs         découverte des jeux d'un dossier (ajout par lot)
+src/news.rs         actualités d'un jeu (flux public Steam) et ouverture des liens
 src/images.rs       cache de textures : décodage des artworks par Quark lui-même
 src/proton.rs       détection des runtimes Proton + construction de la ligne de commande
 src/theme.rs        thème AMOLED/Graphite

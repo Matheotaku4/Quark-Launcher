@@ -820,6 +820,7 @@ impl QuarkApp {
 
         if confirm {
             self.lib.remove(&id);
+            self.news.remove(&id);
             let _ = std::fs::remove_dir_all(config::artwork_root().join(&id));
             // Plus rien à télécharger pour ce jeu, et le job en cours est ignoré.
             self.job_queue.retain(|(queued, _)| queued != &id);

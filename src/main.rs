@@ -7,6 +7,7 @@ mod app;
 mod artwork;
 mod config;
 mod images;
+mod news;
 mod proton;
 mod scan;
 mod theme;
@@ -57,6 +58,7 @@ fn cli(args: &[String]) -> Option<i32> {
                 env!("CARGO_PKG_VERSION")
             );
             println!("  quark --scan <dossier>   Liste les jeux détectés dans un dossier");
+            println!("  quark --news <nom|appid> Affiche les actualités Steam d'un jeu");
             Some(0)
         }
         "--doctor" => {
@@ -156,6 +158,47 @@ fn cli(args: &[String]) -> Option<i32> {
                 }
             }
             Some(0)
+        }
+        "--news" => {
+            let arg = args.get(1).cloned().unwrap_or_else(|| {
+                eprintln!("Usage : quark --news <appid | nom du jeu>");
+                std::process::exit(2);
+            });
+            let lib = config::Library::load();
+            let client = artwork::http();
+            let app_id = match arg.parse::<u32>() {
+                Ok(id) => id,
+                Err(_) => {
+                    let outcome = artwork::search(&client, &arg, &lib.settings);
+                    match outcome.hits.iter().find_map(|hit| hit.steam_app_id) {
+                        Some(id) => id,
+                        None => {
+                            eprintln!("Aucun appid Steam pour « {arg} »");
+                            for warning in &outcome.warnings {
+                                eprintln!("  ! {warning}");
+                            }
+                            return Some(1);
+                        }
+                    }
+                }
+            };
+            match news::fetch(&client, app_id, news::COUNT) {
+                Ok(items) => {
+                    println!("{} actualité(s) pour l'appid {app_id}", items.len());
+                    for item in &items {
+                        println!("  - [{}] {}", config::human_ago(item.date), item.title);
+                        println!("      {} · {}", item.feed, item.url);
+                        if !item.excerpt.is_empty() {
+                            println!("      {}", item.excerpt);
+                        }
+                    }
+                    Some(0)
+                }
+                Err(err) => {
+                    eprintln!("Actualités indisponibles : {err}");
+                    Some(1)
+                }
+            }
         }
         "--fetch" => {
             let query = args.get(1).cloned().unwrap_or_else(|| {

@@ -4,6 +4,7 @@ use crate::artwork::{self, SearchHit, SearchOutcome};
 use crate::config::{
     Artwork, AssetKind, Game, Library, ProtonMode, ThemeMode, ViewMode, human_playtime, now_ts,
 };
+use crate::news::{self, NewsItem};
 use crate::proton::{self, ProtonRuntime};
 use crate::theme::{self, Palette};
 use crate::widgets::{self, Icon};
@@ -132,6 +133,19 @@ impl AddGame {
     }
 }
 
+/// État des actualités d'un jeu (mises en cache par identifiant de jeu).
+pub enum NewsState {
+    Loading,
+    Loaded(Vec<NewsItem>),
+    Failed(String),
+}
+
+/// Chargement d'actualités en cours.
+pub struct NewsJob {
+    pub game_id: String,
+    pub rx: Receiver<Result<Vec<NewsItem>, String>>,
+}
+
 /// Téléchargement d'artworks en cours.
 pub struct AssetJob {
     pub rx: Receiver<(Artwork, Vec<String>)>,
@@ -182,6 +196,10 @@ pub struct QuarkApp {
     pub job_queue: VecDeque<(String, SearchHit)>,
     /// Textures des artworks (décodées par Quark lui-même).
     pub textures: crate::images::TextureCache,
+    /// Actualités par jeu (chargées une fois, mises en cache).
+    pub news: HashMap<String, NewsState>,
+    /// Chargement d'actualités en cours.
+    pub news_job: Option<NewsJob>,
 }
 
 impl QuarkApp {
@@ -216,6 +234,8 @@ impl QuarkApp {
             show_info: false,
             job_queue: VecDeque::new(),
             textures: crate::images::TextureCache::default(),
+            news: HashMap::new(),
+            news_job: None,
         }
     }
 
@@ -251,10 +271,12 @@ impl QuarkApp {
     fn tick(&mut self, ctx: &egui::Context) {
         self.poll_running_games();
         self.poll_asset_job(ctx);
+        self.poll_news();
         self.poll_picker(ctx);
         self.poll_search();
         self.poll_scan();
         self.auto_search(ctx);
+        self.ensure_news(ctx);
 
         if self.add.scan.running || self.add.scan.search_rx.is_some() {
             ctx.request_repaint_after(Duration::from_millis(120));
@@ -283,7 +305,7 @@ impl QuarkApp {
             let _ = self.lib.save();
         }
 
-        if self.job.is_some() || !self.running.is_empty() {
+        if self.job.is_some() || self.news_job.is_some() || !self.running.is_empty() {
             ctx.request_repaint_after(Duration::from_millis(400));
         }
     }
@@ -534,6 +556,91 @@ impl QuarkApp {
                 self.touch();
             }
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Actualités (flux Steam du jeu, sous la bannière)
+    // -----------------------------------------------------------------------
+
+    /// Charge les actualités du jeu sélectionné, une seule fois par jeu.
+    fn ensure_news(&mut self, ctx: &egui::Context) {
+        let Some(id) = self.selected.clone() else {
+            return;
+        };
+        if self.news.contains_key(&id) {
+            return;
+        }
+        if self.news_job.as_ref().is_some_and(|job| job.game_id == id) {
+            return;
+        }
+        let Some(app_id) = self.lib.get(&id).and_then(|game| game.steam_app_id) else {
+            return;
+        };
+        self.start_news(ctx, &id, app_id);
+    }
+
+    pub fn start_news(&mut self, ctx: &egui::Context, game_id: &str, app_id: u32) {
+        // Un seul jeu chargé à la fois : le précédent perd sa place (mais garde
+        // ce qu'il avait déjà obtenu).
+        if let Some(previous) = self.news_job.take() {
+            if previous.game_id != game_id
+                && matches!(self.news.get(&previous.game_id), Some(NewsState::Loading))
+            {
+                self.news.remove(&previous.game_id);
+            }
+        }
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let client = artwork::http();
+            let result = news::fetch(&client, app_id, news::COUNT);
+            let _ = tx.send(result);
+            repaint.request_repaint();
+        });
+        self.news.insert(game_id.to_string(), NewsState::Loading);
+        self.news_job = Some(NewsJob {
+            game_id: game_id.to_string(),
+            rx,
+        });
+        ctx.request_repaint_after(Duration::from_millis(200));
+    }
+
+    fn poll_news(&mut self) {
+        let received = self
+            .news_job
+            .as_ref()
+            .map(|job| (job.game_id.clone(), job.rx.try_recv()));
+        let Some((id, result)) = received else {
+            return;
+        };
+        match result {
+            Ok(Ok(items)) => {
+                self.news_job = None;
+                self.news.insert(id, NewsState::Loaded(items));
+            }
+            Ok(Err(message)) => {
+                self.news_job = None;
+                self.news.insert(id, NewsState::Failed(message));
+            }
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => {
+                self.news_job = None;
+                self.news
+                    .insert(id, NewsState::Failed("flux interrompu".to_string()));
+            }
+        }
+    }
+
+    /// Relance le chargement des actualités du jeu sélectionné.
+    pub fn reload_news(&mut self, ctx: &egui::Context) {
+        let Some(id) = self.selected.clone() else {
+            return;
+        };
+        let Some(app_id) = self.lib.get(&id).and_then(|game| game.steam_app_id) else {
+            return;
+        };
+        self.news.remove(&id);
+        self.start_news(ctx, &id, app_id);
     }
 
     pub fn start_asset_job(&mut self, ctx: &egui::Context, game_id: &str, hit: SearchHit) {
