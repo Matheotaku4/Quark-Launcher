@@ -12,7 +12,7 @@ Windows via **Proton**.
   1. tu tapes le nom du jeu, Quark le cherche sur **Steam** (API publique `storesearch`)
      puis sur **SteamGridDB**, et récupère les **artworks originaux** (bannière `library_hero`,
      logo, couverture `library_600x900`, icône) ;
-  2. tu indiques l'**exécutable** (champ texte, explorateur de fichiers intégré, ou glisser-déposer).
+  2. tu indiques l'**exécutable** (champ texte, sélecteur de fichiers du système, ou glisser-déposer).
 - **Affichage façon Steam** : liste à gauche (logo + titre, la ligne sélectionnée a un liseré
   bleu), panneau du jeu à droite ; bannière en haut, bouton **Jouer** avec le **temps de jeu**
   juste à droite, et l'**engrenage des paramètres en haut à droite**.
@@ -49,7 +49,8 @@ cargo build --release      # binaire : target/release/quark
 - `eframe` / `egui` **0.32** (interface), `egui_extras` 0.32 (chargement des images, y compris
   les miniatures de la recherche en HTTP).
 - `reqwest` (bloquant, rustls) pour Steam et SteamGridDB, `serde` pour `config.json`.
-- Aucune dépendance GTK : l'explorateur de fichiers est intégré à l'interface.
+- `rfd` pour les sélecteurs de fichiers **natifs** (XDG Desktop Portal : dialogue GTK ou KDE
+  selon le bureau, `zenity` en secours). Aucune dépendance GTK à la compilation.
 
 À noter : `egui` 0.37 réorganise son API (panneaux/`App::ui`) ; Quark vise volontairement la
 série 0.32 dont l'API est stable et suffisante ici.
@@ -109,7 +110,7 @@ src/main.rs         point d'entrée + CLI (--doctor/--search/--fetch)
 src/app.rs          état de l'application, boucle egui, lancement, temps de jeu, toasts
 src/ui_library.rs   onglet Bibliothèque : colonne liste/grille + panneau du jeu (bannière, Jouer)
 src/ui_store.rs     onglet Boutique (emplacement réservé)
-src/ui_dialogs.rs   ajout de jeu, paramètres globaux, paramètres du jeu, explorateur de fichiers
+src/ui_dialogs.rs   ajout de jeu, paramètres globaux, paramètres du jeu (sélecteurs natifs)
 src/config.rs       modèle de données, thème, persistance JSON, formats (temps de jeu, dates)
 src/artwork.rs      recherche Steam/SteamGridDB + téléchargement et cache des artworks
 src/proton.rs       détection des runtimes Proton + construction de la ligne de commande

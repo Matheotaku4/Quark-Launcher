@@ -300,12 +300,16 @@ impl Game {
     }
 
     /// Préfixe Proton effectif : jeu > réglages > dossier généré par Quark.
+    ///
+    /// Le préfixe par défaut des réglages sert de *racine* : chaque jeu y a son
+    /// propre sous-dossier (`<racine>/<id>`), sinon tous les jeux partageraient
+    /// la même installation Wine et se marcheraient dessus.
     pub fn prefix_path(&self, s: &Settings) -> PathBuf {
         if let Some(p) = self.prefix.as_ref().filter(|p| !p.trim().is_empty()) {
             return PathBuf::from(expand_tilde(p));
         }
         if let Some(p) = s.default_prefix.as_ref().filter(|p| !p.trim().is_empty()) {
-            return PathBuf::from(expand_tilde(p));
+            return PathBuf::from(expand_tilde(p)).join(&self.id);
         }
         prefix_root().join(&self.id)
     }
@@ -424,5 +428,43 @@ impl Library {
         let mut games: Vec<&Game> = self.games.iter().collect();
         games.sort_by_key(|g| g.name.to_lowercase());
         games.into_iter().map(|g| g.id.clone()).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn game(id: &str) -> Game {
+        Game {
+            id: id.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn prefix_sans_reglage_est_propre_au_jeu() {
+        let mut settings = Settings::default();
+        settings.default_prefix = None;
+        assert_eq!(game("abc").prefix_path(&settings), prefix_root().join("abc"));
+    }
+
+    #[test]
+    fn prefix_par_defaut_ajoute_un_sous_dossier_par_jeu() {
+        let mut settings = Settings::default();
+        settings.default_prefix = Some("/tmp/quark-tests/prefixes".to_string());
+        let path = game("abc").prefix_path(&settings);
+        assert_eq!(path, PathBuf::from("/tmp/quark-tests/prefixes/abc"));
+        // Deux jeux ne doivent jamais partager le même préfixe.
+        assert_ne!(path, game("xyz").prefix_path(&settings));
+    }
+
+    #[test]
+    fn prefix_du_jeu_ecrase_le_prefixe_par_defaut() {
+        let mut settings = Settings::default();
+        settings.default_prefix = Some("/tmp/quark-tests/defaut".to_string());
+        let mut g = game("abc");
+        g.prefix = Some("/tmp/quark-tests/mon-jeu".to_string());
+        assert_eq!(g.prefix_path(&settings), PathBuf::from("/tmp/quark-tests/mon-jeu"));
     }
 }

@@ -1,7 +1,8 @@
-//! Fenêtres modales : ajout de jeu, paramètres globaux, paramètres du jeu,
-//! explorateur de fichiers intégré et confirmation de suppression.
+//! Fenêtres modales : ajout de jeu, paramètres globaux, paramètres du jeu et
+//! confirmation de suppression. Les sélecteurs de fichiers sont ceux du système
+//! (XDG Desktop Portal), ouverts via `QuarkApp::pick_file` / `pick_directory`.
 
-use crate::app::{AddStep, QuarkApp, SearchState};
+use crate::app::{AddStep, PickerTarget, QuarkApp, SearchState};
 use crate::config::{self, ProtonMode, ThemeMode, ViewMode};
 use crate::proton::{self, ProtonRuntime};
 use crate::theme::Palette;
@@ -9,113 +10,6 @@ use crate::widgets::{self, Icon};
 use eframe::egui::{self, Align, Align2, FontId, Layout, Pos2, Rect, RichText, Sense, Vec2};
 use std::path::PathBuf;
 use std::time::Instant;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BrowseMode {
-    File,
-    Directory,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BrowseTarget {
-    AddExe,
-    AddPrefix,
-    GameExe,
-    GamePrefix,
-    DefaultPrefix,
-}
-
-/// Petit explorateur de fichiers maison (pas de dépendance GTK/portal).
-#[derive(Debug, Clone)]
-pub struct FileBrowser {
-    pub mode: BrowseMode,
-    pub target: BrowseTarget,
-    pub cwd: PathBuf,
-    pub dirs: Vec<PathBuf>,
-    pub files: Vec<PathBuf>,
-    pub show_all: bool,
-    pub manual: String,
-    pub error: Option<String>,
-    pub picked: Option<PathBuf>,
-    /// L'utilisateur a fermé la fenêtre sans choisir.
-    pub cancel: bool,
-}
-
-impl FileBrowser {
-    pub fn new(mode: BrowseMode, start: PathBuf, target: BrowseTarget) -> Self {
-        let mut browser = Self {
-            mode,
-            target,
-            cwd: start,
-            dirs: Vec::new(),
-            files: Vec::new(),
-            show_all: false,
-            manual: String::new(),
-            error: None,
-            picked: None,
-            cancel: false,
-        };
-        if !browser.cwd.is_dir() {
-            browser.cwd = config::home_dir();
-        }
-        browser.reload();
-        browser
-    }
-
-    pub fn title(&self) -> &'static str {
-        match self.mode {
-            BrowseMode::File => "Choisir un exécutable",
-            BrowseMode::Directory => "Choisir un dossier",
-        }
-    }
-
-    pub fn reload(&mut self) {
-        let mut dirs: Vec<PathBuf> = Vec::new();
-        let mut files: Vec<PathBuf> = Vec::new();
-        if let Ok(entries) = std::fs::read_dir(&self.cwd) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let metadata = entry.metadata().ok();
-                if path.is_dir() {
-                    dirs.push(path);
-                } else if self.mode == BrowseMode::File && self.selectable(&path, metadata.as_ref()) {
-                    files.push(path);
-                }
-                if dirs.len() + files.len() > 800 {
-                    break;
-                }
-            }
-        }
-        dirs.sort_by_key(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()));
-        files.sort_by_key(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()));
-        self.dirs = dirs;
-        self.files = files;
-    }
-
-    fn selectable(&self, path: &std::path::Path, metadata: Option<&std::fs::Metadata>) -> bool {
-        if self.show_all {
-            return true;
-        }
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-        if matches!(ext.as_str(), "exe" | "sh" | "run" | "bat" | "appimage") {
-            return true;
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if let Some(meta) = metadata {
-                if meta.permissions().mode() & 0o111 != 0 {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-}
 
 impl QuarkApp {
     // -----------------------------------------------------------------------
@@ -167,8 +61,9 @@ impl QuarkApp {
                                 .desired_width(f32::INFINITY),
                         );
                         if response.changed() {
+                            // On garde les résultats affichés : ils sont remplacés
+                            // dès que la nouvelle requête part.
                             self.add.last_typed = Some(Instant::now());
-                            self.add.state = SearchState::Idle;
                         }
                         if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                             self.start_search(ui.ctx());
@@ -375,15 +270,11 @@ impl QuarkApp {
 
         if browse_exe {
             let start = own_dir(&self.add.exe);
-            self.browse = Some(FileBrowser::new(BrowseMode::File, start, BrowseTarget::AddExe));
+            self.pick_file(ctx, start, PickerTarget::AddExe);
         }
         if browse_prefix {
             let start = own_dir(&self.add.prefix);
-            self.browse = Some(FileBrowser::new(
-                BrowseMode::Directory,
-                start,
-                BrowseTarget::AddPrefix,
-            ));
+            self.pick_directory(ctx, start, PickerTarget::AddPrefix);
         }
 
         if submit {
@@ -640,11 +531,7 @@ impl QuarkApp {
                 .clone()
                 .map(|p| PathBuf::from(config::expand_tilde(&p)))
                 .unwrap_or_else(config::prefix_root);
-            self.browse = Some(FileBrowser::new(
-                BrowseMode::Directory,
-                start,
-                BrowseTarget::DefaultPrefix,
-            ));
+            self.pick_directory(ctx, start, PickerTarget::DefaultPrefix);
         }
         if !open || close_requested {
             self.settings_open = false;
@@ -656,11 +543,12 @@ impl QuarkApp {
     // -----------------------------------------------------------------------
 
     pub(crate) fn game_settings_dialog(&mut self, ctx: &egui::Context) {
-        let Some(mut game) = self.editing.clone() else {
+        // Le brouillon est sorti de `self` pendant la frame : sans ça, egui
+        // éditerait une copie jetable et chaque frappe serait perdue.
+        let Some(mut game) = self.editing.take() else {
             return;
         };
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.editing = None;
             return;
         }
         let pal = self.pal;
@@ -810,11 +698,7 @@ impl QuarkApp {
             });
 
         if browse_exe {
-            self.browse = Some(FileBrowser::new(
-                BrowseMode::File,
-                own_dir(&game.exe),
-                BrowseTarget::GameExe,
-            ));
+            self.pick_file(ctx, own_dir(&game.exe), PickerTarget::GameExe);
         }
         if browse_prefix {
             let start = game
@@ -823,224 +707,25 @@ impl QuarkApp {
                 .filter(|p| !p.trim().is_empty())
                 .map(|p| PathBuf::from(config::expand_tilde(&p)))
                 .unwrap_or_else(config::prefix_root);
-            self.browse = Some(FileBrowser::new(
-                BrowseMode::Directory,
-                start,
-                BrowseTarget::GamePrefix,
-            ));
+            self.pick_directory(ctx, start, PickerTarget::GamePrefix);
         }
         if remove {
             self.confirm_remove = Some(game.id.clone());
-            self.editing = None;
             return;
         }
         if save {
             let id = game.id.clone();
             if let Some(slot) = self.lib.get_mut(&id) {
-                *slot = game.clone();
+                *slot = game;
             }
-            self.editing = None;
             self.touch();
             self.toast_info("Paramètres du jeu enregistrés");
             return;
         }
-        if !open || cancel {
-            self.editing = None;
+        // Toujours ouvert : on remet le brouillon en place pour la frame suivante.
+        if open && !cancel {
+            self.editing = Some(game);
         }
-    }
-
-    // -----------------------------------------------------------------------
-    // Explorateur de fichiers
-    // -----------------------------------------------------------------------
-
-    pub(crate) fn file_browser_window(&mut self, ctx: &egui::Context) {
-        if self.browse.is_none() {
-            return;
-        }
-        let pal = self.pal;
-        let title = self.browse.as_ref().map(|b| b.title()).unwrap_or("Fichiers");
-        let mut open = true;
-
-        egui::Window::new(title)
-            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-            .collapsible(false)
-            .resizable(false)
-            .open(&mut open)
-            .default_width(600.0)
-            .show(ctx, |ui| {
-                ui.set_min_width(600.0);
-                let Some(browser) = self.browse.as_mut() else {
-                    return;
-                };
-
-                ui.horizontal(|ui| {
-                    if widgets::ghost_button(ui, "↑ Parent", &pal, Icon::None).clicked() {
-                        if let Some(parent) = browser.cwd.parent() {
-                            browser.cwd = parent.to_path_buf();
-                            browser.error = None;
-                            browser.reload();
-                        }
-                    }
-                    ui.add_space(6.0);
-                    ui.label(
-                        RichText::new(browser.cwd.display().to_string())
-                            .size(11.5)
-                            .color(pal.text_dim),
-                    );
-                });
-                if browser.mode == BrowseMode::File {
-                    ui.add_space(4.0);
-                    let mut show_all = browser.show_all;
-                    if ui
-                        .checkbox(&mut show_all, "Afficher tous les fichiers")
-                        .changed()
-                    {
-                        browser.show_all = show_all;
-                        browser.reload();
-                    }
-                }
-                ui.add_space(6.0);
-
-                egui::ScrollArea::vertical()
-                    .id_salt("quark_file_browser")
-                    .max_height(320.0)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        let dir_count = browser.dirs.len();
-                        for index in 0..dir_count {
-                            let path = browser.dirs[index].clone();
-                            let name = path
-                                .file_name()
-                                .map(|n| n.to_string_lossy().to_string())
-                                .unwrap_or_default();
-                            if widgets::list_entry(ui, &name, Icon::Folder, &pal).clicked() {
-                                browser.cwd = path;
-                                browser.error = None;
-                                browser.reload();
-                                break;
-                            }
-                        }
-                        let file_count = browser.files.len();
-                        for index in 0..file_count {
-                            let path = browser.files[index].clone();
-                            let name = path
-                                .file_name()
-                                .map(|n| n.to_string_lossy().to_string())
-                                .unwrap_or_default();
-                            if widgets::list_entry(ui, &name, Icon::Play, &pal).clicked() {
-                                browser.picked = Some(path);
-                            }
-                        }
-                        if dir_count == 0 && file_count == 0 {
-                            ui.add_space(10.0);
-                            ui.label(
-                                RichText::new("(dossier vide ou rien à afficher)")
-                                    .size(12.0)
-                                    .color(pal.text_faint),
-                            );
-                        }
-                    });
-
-                ui.add_space(8.0);
-                if let Some(error) = browser.error.clone() {
-                    ui.label(RichText::new(error).size(11.5).color(pal.text_dim));
-                }
-                ui.horizontal(|ui| {
-                    let field = (ui.available_width() - 110.0).max(200.0);
-                    ui.add(
-                        egui::TextEdit::singleline(&mut browser.manual)
-                            .hint_text("Chemin manuel…")
-                            .desired_width(field),
-                    );
-                    if widgets::ghost_button(ui, "Ouvrir", &pal, Icon::None).clicked() {
-                        let path = PathBuf::from(config::expand_tilde(&browser.manual.clone()));
-                        if path.is_dir() {
-                            browser.cwd = path;
-                            browser.error = None;
-                            browser.reload();
-                        } else if path.is_file() {
-                            browser.picked = Some(path);
-                        } else {
-                            browser.error = Some(format!("Chemin introuvable : {}", path.display()));
-                        }
-                    }
-                });
-
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    if browser.mode == BrowseMode::Directory {
-                        if widgets::accent_button(
-                            ui,
-                            Vec2::new(210.0, 34.0),
-                            "Choisir ce dossier",
-                            &pal,
-                            true,
-                            Icon::Folder,
-                        )
-                        .clicked()
-                        {
-                            browser.picked = Some(browser.cwd.clone());
-                        }
-                    } else {
-                        ui.label(
-                            RichText::new("Clique sur un fichier pour le sélectionner.")
-                                .size(11.5)
-                                .color(pal.text_faint),
-                        );
-                    }
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if widgets::ghost_button(ui, "Annuler", &pal, Icon::None).clicked() {
-                            browser.cancel = true;
-                        }
-                    });
-                });
-            });
-
-        let cancelled = self.browse.as_ref().map(|b| b.cancel).unwrap_or(false);
-        if cancelled {
-            self.browse = None;
-            return;
-        }
-
-        let picked = self.browse.as_ref().and_then(|b| b.picked.clone());
-        if let Some(path) = picked {
-            self.apply_browse_pick(path);
-            return;
-        }
-        if !open {
-            self.browse = None;
-        }
-    }
-
-    fn apply_browse_pick(&mut self, path: PathBuf) {
-        let Some(target) = self.browse.as_ref().map(|b| b.target) else {
-            return;
-        };
-        let text = path.display().to_string();
-        match target {
-            BrowseTarget::AddExe => {
-                self.add.exe = text;
-            }
-            BrowseTarget::AddPrefix => {
-                self.add.prefix = text;
-                self.add.custom_prefix = true;
-            }
-            BrowseTarget::GameExe => {
-                if let Some(game) = self.editing.as_mut() {
-                    game.exe = text;
-                }
-            }
-            BrowseTarget::GamePrefix => {
-                if let Some(game) = self.editing.as_mut() {
-                    game.prefix = Some(text);
-                }
-            }
-            BrowseTarget::DefaultPrefix => {
-                self.lib.settings.default_prefix = Some(text);
-                self.touch();
-            }
-        }
-        self.browse = None;
     }
 
     // -----------------------------------------------------------------------

@@ -372,26 +372,3 @@ pub fn monogram(painter: &egui::Painter, rect: Rect, initials: &str, pal: &Palet
         pal.text_dim,
     );
 }
-
-/// Ligne sélectionnable (explorateur de fichiers).
-pub fn list_entry(ui: &mut egui::Ui, label: &str, icon: Icon, pal: &Palette) -> Response {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::click());
-    let painter = ui.painter_at(rect);
-    if resp.hovered() {
-        painter.rect_filled(rect, 4.0, pal.surface_hover);
-    }
-    paint_icon(
-        &painter,
-        Rect::from_min_size(Pos2::new(rect.left() + 6.0, rect.center().y - 8.0), Vec2::splat(16.0)),
-        icon,
-        pal.text_dim,
-    );
-    painter.text(
-        Pos2::new(rect.left() + 32.0, rect.center().y),
-        Align2::LEFT_CENTER,
-        label,
-        FontId::proportional(12.5),
-        pal.text,
-    );
-    resp
-}

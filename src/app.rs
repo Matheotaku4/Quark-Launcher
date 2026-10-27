@@ -9,6 +9,7 @@ use crate::theme::{self, Palette};
 use crate::widgets::{self, Icon};
 use eframe::egui::{self, Align, Align2, Color32, FontId, Layout, Pos2, RichText, Sense, Stroke, Vec2};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
@@ -54,8 +55,11 @@ pub struct AddGame {
     pub step: AddStep,
     pub name: String,
     pub state: SearchState,
-    pub rx: Option<Receiver<SearchOutcome>>,
+    /// Recherche en cours : (requête envoyée, résultat).
+    pub rx: Option<Receiver<(String, SearchOutcome)>>,
     pub last_typed: Option<Instant>,
+    /// Dernière requête dont les résultats sont affichés.
+    pub searched_for: String,
     pub hit: Option<SearchHit>,
     pub exe: String,
     pub args: String,
@@ -74,6 +78,7 @@ impl AddGame {
             state: SearchState::Idle,
             rx: None,
             last_typed: None,
+            searched_for: String::new(),
             hit: None,
             exe: String::new(),
             args: String::new(),
@@ -92,6 +97,23 @@ pub struct AssetJob {
     pub label: String,
 }
 
+/// Cible du sélecteur de fichiers natif.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PickerTarget {
+    AddExe,
+    AddPrefix,
+    GameExe,
+    GamePrefix,
+    DefaultPrefix,
+}
+
+/// Sélecteur de fichiers du système, exécuté dans un thread dédié pour ne pas
+/// bloquer le rendu pendant que le dialogue est ouvert.
+pub struct NativePicker {
+    pub rx: Receiver<Option<PathBuf>>,
+    pub target: PickerTarget,
+}
+
 pub struct QuarkApp {
     pub lib: Library,
     pub pal: Palette,
@@ -102,7 +124,7 @@ pub struct QuarkApp {
     pub add: AddGame,
     pub settings_open: bool,
     pub editing: Option<Game>,
-    pub browse: Option<crate::ui_dialogs::FileBrowser>,
+    pub picker: Option<NativePicker>,
     pub confirm_remove: Option<String>,
     pub runtimes: Vec<ProtonRuntime>,
     pub running: HashMap<String, RunningGame>,
@@ -135,7 +157,7 @@ impl QuarkApp {
             },
             settings_open: false,
             editing: None,
-            browse: None,
+            picker: None,
             confirm_remove: None,
             running: HashMap::new(),
             job: None,
@@ -177,8 +199,14 @@ impl QuarkApp {
     fn tick(&mut self, ctx: &egui::Context) {
         self.poll_running_games();
         self.poll_asset_job();
+        self.poll_picker(ctx);
         self.poll_search();
         self.auto_search(ctx);
+
+        // Recherche en cours : entretient l'animation du spinner.
+        if matches!(self.add.state, SearchState::Loading) {
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
 
         if self.dirty && self.last_change.elapsed() > Duration::from_millis(800) {
             match self.lib.save() {
@@ -259,13 +287,22 @@ impl QuarkApp {
     fn poll_search(&mut self) {
         let received = self.add.rx.as_ref().map(|rx| rx.try_recv());
         match received {
-            Some(Ok(outcome)) => {
-                self.add.state = SearchState::Done(outcome.hits, outcome.warnings);
+            Some(Ok((query, outcome))) => {
                 self.add.rx = None;
+                if self.add.name.trim() == query {
+                    self.add.searched_for = query;
+                    self.add.state = SearchState::Done(outcome.hits, outcome.warnings);
+                } else if self.add.name.trim().len() >= 2 {
+                    // Réponse obsolète : la nouvelle requête part au même tick.
+                    self.add.state = SearchState::Loading;
+                } else {
+                    self.add.state = SearchState::Idle;
+                }
             }
             Some(Err(TryRecvError::Disconnected)) => {
-                self.add.state = SearchState::Done(Vec::new(), vec!["Recherche interrompue".to_string()]);
                 self.add.rx = None;
+                self.add.state =
+                    SearchState::Done(Vec::new(), vec!["Recherche interrompue".to_string()]);
             }
             _ => {}
         }
@@ -275,14 +312,26 @@ impl QuarkApp {
         if !self.add.open || self.add.step != AddStep::Name || self.add.rx.is_some() {
             return;
         }
-        if self.add.name.trim().len() < 2 {
+        let query = self.add.name.trim().to_string();
+        if query.len() < 2 {
+            // Champ vidé : plus rien à afficher.
+            if matches!(self.add.state, SearchState::Done(..)) {
+                self.add.state = SearchState::Idle;
+            }
             return;
         }
+        if self.add.searched_for == query {
+            return;
+        }
+        // Anti-rebond : egui ne redessine que sur événement, il faut donc
+        // demander explicitement une frame quand le délai sera écoulé.
         if let Some(typed) = self.add.last_typed {
-            if typed.elapsed() > Duration::from_millis(500) {
-                self.start_search(ctx);
+            if let Some(remaining) = Duration::from_millis(500).checked_sub(typed.elapsed()) {
+                ctx.request_repaint_after(remaining);
+                return;
             }
         }
+        self.start_search(ctx);
     }
 
     pub fn start_search(&mut self, ctx: &egui::Context) {
@@ -292,15 +341,126 @@ impl QuarkApp {
         }
         let (tx, rx) = channel();
         let settings = self.lib.settings.clone();
-        let ctx = ctx.clone();
+        let repaint = ctx.clone();
+        let request = query.clone();
+        let sent = query.clone();
         std::thread::spawn(move || {
             let client = artwork::http();
-            let outcome = artwork::search(&client, &query, &settings);
-            let _ = tx.send(outcome);
-            ctx.request_repaint();
+            let outcome = artwork::search(&client, &request, &settings);
+            let _ = tx.send((sent, outcome));
+            repaint.request_repaint();
         });
         self.add.rx = Some(rx);
         self.add.state = SearchState::Loading;
+        ctx.request_repaint_after(Duration::from_millis(100));
+    }
+
+    // -----------------------------------------------------------------------
+    // Sélecteur de fichiers natif (XDG Desktop Portal, GTK/KDE du bureau)
+    // -----------------------------------------------------------------------
+
+    /// Ouvre le sélecteur de fichiers du système. Non bloquant : le résultat
+    /// est récupéré au tick suivant (`poll_picker`).
+    pub fn pick_file(&mut self, ctx: &egui::Context, start: PathBuf, target: PickerTarget) {
+        self.spawn_picker(ctx, start, target, false);
+    }
+
+    /// Ouvre le sélecteur de dossiers du système.
+    pub fn pick_directory(&mut self, ctx: &egui::Context, start: PathBuf, target: PickerTarget) {
+        self.spawn_picker(ctx, start, target, true);
+    }
+
+    fn spawn_picker(
+        &mut self,
+        ctx: &egui::Context,
+        start: PathBuf,
+        target: PickerTarget,
+        directory: bool,
+    ) {
+        let (tx, rx) = channel();
+        let ctx = ctx.clone();
+        let start = if start.is_dir() {
+            start
+        } else {
+            crate::config::home_dir()
+        };
+        std::thread::spawn(move || {
+            let mut dialog = rfd::FileDialog::new()
+                .set_title(if directory {
+                    "Choisir un dossier"
+                } else {
+                    "Choisir un exécutable"
+                })
+                .set_directory(&start);
+            if !directory {
+                dialog = dialog
+                    .add_filter(
+                        "Programmes",
+                        &["exe", "EXE", "sh", "bat", "run", "desktop", "AppImage", "appimage"],
+                    )
+                    .add_filter("Tous les fichiers", &["*"]);
+            }
+            let picked = if directory {
+                dialog.pick_folder()
+            } else {
+                dialog.pick_file()
+            };
+            let _ = tx.send(picked);
+            ctx.request_repaint();
+        });
+        self.picker = Some(NativePicker { rx, target });
+    }
+
+    fn poll_picker(&mut self, ctx: &egui::Context) {
+        let received = self
+            .picker
+            .as_ref()
+            .map(|picker| (picker.target, picker.rx.try_recv()));
+        let Some((target, result)) = received else {
+            return;
+        };
+        match result {
+            Ok(Some(path)) => {
+                self.picker = None;
+                self.apply_pick(target, path);
+            }
+            Ok(None) => self.picker = None,
+            Err(TryRecvError::Empty) => {
+                // Le dialogue natif vit dans son thread : on garde l'UI vivante.
+                ctx.request_repaint_after(Duration::from_millis(80));
+            }
+            Err(TryRecvError::Disconnected) => {
+                self.picker = None;
+                self.toast_error(
+                    "Sélecteur de fichiers indisponible (xdg-desktop-portal ou zenity manquant)",
+                );
+            }
+        }
+    }
+
+    fn apply_pick(&mut self, target: PickerTarget, path: PathBuf) {
+        let text = path.display().to_string();
+        match target {
+            PickerTarget::AddExe => self.add.exe = text,
+            PickerTarget::AddPrefix => {
+                self.add.prefix = text;
+                self.add.custom_prefix = true;
+            }
+            PickerTarget::GameExe => {
+                if let Some(game) = self.editing.as_mut() {
+                    game.exe = text;
+                }
+            }
+            PickerTarget::GamePrefix => {
+                if let Some(game) = self.editing.as_mut() {
+                    game.prefix = Some(text);
+                }
+            }
+            PickerTarget::DefaultPrefix => {
+                self.lib.settings.default_prefix = Some(text);
+                self.touch();
+            }
+        }
     }
 
     pub fn start_asset_job(&mut self, ctx: &egui::Context, game_id: &str, hit: SearchHit) {
@@ -358,6 +518,12 @@ impl QuarkApp {
                 cmd.stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null());
+                // Groupe de processus dédié : « Arrêter » peut tuer wine et le jeu.
+                #[cfg(unix)]
+                {
+                    use std::os::unix::process::CommandExt;
+                    cmd.process_group(0);
+                }
                 match cmd.spawn() {
                     Ok(child) => {
                         self.running.insert(
@@ -380,6 +546,13 @@ impl QuarkApp {
 
     pub fn stop(&mut self, id: &str) {
         if let Some(game) = self.running.get_mut(id) {
+            // Proton lance wine en enfant : on termine tout le groupe de processus
+            // (le jeu est lancé dans son propre groupe, voir `launch`).
+            let pid = game.child.id() as i32;
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(-pid, libc::SIGTERM);
+            }
             let _ = game.child.kill();
         }
     }
@@ -535,7 +708,7 @@ impl eframe::App for QuarkApp {
         let modal = self.settings_open
             || self.add.open
             || self.editing.is_some()
-            || self.browse.is_some()
+            || self.picker.is_some()
             || self.confirm_remove.is_some();
         if modal {
             self.backdrop(ctx);
@@ -544,12 +717,25 @@ impl eframe::App for QuarkApp {
         self.add_dialog(ctx);
         self.settings_dialog(ctx);
         self.game_settings_dialog(ctx);
-        self.file_browser_window(ctx);
         self.confirm_remove_dialog(ctx);
         self.toasts_ui(ctx);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // Les sessions encore en cours sont comptabilisées avant la fermeture,
+        // sinon le temps de jeu est perdu en quittant le launcher.
+        let now = now_ts();
+        let sessions: Vec<(String, u64)> = self
+            .running
+            .iter()
+            .map(|(id, game)| (id.clone(), game.started.elapsed().as_secs()))
+            .collect();
+        for (id, secs) in sessions {
+            if let Some(game) = self.lib.get_mut(&id) {
+                game.playtime_secs += secs;
+                game.last_played = Some(now);
+            }
+        }
         let _ = self.lib.save();
     }
 }
