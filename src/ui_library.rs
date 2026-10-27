@@ -458,45 +458,39 @@ fn game_row(
         );
     }
 
-    let logo_box = Rect::from_min_size(
-        Pos2::new(rect.left() + 18.0, rect.center().y - 15.0),
-        Vec2::new(86.0, 30.0),
+    // Comme Steam : la petite vignette du jeu (capsule) plutôt que le logo
+    // transparent, qui reste réservé à la bannière.
+    let thumb_box = Rect::from_min_size(
+        Pos2::new(rect.left() + 18.0, rect.center().y - 16.0),
+        Vec2::new(74.0, 32.0),
     );
-    let logo = game.artwork.get(AssetKind::Logo).filter(|p| p.exists()).cloned();
-    match logo {
+    let thumb = game
+        .artwork
+        .get(AssetKind::Icon)
+        .filter(|p| p.exists())
+        .cloned()
+        .or_else(|| {
+            game.artwork
+                .get(AssetKind::Logo)
+                .filter(|p| p.exists())
+                .cloned()
+        });
+    match thumb {
         Some(path) => {
             if let Some(texture) = textures.get(ui.ctx(), &path) {
-                draw_fit(ui, texture, logo_box);
+                draw_fit(ui, texture, thumb_box);
             }
         }
         None => {
-            let icon = game.artwork.get(AssetKind::Icon).filter(|p| p.exists()).cloned();
-            match icon {
-                Some(path) => {
-                    let box_size = Vec2::splat(28.0);
-                    if let Some(texture) = textures.get(ui.ctx(), &path) {
-                        draw_fit(
-                            ui,
-                            texture,
-                            Rect::from_min_size(
-                                Pos2::new(logo_box.left(), rect.center().y - box_size.y / 2.0),
-                                box_size,
-                            ),
-                        );
-                    }
-                }
-                None => {
-                    widgets::monogram(
-                        &painter,
-                        Rect::from_min_size(
-                            Pos2::new(logo_box.left(), rect.center().y - 14.0),
-                            Vec2::splat(28.0),
-                        ),
-                        &game.initials(),
-                        pal,
-                    );
-                }
-            }
+            widgets::monogram(
+                &painter,
+                Rect::from_min_size(
+                    Pos2::new(thumb_box.left(), rect.center().y - 14.0),
+                    Vec2::splat(28.0),
+                ),
+                &game.initials(),
+                pal,
+            );
         }
     }
 
