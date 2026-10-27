@@ -13,7 +13,7 @@
 //! légèrement du backend OpenGL utilisé à l'écran.
 
 use crate::app::{AddStep, NewsState, QuarkApp, ScanCandidate, SearchState, Tab};
-use crate::artwork::{SearchHit, Source};
+use crate::artwork::{AssetPlan, SearchHit, Source};
 use crate::config::{AssetKind, Artwork, Game, Library, ThemeMode, ViewMode, now_ts};
 use crate::news::NewsItem;
 use eframe::egui::epaint::textures::TexturesDelta;
@@ -39,6 +39,7 @@ pub struct SnapshotOptions {
     pub theme: Option<ThemeMode>,
     pub info: bool,
     pub running: bool,
+    pub key: Option<String>,
     pub dialog: Option<String>,
     pub demo: bool,
 }
@@ -58,6 +59,7 @@ impl Default for SnapshotOptions {
             theme: None,
             info: false,
             running: false,
+            key: None,
             dialog: None,
             demo: false,
         }
@@ -70,7 +72,7 @@ pub const HELP: &str = "\
       [--view list|grid] [--tab library|store] [--theme amoled|graphite]\n\
       [--select <jeu>] [--info] [--running]\n\
       [--dialog none|add|exe|scan|settings|game|remove]\n\
-      [--hover X,Y] [--click X,Y] [--demo]\n\
+      [--hover X,Y] [--click X,Y] [--key up|down|left|right|enter|escape] [--demo]\n\
       --demo : bibliothèque de démonstration avec artworks factices (la\n\
       configuration réelle n'est ni lue ni écrite)\n";
 
@@ -80,6 +82,9 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
     let scale = opts.scale.clamp(0.5, 4.0);
     let ctx = egui::Context::default();
     ctx.set_pixels_per_point(scale);
+    // Sans ces chargeurs, toute image distante ou `file://` (miniatures de la
+    // recherche, propositions d'artworks) s'afficherait comme une erreur.
+    egui_extras::install_image_loaders(&ctx);
 
     let mut app = QuarkApp::new(&ctx);
     if opts.demo {
@@ -146,6 +151,18 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
             }
         }
 
+        if frame == 1 {
+            if let Some(key) = opts.key.as_deref().and_then(key_from_name) {
+                input.events.push(Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                });
+            }
+        }
+
         let output = ctx.run(input, |ctx| app.ui(ctx));
         textures.apply(&output.textures_delta);
         let primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
@@ -190,6 +207,19 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
     Ok(())
 }
 
+fn key_from_name(name: &str) -> Option<egui::Key> {
+    Some(match name {
+        "up" => egui::Key::ArrowUp,
+        "down" => egui::Key::ArrowDown,
+        "left" => egui::Key::ArrowLeft,
+        "right" => egui::Key::ArrowRight,
+        "enter" => egui::Key::Enter,
+        "escape" => egui::Key::Escape,
+        "space" => egui::Key::Space,
+        _ => return None,
+    })
+}
+
 fn pick_game(app: &QuarkApp, needle: &str) -> Result<String, String> {
     if let Some(game) = app.lib.get(needle) {
         return Ok(game.id.clone());
@@ -219,6 +249,19 @@ fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
     match dialog {
         "none" => {}
         "settings" => app.settings_open = true,
+        "updates" => {
+            app.settings_open = true;
+            app.update = crate::app::UpdateState::Available(crate::update::Release {
+                tag_name: "v0.4.0".to_string(),
+                name: "Quark v0.4.0".to_string(),
+                html_url: "https://github.com/Matheotaku4/Quark-Launcher/releases".to_string(),
+                assets: vec![crate::update::Asset {
+                    name: "quark-0.4.0-linux-x86_64.tar.gz".to_string(),
+                    browser_download_url: String::new(),
+                    size: 8_600_000,
+                }],
+            });
+        }
         "game" => {
             let id = app
                 .selected
@@ -280,6 +323,43 @@ fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
                 detail: "Team Cherry · 2017".to_string(),
             });
             app.add.exe = "/jeux/Hollow Knight/hollow_knight.exe".to_string();
+        }
+        "artwork" => {
+            app.open_add_dialog();
+            app.add.step = AddStep::Artwork;
+            app.add.name = "Hollow Knight".to_string();
+            app.add.hit = Some(SearchHit {
+                source: Source::Steam,
+                title: "Hollow Knight".to_string(),
+                steam_app_id: Some(367520),
+                sgdb_id: None,
+                thumb: None,
+                detail: "Team Cherry · 2017".to_string(),
+            });
+            // Propositions locales : le rendu hors écran n'attend pas le réseau.
+            let dir = crate::config::data_dir().join("demo-art");
+            let files = ["cover.png", "hero.png", "icon.png", "logo.png"];
+            let mut kinds = Vec::new();
+            for (kind, base) in [
+                (AssetKind::Hero, 1usize),
+                (AssetKind::Logo, 3),
+                (AssetKind::Cover, 0),
+                (AssetKind::Icon, 2),
+            ] {
+                let urls = (0..3)
+                    .map(|offset| {
+                        format!(
+                            "file://{}",
+                            dir.join(files[(base + offset) % files.len()]).display()
+                        )
+                    })
+                    .collect();
+                kinds.push((kind, urls));
+            }
+            app.add.artwork.plan = Some(AssetPlan {
+                kinds,
+                warnings: Vec::new(),
+            });
         }
         "scan" => {
             app.open_add_dialog();

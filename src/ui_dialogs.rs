@@ -2,10 +2,11 @@
 //! confirmation de suppression. Les sélecteurs de fichiers sont ceux du système
 //! (XDG Desktop Portal), ouverts via `QuarkApp::pick_file` / `pick_directory`.
 
-use crate::app::{AddStep, PickerTarget, QuarkApp, SearchState};
-use crate::config::{self, ProtonMode, ThemeMode, ViewMode};
+use crate::app::{AddStep, PickerTarget, QuarkApp, SearchState, UpdateState};
+use crate::config::{self, AssetKind, ProtonMode, ThemeMode, ViewMode};
 use crate::proton::{self, ProtonRuntime};
 use crate::theme::{self, Palette};
+use crate::update;
 use crate::widgets::{self, Icon};
 use eframe::egui::{self, Align, Align2, FontId, Layout, Pos2, Rect, RichText, Sense, Vec2};
 use std::path::PathBuf;
@@ -35,10 +36,13 @@ impl QuarkApp {
         let mut browse_exe = false;
         let mut browse_prefix = false;
         let mut browse_folder = false;
+        let mut pick_artwork: Option<(AssetKind, usize)> = None;
+        let mut finish_artwork = false;
         let mut scan_action = ScanAction::default();
 
         let title = match step {
             AddStep::Name => "Ajouter un jeu",
+            AddStep::Artwork => "Ajouter un jeu · artwork",
             AddStep::Scan => "Ajouter un jeu · dossier",
             AddStep::Exe => "Ajouter un jeu · exécutable",
         };
@@ -158,6 +162,105 @@ impl QuarkApp {
                             );
                         });
                     }
+                    AddStep::Artwork => {
+                        ui.label(
+                            RichText::new(
+                                "Choisis les images téléchargées pour ce jeu. La première \
+                                 proposition de chaque type est choisie par défaut.",
+                            )
+                            .size(11.0)
+                            .color(pal.text_faint),
+                        );
+                        ui.add_space(10.0);
+
+                        let plan = self.add.artwork.plan.clone();
+                        if self.add.artwork.loading {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label(
+                                    RichText::new("Recherche des artworks\u{2026}")
+                                        .size(12.5)
+                                        .color(pal.text_dim),
+                                );
+                            });
+                        } else if let Some(plan) = &plan {
+                            egui::ScrollArea::vertical()
+                                .id_salt("quark_artwork_choices")
+                                .max_height(330.0)
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    for kind in AssetKind::ALL {
+                                        let urls = plan.candidates(kind);
+                                        ui.label(
+                                            RichText::new(kind.label().to_uppercase())
+                                                .size(11.0)
+                                                .color(pal.text_faint),
+                                        );
+                                        ui.add_space(3.0);
+                                        if urls.is_empty() {
+                                            ui.label(
+                                                RichText::new("aucune proposition")
+                                                    .size(11.5)
+                                                    .color(pal.text_faint),
+                                            );
+                                        } else {
+                                            let selected = self
+                                                .add
+                                                .artwork
+                                                .chosen
+                                                .get(&kind)
+                                                .copied()
+                                                .unwrap_or(0);
+                                            ui.horizontal_wrapped(|ui| {
+                                                for (index, url) in urls.iter().enumerate() {
+                                                    if artwork_choice(
+                                                        ui,
+                                                        &pal,
+                                                        url,
+                                                        index == selected,
+                                                    )
+                                                    .clicked()
+                                                    {
+                                                        pick_artwork = Some((kind, index));
+                                                    }
+                                                }
+                                            });
+                                        }
+                                        ui.add_space(10.0);
+                                    }
+                                });
+                        } else {
+                            ui.label(
+                                RichText::new("Aucun artwork proposé : tu peux continuer sans.")
+                                    .size(12.0)
+                                    .color(pal.text_dim),
+                            );
+                        }
+                        if let Some(error) = self.add.artwork.error.clone() {
+                            ui.add_space(4.0);
+                            ui.label(RichText::new(error).size(11.0).color(pal.text_faint));
+                        }
+
+                        ui.add_space(14.0);
+                        ui.horizontal(|ui| {
+                            if widgets::ghost_button(ui, "← Retour", &pal, Icon::None).clicked() {
+                                back = true;
+                            }
+                            ui.add_space(10.0);
+                            if widgets::accent_button(
+                                ui,
+                                Vec2::new(230.0, 36.0),
+                                "Choisir l'exécutable",
+                                &pal,
+                                true,
+                                Icon::Plus,
+                            )
+                            .clicked()
+                            {
+                                finish_artwork = true;
+                            }
+                        });
+                    }
                     AddStep::Scan => {
                         scan_action = self.scan_step(ui, &pal);
                     }
@@ -269,19 +372,29 @@ impl QuarkApp {
             }
         }
 
-        if pick_hit.is_some() || continue_to_exe {
-            if let Some(index) = pick_hit {
-                if let SearchState::Done(hits, _) = &self.add.state {
-                    if let Some(hit) = hits.get(index).cloned() {
-                        self.add.name = hit.title.clone();
-                        self.add.hit = Some(hit);
-                    }
+        if let Some(index) = pick_hit {
+            if let SearchState::Done(hits, _) = &self.add.state {
+                if let Some(hit) = hits.get(index).cloned() {
+                    self.add.name = hit.title.clone();
+                    self.add.hit = Some(hit);
                 }
-            } else {
-                self.add.hit = None;
             }
+            self.add.error = None;
+            // Un jeu reconnu a des artworks à proposer : on les montre avant
+            // d'indiquer l'exécutable.
+            self.start_artwork_plan(ctx);
+        } else if continue_to_exe {
+            // Continue sans choisir de résultat : pas d'artwork à proposer.
+            self.add.hit = None;
+            self.add.artwork = crate::app::ArtworkPicker::default();
             self.add.step = AddStep::Exe;
             self.add.error = None;
+        } else if finish_artwork {
+            self.add.step = AddStep::Exe;
+        }
+
+        if let Some((kind, index)) = pick_artwork {
+            self.add.artwork.chosen.insert(kind, index);
         }
 
         if back {
@@ -322,8 +435,22 @@ impl QuarkApp {
             self.selected = Some(id.clone());
             self.add.open = false;
             self.touch();
+            let chosen = self.add.artwork.plan.clone().map(|plan| {
+                let choices: Vec<(AssetKind, usize)> = self
+                    .add
+                    .artwork
+                    .chosen
+                    .iter()
+                    .map(|(kind, index)| (*kind, *index))
+                    .collect();
+                plan.with_choices(&choices)
+            });
             match hit {
-                Some(hit) => self.start_asset_job(ctx, &id, hit),
+                // Les artworks choisis passent en premier, le reste sert de secours.
+                Some(hit) => match chosen {
+                    Some(plan) => self.start_chosen_job(ctx, &id, hit.title.clone(), plan),
+                    None => self.start_asset_job(ctx, &id, hit),
+                },
                 None => self.toast_info("Jeu ajouté sans artwork (assets manuels)"),
             }
         }
@@ -360,6 +487,9 @@ impl QuarkApp {
         let mut close_requested = false;
         let mut browse_prefix = false;
         let mut redetect = false;
+        let mut check_updates = false;
+        let mut download_update = false;
+        let mut open_url: Option<String> = None;
 
         let max_height = (ctx.screen_rect().height() * 0.72).max(280.0);
         let modal = egui::Modal::new(egui::Id::new("quark_settings")).show(ctx, |ui| {
@@ -402,6 +532,102 @@ impl QuarkApp {
                             .color(pal.text_faint),
                     );
                 });
+
+                section(ui, "À PROPOS", &pal);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(format!("Quark {}", update::current_version()))
+                            .size(12.5)
+                            .color(pal.text),
+                    );
+                    ui.add_space(14.0);
+                    match self.update.clone() {
+                        UpdateState::Idle => {
+                            if widgets::ghost_button(ui, "Vérifier les mises à jour", &pal, Icon::Refresh)
+                                .clicked()
+                            {
+                                check_updates = true;
+                            }
+                        }
+                        UpdateState::Checking => {
+                            ui.spinner();
+                            ui.label(
+                                RichText::new("vérification\u{2026}")
+                                    .size(12.0)
+                                    .color(pal.text_dim),
+                            );
+                        }
+                        UpdateState::UpToDate => {
+                            ui.label(RichText::new("à jour").size(12.0).color(pal.text_dim));
+                            if widgets::ghost_button(ui, "Revérifier", &pal, Icon::Refresh).clicked() {
+                                check_updates = true;
+                            }
+                        }
+                        UpdateState::Available(release) => {
+                            ui.label(
+                                RichText::new(format!("{} disponible", release.tag_name))
+                                    .size(12.0)
+                                    .color(pal.accent),
+                            );
+                            let size = release
+                                .archive()
+                                .map(|asset| asset.size as f64 / 1_048_576.0)
+                                .unwrap_or(0.0);
+                            let label = if size > 0.0 {
+                                format!("Télécharger ({size:.1} Mo)")
+                            } else {
+                                "Télécharger".to_string()
+                            };
+                            if widgets::ghost_button(ui, &label, &pal, Icon::Plus).clicked() {
+                                download_update = true;
+                            }
+                            if !release.html_url.is_empty()
+                                && widgets::ghost_button(ui, "Page de la release", &pal, Icon::None)
+                                    .clicked()
+                            {
+                                open_url = Some(release.html_url.clone());
+                            }
+                        }
+                        UpdateState::Downloading(release) => {
+                            ui.spinner();
+                            ui.label(
+                                RichText::new(format!("téléchargement de {}", release.tag_name))
+                                    .size(12.0)
+                                    .color(pal.text_dim),
+                            );
+                        }
+                        UpdateState::Downloaded(path) => {
+                            ui.label(
+                                RichText::new(format!("téléchargée : {}", path.display()))
+                                    .size(11.5)
+                                    .color(pal.text_dim),
+                            );
+                        }
+                        UpdateState::Failed(error) => {
+                            ui.label(RichText::new(error).size(11.5).color(pal.danger));
+                            if widgets::ghost_button(ui, "Réessayer", &pal, Icon::Refresh).clicked() {
+                                check_updates = true;
+                            }
+                        }
+                    }
+                });
+                ui.label(
+                    RichText::new(
+                        "L'archive est enregistrée dans ~/.local/share/quark/updates/ : \
+                         décompresse-la et remplace le binaire pour installer la nouvelle version.",
+                    )
+                    .size(11.0)
+                    .color(pal.text_faint),
+                );
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(
+                        "Clavier : flèches pour changer de jeu, Entrée pour lancer, \
+                         Ctrl+F pour chercher, Échap pour vider la recherche.",
+                    )
+                    .size(11.0)
+                    .color(pal.text_faint),
+                );
 
                 section(ui, "PROTON", &pal);
                 ui.label(
@@ -559,6 +785,17 @@ impl QuarkApp {
             self.runtimes = proton::detect_runtimes();
             self.toast_info(format!("{} runtime(s) Proton détecté(s)", self.runtimes.len()));
             self.touch();
+        }
+        if check_updates {
+            self.check_updates(ctx);
+        }
+        if download_update {
+            self.download_update(ctx);
+        }
+        if let Some(url) = open_url {
+            if let Err(err) = crate::news::open_in_browser(&url) {
+                self.toast_error(format!("Ouverture du lien impossible : {err}"));
+            }
         }
         if browse_prefix {
             let start = self
@@ -916,6 +1153,32 @@ fn runtime_combo(
         });
 
     *mode != before
+}
+
+/// Proposition d'artwork : miniature distante, sélection au clic.
+fn artwork_choice(ui: &mut egui::Ui, pal: &Palette, url: &str, selected: bool) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(132.0, 76.0), Sense::click());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 4.0, pal.surface);
+    ui.put(
+        rect.shrink(3.0),
+        egui::Image::new(url)
+            .max_size(rect.size() - Vec2::splat(6.0))
+            .maintain_aspect_ratio(true),
+    );
+    if selected || response.hovered() {
+        widgets::border_rect(
+            &painter,
+            rect,
+            if selected { 2.0 } else { 1.0 },
+            if selected { pal.accent } else { pal.border },
+        );
+    }
+    if selected {
+        painter.circle_filled(Pos2::new(rect.right() - 13.0, rect.top() + 13.0), 7.0, pal.accent);
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// Ligne de résultat de recherche (nom + miniature + source).

@@ -1,12 +1,13 @@
 //! État de l'application et assemblage de l'interface.
 
-use crate::artwork::{self, SearchHit, SearchOutcome};
+use crate::artwork::{self, AssetPlan, SearchHit, SearchOutcome};
 use crate::config::{
     Artwork, AssetKind, Game, Library, ProtonMode, ThemeMode, ViewMode, human_playtime, now_ts,
 };
 use crate::news::{self, NewsItem};
 use crate::proton::{self, ProtonRuntime};
 use crate::theme::{self, Palette};
+use crate::update::{self, Release};
 use crate::widgets::{self, Icon};
 use eframe::egui::{self, Align, Align2, FontId, Layout, RichText, Sense, Stroke, Vec2};
 use std::collections::{HashMap, VecDeque};
@@ -49,6 +50,8 @@ pub enum SearchState {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AddStep {
     Name,
+    /// Choix des artworks proposés pour le jeu retenu.
+    Artwork,
     Scan,
     Exe,
 }
@@ -73,6 +76,20 @@ pub struct AddGame {
     pub error: Option<String>,
     /// Analyse de dossier en cours (ajout par lot).
     pub scan: ScanJob,
+    /// Artworks proposés pour le jeu retenu (étape `AddStep::Artwork`).
+    pub artwork: ArtworkPicker,
+}
+
+/// Artworks proposés à l'utilisateur pour le jeu en cours d'ajout.
+#[derive(Default)]
+pub struct ArtworkPicker {
+    /// Recherche des propositions en cours.
+    pub loading: bool,
+    pub rx: Option<Receiver<(AssetPlan, Vec<String>)>>,
+    pub plan: Option<AssetPlan>,
+    /// Proposition retenue pour chaque type (index dans le plan).
+    pub chosen: HashMap<AssetKind, usize>,
+    pub error: Option<String>,
 }
 
 /// Un jeu pressenti lors de l'analyse d'un dossier.
@@ -131,6 +148,7 @@ impl AddGame {
             prefix: String::new(),
             error: None,
             scan: ScanJob::default(),
+            artwork: ArtworkPicker::default(),
         }
     }
 }
@@ -146,6 +164,35 @@ pub enum NewsState {
 pub struct NewsJob {
     pub game_id: String,
     pub rx: Receiver<Result<Vec<NewsItem>, String>>,
+}
+
+/// État de la vérification des mises à jour.
+#[derive(Clone)]
+pub enum UpdateState {
+    Idle,
+    Checking,
+    /// La version installée est la plus récente publiée.
+    UpToDate,
+    /// Une version plus récente est disponible.
+    Available(Release),
+    Downloading(Release),
+    /// Archive téléchargée (jamais installée à notre place).
+    Downloaded(PathBuf),
+    Failed(String),
+}
+
+/// Réponse d'un contrôle de mise à jour ou d'un téléchargement.
+pub enum UpdateMessage {
+    Checked(Result<Release, String>),
+    Downloaded(String, Result<PathBuf, String>),
+}
+
+/// Ce qu'un téléchargement d'artworks doit récupérer.
+pub enum AssetSource {
+    /// Recherche automatique des meilleurs artworks.
+    Auto(SearchHit),
+    /// Choix manuels de l'utilisateur, les autres propositions restant en secours.
+    Chosen(AssetPlan, String),
 }
 
 /// Téléchargement d'artworks en cours.
@@ -195,7 +242,7 @@ pub struct QuarkApp {
     /// Panneau d'informations du jeu (masqué par défaut, bouton ⓘ).
     pub show_info: bool,
     /// Artworks à télécharger après le job en cours.
-    pub job_queue: VecDeque<(String, SearchHit)>,
+    pub job_queue: VecDeque<(String, AssetSource)>,
     /// Textures des artworks (décodées par Quark lui-même).
     pub textures: crate::images::TextureCache,
     /// Rampe de dégradé des bannières (créée au premier usage).
@@ -204,6 +251,9 @@ pub struct QuarkApp {
     pub news: HashMap<String, NewsState>,
     /// Chargement d'actualités en cours.
     pub news_job: Option<NewsJob>,
+    /// État de la vérification des mises à jour.
+    pub update: UpdateState,
+    pub update_rx: Option<Receiver<UpdateMessage>>,
 }
 
 impl QuarkApp {
@@ -243,6 +293,8 @@ impl QuarkApp {
             gradient: None,
             news: HashMap::new(),
             news_job: None,
+            update: UpdateState::Idle,
+            update_rx: None,
         }
     }
 
@@ -281,6 +333,8 @@ impl QuarkApp {
 
     fn tick(&mut self, ctx: &egui::Context) {
         self.poll_running_games();
+        self.poll_update(ctx);
+        self.poll_artwork_plan(ctx);
         self.poll_asset_job(ctx);
         self.poll_news();
         self.poll_picker(ctx);
@@ -384,8 +438,8 @@ impl QuarkApp {
         if self.job.is_some() {
             return;
         }
-        if let Some((id, hit)) = self.job_queue.pop_front() {
-            self.start_asset_job(ctx, &id, hit);
+        if let Some((id, source)) = self.job_queue.pop_front() {
+            self.queue_asset_job(ctx, &id, source);
         }
     }
 
@@ -655,20 +709,45 @@ impl QuarkApp {
     }
 
     pub fn start_asset_job(&mut self, ctx: &egui::Context, game_id: &str, hit: SearchHit) {
+        self.queue_asset_job(ctx, game_id, AssetSource::Auto(hit));
+    }
+
+    /// Télécharge les artworks choisis à la main dans la fenêtre d'ajout.
+    pub fn start_chosen_job(
+        &mut self,
+        ctx: &egui::Context,
+        game_id: &str,
+        label: String,
+        plan: AssetPlan,
+    ) {
+        self.queue_asset_job(ctx, game_id, AssetSource::Chosen(plan, label));
+    }
+
+    fn queue_asset_job(&mut self, ctx: &egui::Context, game_id: &str, source: AssetSource) {
         // Un seul téléchargement à la fois : les suivants attendent leur tour.
         if self.job.is_some() {
-            self.job_queue.push_back((game_id.to_string(), hit));
+            self.job_queue.push_back((game_id.to_string(), source));
             return;
         }
         let (tx, rx) = channel();
         let settings = self.lib.settings.clone();
         let id = game_id.to_string();
-        let label = hit.title.clone();
+        let label = match &source {
+            AssetSource::Auto(hit) => hit.title.clone(),
+            AssetSource::Chosen(_, label) => label.clone(),
+        };
         let thread_id = id.clone();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
             let client = artwork::http();
-            let result = artwork::fetch(&client, &thread_id, &hit, &settings);
+            let result = match source {
+                AssetSource::Auto(hit) => artwork::fetch(&client, &thread_id, &hit, &settings),
+                AssetSource::Chosen(plan, _) => artwork::apply_plan(
+                    &client,
+                    &crate::config::artwork_root().join(&thread_id),
+                    &plan,
+                ),
+            };
             let _ = tx.send(result);
             ctx.request_repaint();
         });
@@ -677,6 +756,55 @@ impl QuarkApp {
             game_id: game_id.to_string(),
             label,
         });
+    }
+
+    /// Recherche les artworks proposables pour le jeu retenu (fenêtre d'ajout).
+    pub fn start_artwork_plan(&mut self, ctx: &egui::Context) {
+        let Some(hit) = self.add.hit.clone() else {
+            self.add.step = AddStep::Exe;
+            return;
+        };
+        self.add.step = AddStep::Artwork;
+        self.add.artwork = ArtworkPicker {
+            loading: true,
+            ..ArtworkPicker::default()
+        };
+        let (tx, rx) = channel();
+        let settings = self.lib.settings.clone();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let client = artwork::http();
+            let plan = artwork::build_plan(&client, &hit, &settings);
+            let _ = tx.send((plan, Vec::new()));
+            ctx.request_repaint();
+        });
+        self.add.artwork.rx = Some(rx);
+    }
+
+    fn poll_artwork_plan(&mut self, ctx: &egui::Context) {
+        let received = self.add.artwork.rx.as_ref().map(|rx| rx.try_recv());
+        match received {
+            Some(Ok((plan, warnings))) => {
+                self.add.artwork.rx = None;
+                self.add.artwork.loading = false;
+                self.add.artwork.error = if warnings.is_empty() {
+                    None
+                } else {
+                    Some(warnings.join(" · "))
+                };
+                self.add.artwork.plan = Some(plan);
+            }
+            Some(Err(TryRecvError::Disconnected)) => {
+                self.add.artwork.rx = None;
+                self.add.artwork.loading = false;
+                self.add.artwork.error = Some("Recherche des artworks interrompue".to_string());
+            }
+            _ => {
+                if self.add.artwork.loading {
+                    ctx.request_repaint_after(Duration::from_millis(120));
+                }
+            }
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -965,7 +1093,8 @@ impl QuarkApp {
                             ui.add_sized(
                                 Vec2::new(260.0, 30.0),
                                 egui::TextEdit::singleline(&mut self.filter)
-                                    .hint_text("Rechercher dans la bibliothèque")
+                                    .id(egui::Id::new("quark_filter"))
+                                    .hint_text("Rechercher dans la bibliothèque  ·  Ctrl+F")
                                     .font(FontId::proportional(12.5)),
                             );
                         } else {
@@ -1056,6 +1185,7 @@ impl QuarkApp {
     /// (`quark --ui`), qui n'a pas de `eframe::Frame`.
     pub fn ui(&mut self, ctx: &egui::Context) {
         self.tick(ctx);
+        self.keyboard(ctx);
 
         if self.applied_theme != Some(self.lib.settings.theme) {
             theme::apply(ctx, self.lib.settings.theme);
@@ -1074,6 +1204,93 @@ impl QuarkApp {
         self.game_settings_dialog(ctx);
         self.confirm_remove_dialog(ctx);
         self.toasts_ui(ctx);
+    }
+
+    /// Navigation au clavier, sans souris : flèches pour changer de jeu, Entrée
+    /// pour lancer, Ctrl+F (ou « / ») pour la recherche, Échap pour la vider.
+    /// Les raccourcis sont ignorés tant qu'une fenêtre ou un champ de saisie a
+    /// le focus, pour ne jamais voler une frappe.
+    fn keyboard(&mut self, ctx: &egui::Context) {
+        if self.add.open
+            || self.settings_open
+            || self.editing.is_some()
+            || self.confirm_remove.is_some()
+        {
+            return;
+        }
+        let typing = ctx.wants_keyboard_input();
+        let filter_id = egui::Id::new("quark_filter");
+        let (down, up, left, right, enter, escape, find, slash) = ctx.input(|i| {
+            (
+                i.key_pressed(egui::Key::ArrowDown),
+                i.key_pressed(egui::Key::ArrowUp),
+                i.key_pressed(egui::Key::ArrowLeft),
+                i.key_pressed(egui::Key::ArrowRight),
+                i.key_pressed(egui::Key::Enter),
+                i.key_pressed(egui::Key::Escape),
+                i.modifiers.command && i.key_pressed(egui::Key::F),
+                i.key_pressed(egui::Key::Slash),
+            )
+        });
+
+        if find || (!typing && slash) {
+            ctx.memory_mut(|memory| memory.request_focus(filter_id));
+            return;
+        }
+        if typing {
+            if escape {
+                ctx.memory_mut(|memory| memory.surrender_focus(filter_id));
+            }
+            return;
+        }
+        if escape {
+            if self.tab != Tab::Library {
+                self.tab = Tab::Library;
+            } else if !self.filter.is_empty() {
+                self.filter.clear();
+            }
+            return;
+        }
+
+        let Some(current_id) = self.selected.clone() else {
+            return;
+        };
+        if enter {
+            self.launch(ctx, &current_id);
+            return;
+        }
+        if !(down || up || left || right) {
+            return;
+        }
+        let ids = self.display_ids();
+        if ids.is_empty() {
+            return;
+        }
+        // Dans la grille, haut/bas suivent les colonnes ; en liste, tout
+        // déplace d'une ligne.
+        let columns = if self.lib.settings.view == ViewMode::Grid {
+            3
+        } else {
+            1
+        };
+        let step: i64 = if down {
+            columns
+        } else if up {
+            -columns
+        } else if right {
+            1
+        } else {
+            -1
+        };
+        let index = ids
+            .iter()
+            .position(|id| id == &current_id)
+            .unwrap_or_default();
+        let next = (index as i64 + step).clamp(0, ids.len() as i64 - 1) as usize;
+        if next != index {
+            let id = ids[next].clone();
+            self.select(&id);
+        }
     }
 }
 
@@ -1108,6 +1325,95 @@ impl QuarkApp {
 
     pub fn running_since(&self, id: &str) -> u64 {
         self.running.get(id).map(|r| r.session).unwrap_or(0)
+    }
+
+    // -----------------------------------------------------------------------
+    // Mises à jour (releases GitHub)
+    // -----------------------------------------------------------------------
+
+    /// Interroge la dernière release publiée (non bloquant).
+    pub fn check_updates(&mut self, ctx: &egui::Context) {
+        if matches!(
+            self.update,
+            UpdateState::Checking | UpdateState::Downloading(_)
+        ) {
+            return;
+        }
+        self.update = UpdateState::Checking;
+        let (tx, rx) = channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let client = artwork::http();
+            let _ = tx.send(UpdateMessage::Checked(update::latest(&client)));
+            ctx.request_repaint();
+        });
+        self.update_rx = Some(rx);
+    }
+
+    /// Télécharge l'archive de la release proposée (jamais installée à notre
+    /// place : le binaire courant n'est pas remplacé).
+    pub fn download_update(&mut self, ctx: &egui::Context) {
+        let UpdateState::Available(release) = self.update.clone() else {
+            return;
+        };
+        let Some(asset) = release.archive().cloned() else {
+            self.update = UpdateState::Failed("aucune archive dans cette release".to_string());
+            return;
+        };
+        let tag = release.tag_name.clone();
+        self.update = UpdateState::Downloading(release);
+        let (tx, rx) = channel();
+        let ctx = ctx.clone();
+        let dir = crate::config::data_dir().join("updates");
+        std::thread::spawn(move || {
+            let client = artwork::http();
+            let result = update::download(&client, &asset, &dir);
+            let _ = tx.send(UpdateMessage::Downloaded(tag, result));
+            ctx.request_repaint();
+        });
+        self.update_rx = Some(rx);
+    }
+
+    fn poll_update(&mut self, ctx: &egui::Context) {
+        let received = self.update_rx.as_ref().map(|rx| rx.try_recv());
+        match received {
+            Some(Ok(UpdateMessage::Checked(Ok(release)))) => {
+                self.update_rx = None;
+                self.update = if update::is_newer(&release.tag_name, update::current_version()) {
+                    UpdateState::Available(release)
+                } else {
+                    UpdateState::UpToDate
+                };
+            }
+            Some(Ok(UpdateMessage::Checked(Err(err)))) => {
+                self.update_rx = None;
+                self.update = UpdateState::Failed(err);
+            }
+            Some(Ok(UpdateMessage::Downloaded(tag, Ok(path)))) => {
+                self.update_rx = None;
+                self.update = UpdateState::Downloaded(path.clone());
+                self.toast_info(format!(
+                    "{tag} téléchargée dans {}",
+                    path.parent().unwrap_or(&path).display()
+                ));
+            }
+            Some(Ok(UpdateMessage::Downloaded(_, Err(err)))) => {
+                self.update_rx = None;
+                self.update = UpdateState::Failed(err);
+            }
+            Some(Err(TryRecvError::Disconnected)) => {
+                self.update_rx = None;
+                self.update = UpdateState::Failed("vérification interrompue".to_string());
+            }
+            _ => {
+                if matches!(
+                    self.update,
+                    UpdateState::Checking | UpdateState::Downloading(_)
+                ) {
+                    ctx.request_repaint_after(Duration::from_millis(150));
+                }
+            }
+        }
     }
 
     /// Rampe de dégradé des bannières, créée une seule fois.

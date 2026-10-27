@@ -321,7 +321,7 @@ struct SgdbAsset {
     downvotes: i64,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct AssetPlan {
     /// Pour chaque type d'asset, les URL candidates par ordre de préférence.
     pub kinds: Vec<(AssetKind, Vec<String>)>,
@@ -348,6 +348,30 @@ impl AssetPlan {
             .find(|(k, _)| *k == kind)
             .map(|(_, v)| v.as_slice())
             .unwrap_or(&[])
+    }
+
+    /// Même plan, mais avec l'artwork choisi à la main en premier pour chaque
+    /// type : les autres propositions restent en secours si le téléchargement
+    /// ou le format échoue.
+    pub fn with_choices(&self, choices: &[(AssetKind, usize)]) -> AssetPlan {
+        let mut out = AssetPlan {
+            kinds: Vec::new(),
+            warnings: self.warnings.clone(),
+        };
+        for (kind, urls) in &self.kinds {
+            let index = choices
+                .iter()
+                .find(|(chosen_kind, _)| chosen_kind == kind)
+                .map(|(_, index)| *index)
+                .unwrap_or(0);
+            if let Some(url) = urls.get(index) {
+                out.add(*kind, url.clone());
+            }
+            for url in urls {
+                out.add(*kind, url.clone());
+            }
+        }
+        out
     }
 }
 

@@ -439,7 +439,7 @@ pub fn monogram(painter: &egui::Painter, rect: Rect, text: &str, fill: Color32, 
         rect.center(),
         Align2::CENTER_CENTER,
         text,
-        FontId::proportional((rect.height() * 0.30).clamp(11.0, 96.0)),
+        FontId::proportional((rect.height() * 0.36).clamp(13.0, 120.0)),
         Color32::from_rgb(0xF0, 0xF3, 0xF8),
     );
 }

@@ -43,6 +43,39 @@ jobs:
           tar -czf "quark-${{ steps.version.outputs.value }}-linux-x86_64.tar.gz" -C dist quark
           sha256sum "quark-${{ steps.version.outputs.value }}-linux-x86_64.tar.gz" > "quark-${{ steps.version.outputs.value }}-linux-x86_64.tar.gz.sha256"
 
+      - name: Aperçus de l'interface (rendu hors écran, aucun écran requis)
+        run: |
+          mkdir -p dist/renders
+          export HOME="$PWD/dist/home"
+          for spec in \
+            "list:--view list" \
+            "grid:--view grid" \
+            "store:--tab store" \
+            "info:--view list --info" \
+            "running:--view list --running" \
+            "hover-row:--view list --hover 160,340" \
+            "hover-tile:--view grid --hover 150,300" \
+            "dialog-settings:--dialog settings" \
+            "dialog-updates:--dialog updates" \
+            "dialog-game:--dialog game" \
+            "dialog-add:--dialog add" \
+            "dialog-artwork:--dialog artwork" \
+            "dialog-scan:--dialog scan" \
+            "dialog-remove:--dialog remove" \
+            "keyboard:--view list --key down" \
+            "small:--size 1024x640 --view list"; do
+            name="${spec%%:*}"
+            opts="${spec#*:}"
+            ./target/release/quark --ui "dist/renders/ui-$name.png" --demo $opts
+          done
+
+      - name: Publication des aperçus
+        uses: actions/upload-artifact@v4
+        with:
+          name: quark-ui-renders
+          path: dist/renders/*.png
+          if-no-files-found: error
+
       - name: Publication de la release
         uses: softprops/action-gh-release@v2
         with:

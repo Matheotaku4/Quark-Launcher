@@ -16,6 +16,10 @@ through **Proton**.
 - **Add from a folder**: pick a folder, Quark finds the executables, proposes a title
   matched by the search, and you can fix the title, answer "it's a game" or "it's not a
   game", then add everything at once.
+- **Pick the artwork yourself**: once the game is recognised, a step lists the proposed
+  banners, logos, covers and icons (SteamGridDB, then the official Steam assets) with a
+  preview — you choose the one you want. The other proposals stay in the list as a
+  fallback if a download fails or the format is wrong.
 - **Checked artwork**: every downloaded image is verified (real dimensions) so a wrongly
   shaped thumbnail is rejected, with a fallback to Steam's `appdetails` page;
   `library_600x900_2x` cover, `library_hero` banner, transparent logo and small capsule.
@@ -43,8 +47,14 @@ through **Proton**.
   `compatibilitytools.d/*`, including Flatpak/Snap), runtime chosen **per game** or
   globally, a **default Proton prefix** in the settings and a **per-game override**.
 - **Playtime tracking**: every session is timed (relaunch, total time, last session).
-- **Command-line diagnostics**: `--doctor`, `--search`, `--fetch`, `--news`, `--scan` and
-  `--ui` (no screen required).
+- **Keyboard navigation**: arrows to move through the library (up/down and left/right in
+  the grid), `Enter` to launch, `Ctrl+F` (or `/`) to jump to the search field, `Esc` to
+  clear it. Shortcuts stay out of the way while a dialog or a text field has focus.
+- **Update check**: the settings show the running version and query the latest GitHub
+  release; the archive is downloaded to `~/.local/share/quark/updates/` and never installed
+  behind your back. `quark --update` does the same without opening a window.
+- **Command-line diagnostics**: `--doctor`, `--search`, `--fetch`, `--news`, `--scan`,
+  `--update` and `--ui` (no screen required).
 
 ## Build
 
@@ -115,8 +125,13 @@ Quark, packages `quark-<version>-linux-x86_64.tar.gz` (+ SHA-256 checksum) and p
 release tagged `v<version>` (version read from `Cargo.toml`). It can also be started by hand
 from the repository's **Actions** tab.
 
+The same run also renders the interface off-screen (`quark --ui`, no display required) for
+list, grid, settings, dialogs, hover and keyboard states, and attaches the PNGs to the build
+as the **quark-ui-renders** artifact — so every push can be reviewed without installing
+anything.
+
 ```bash
-tar -xzf quark-0.3.0-linux-x86_64.tar.gz
+tar -xzf quark-0.4.0-linux-x86_64.tar.gz
 cd quark && ./quark
 ```
 
@@ -150,7 +165,11 @@ target/release/quark --ui dialog.png --demo --dialog settings
 
 Options: `--size WxH`, `--scale N`, `--frames N`, `--view list|grid`, `--tab library|store`,
 `--theme amoled|graphite`, `--select <game>`, `--info`, `--running`,
-`--dialog none|add|exe|scan|settings|game|remove`, `--hover X,Y`, `--click X,Y`, `--demo`.
+`--dialog none|add|artwork|exe|scan|settings|game|remove|updates`, `--hover X,Y`,
+`--click X,Y`, `--key up|down|left|right|enter|escape`, `--demo`.
+
+`--click` and `--key` send real input events, so a render also checks the interactions:
+`--key down` really moves the selection, `--click X,Y` really presses a button.
 
 `--demo` builds a library of fake games with generated artwork (complete games, partial ones
 and games with no image at all), so every fallback gets rendered. Without `--demo` the real
@@ -168,6 +187,7 @@ target/release/quark --search portal   # Steam + SteamGridDB results and artwork
 target/release/quark --fetch portal    # actually downloads the artwork into /tmp
 target/release/quark --scan ~/Games    # games detected in a folder
 target/release/quark --news portal     # latest Steam news for a game (appid or title)
+target/release/quark --update          # latest GitHub release (and downloads the archive)
 ```
 
 ## Code structure
@@ -184,6 +204,7 @@ src/scan.rs         game discovery inside a folder (batch adding)
 src/news.rs         per-game news (public Steam feed) and opening links
 src/images.rs       texture cache: Quark decodes artwork itself
 src/proton.rs       Proton runtime detection + command line construction
+src/update.rs       latest GitHub release, version comparison, archive download
 src/theme.rs        AMOLED/Graphite palette, gradients, monogram colours
 src/widgets.rs      hand-drawn vector icons and buttons (no icon font)
 src/snapshot.rs     off-screen software renderer (--ui), for visual checks

@@ -12,6 +12,7 @@ mod proton;
 mod scan;
 mod snapshot;
 mod theme;
+mod update;
 mod ui_dialogs;
 mod ui_library;
 mod ui_store;
@@ -60,9 +61,53 @@ fn cli(args: &[String]) -> Option<i32> {
             );
             println!("  quark --scan <dossier>   Liste les jeux détectés dans un dossier");
             println!("  quark --news <nom|appid> Affiche les actualités Steam d'un jeu");
+            println!("  quark --update           Vérifie la dernière release GitHub");
             println!("\nVérification du rendu (sans écran, aucun GPU) :");
             print!("{}", snapshot::HELP);
             Some(0)
+        }
+        "--update" => {
+            let client = artwork::http();
+            match update::latest(&client) {
+                Ok(release) => {
+                    println!(
+                        "Quark {} · dernière release : {} ({})",
+                        update::current_version(),
+                        release.tag_name,
+                        release.name
+                    );
+                    if update::is_newer(&release.tag_name, update::current_version()) {
+                        println!("mise à jour disponible : {}", release.html_url);
+                        match release.archive() {
+                            Some(asset) => {
+                                let dir = config::data_dir().join("updates");
+                                match update::download(&client, asset, &dir) {
+                                    Ok(path) => {
+                                        println!(
+                                            "archive téléchargée : {} ({} octets)",
+                                            path.display(),
+                                            asset.size
+                                        );
+                                        println!(
+                                            "décompresse-la et remplace le binaire pour installer \
+                                             la nouvelle version"
+                                        );
+                                    }
+                                    Err(err) => println!("téléchargement impossible : {err}"),
+                                }
+                            }
+                            None => println!("cette release ne contient pas d'archive"),
+                        }
+                    } else {
+                        println!("à jour.");
+                    }
+                    Some(0)
+                }
+                Err(err) => {
+                    eprintln!("Vérification impossible : {err}");
+                    Some(1)
+                }
+            }
         }
         "--ui" => {
             let Some(out) = args.get(1).filter(|a| !a.starts_with("--")) else {
@@ -170,6 +215,13 @@ fn cli(args: &[String]) -> Option<i32> {
                         Some(name) => opts.select = Some(name),
                         None => {
                             eprintln!("--select attend un nom de jeu");
+                            return Some(2);
+                        }
+                    },
+                    "--key" => match value {
+                        Some(key) => opts.key = Some(key),
+                        None => {
+                            eprintln!("--key attend une touche (up, down, left, right, enter, escape)");
                             return Some(2);
                         }
                     },

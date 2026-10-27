@@ -682,12 +682,13 @@ fn game_row(
         );
     }
 
-    // Comme Steam : la petite vignette du jeu (capsule) plutôt que le logo
-    // transparent, réservé à la bannière. Sans icône, la première lettre du
-    // titre prend sa place, dans un rectangle identique : rien ne bouge.
+    // Vignette carrée (1:1) : l'icône du jeu, jamais le logo transparent qui
+    // reste réservé à la bannière. Sans icône, la première lettre du titre
+    // prend sa place dans un carré identique, donc rien ne bouge d'une ligne à
+    // l'autre.
     let thumb_box = Rect::from_min_size(
-        Pos2::new(rect.left() + 18.0, rect.center().y - 16.0),
-        Vec2::new(74.0, 32.0),
+        Pos2::new(rect.left() + 16.0, rect.center().y - 18.0),
+        Vec2::splat(36.0),
     );
     let thumb = game
         .artwork
@@ -696,7 +697,9 @@ fn game_row(
         .cloned();
     let texture = thumb.as_ref().and_then(|path| textures.get(ui.ctx(), path));
     match texture {
-        Some(texture) => draw_fit(ui, texture, thumb_box),
+        // Le carré est rempli exactement : les icônes 1:1 (SteamGridDB) y
+        // tiennent entièrement, les capsules larges sont recadrées au centre.
+        Some(texture) => draw_fill(ui, texture, thumb_box),
         None => widgets::monogram(
             &painter,
             thumb_box,
@@ -708,7 +711,7 @@ fn game_row(
 
     // Titre sur une seule ligne, coupé par une ellipsis : les noms longs ne
     // débordent plus de la colonne.
-    let title_x = rect.left() + 118.0;
+    let title_x = rect.left() + 66.0;
     let title_color = theme::lerp_color(pal.text_dim, pal.text, mark.max(hover * 0.7));
     let job = single_line(
         &game.name,
