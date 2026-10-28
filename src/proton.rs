@@ -251,6 +251,9 @@ pub struct LaunchSpec {
 pub enum LaunchKind {
     Native,
     Proton,
+    /// Lancement confié au client Steam (`steam -applaunch <id>`) : c'est la
+    /// seule façon d'avoir l'overlay Steam, Steam devant lancer le jeu lui-même.
+    Steam,
 }
 
 #[derive(Debug)]
@@ -269,6 +272,7 @@ impl Resolved {
             (LaunchKind::Native, _) => "Linux (natif)".to_string(),
             (LaunchKind::Proton, Some(rt)) => rt.label(),
             (LaunchKind::Proton, None) => "Proton".to_string(),
+            (LaunchKind::Steam, _) => "Steam · overlay".to_string(),
         };
         match self.anticheat {
             AnticheatMode::None => base,
@@ -321,13 +325,15 @@ pub fn split_args(s: &str) -> Vec<String> {
     out
 }
 
-/// Variables d'environnement effectives : d'abord celles des réglages
-/// généraux, puis celles du jeu — qui écrasent le réglage global portant le
-/// même nom. L'ordre est conservé (le jeu garde donc l'ordre où il les a été
-/// saisies).
-pub fn launch_env(game: &Game, settings: &Settings) -> Vec<(String, String)> {
+/// Variables d'environnement effectives du jeu.
+///
+/// Les réglages généraux ne sont plus fusionnées ici : leurs variables sont
+/// recopiées dans le jeu au moment de l'ajout, ce qui permet à chaque jeu de
+/// garder les siennes. Un nom saisi deux fois est dédoublonné (dernière valeur
+/// gagnante) sans changer l'ordre de saisie.
+pub fn launch_env(game: &Game) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
-    for var in settings.env.iter().chain(game.env.iter()) {
+    for var in game.env.iter() {
         if !var.is_valid() {
             continue;
         }
@@ -350,6 +356,30 @@ pub fn resolve(
     settings: &Settings,
     runtimes: &[ProtonRuntime],
 ) -> Result<Resolved, String> {
+    // Overlay Steam : seul Steam peut l'injecter, donc on lui confie le
+    // lancement. Ses propres réglages (Proton, préfixe, arguments du raccourci)
+    // prennent alors le relais : ceux de Quark ne seraient pas honorés.
+    if let Some(app_id) = game.steam_launch_id {
+        if app_id == 0 {
+            return Err(
+                "Overlay Steam : indique l'AppID du raccourci Steam (Propriétés du raccourci \
+                 → l'identifiant est dans l'URL steam://rungameid/…)."
+                    .to_string(),
+            );
+        }
+        return Ok(Resolved {
+            kind: LaunchKind::Steam,
+            spec: LaunchSpec {
+                program: PathBuf::from("steam"),
+                args: vec!["-applaunch".to_string(), app_id.to_string()],
+                env: Vec::new(),
+            },
+            runtime: None,
+            prefix: None,
+            anticheat: AnticheatMode::None,
+        });
+    }
+
     if game.exe.trim().is_empty() {
         return Err("Aucun exécutable défini pour ce jeu.".to_string());
     }
@@ -372,7 +402,7 @@ pub fn resolve(
                 args: extra,
                 // Les variables d'environnement s'appliquent aussi aux jeux
                 // natifs : certaines servent hors Wine (MANGOHUD, LD_…).
-                env: launch_env(game, settings),
+                env: launch_env(game),
             },
             runtime: None,
             prefix: None,
@@ -436,7 +466,7 @@ pub fn resolve(
     // Les variables de l'utilisateur d'abord, puis celles que Proton exige :
     // `Command::env` garde la dernière valeur, donc le préfixe résolu gagne
     // toujours sur une variable homonyme saisie à la main.
-    let mut env = launch_env(game, settings);
+    let mut env = launch_env(game);
     // Les dossiers anti-triche d'abord : une variable saisie à la main ne peut
     // pas contredire l'option cochée dans les paramètres du jeu.
     env.extend(anticheat_env);
@@ -474,22 +504,13 @@ mod tests {
     }
 
     #[test]
-    fn env_du_jeu_ecrase_le_reglage_global() {
-        let mut settings = Settings::default();
-        settings.env = vec![
+    fn une_variable_ecrite_deux_fois_garde_la_derniere_valeur() {
+        let env = launch_env(&jeu(vec![
             EnvVar::new("WINEDLLOVERRIDES", "winmm=n"),
-            EnvVar::new("DXVK_HUD", "1"),
-        ];
-        let env = launch_env(
-            &jeu(vec![EnvVar::new(
-                "WINEDLLOVERRIDES",
-                "winmm=n,b;steam_api64",
-            )]),
-            &settings,
-        );
-        // La variable du jeu remplace la globale à sa place (même ordre, pas
-        // de doublon).
-        assert_eq!(env.len(), 2);
+            EnvVar::new("WINEDLLOVERRIDES", "winmm=n,b;steam_api64"),
+        ]));
+        // Un seul nom, une seule variable, dernière valeur gagnante.
+        assert_eq!(env.len(), 1);
         assert_eq!(
             env[0],
             (
@@ -497,14 +518,29 @@ mod tests {
                 "winmm=n,b;steam_api64".to_string()
             )
         );
-        assert_eq!(env[1], ("DXVK_HUD".to_string(), "1".to_string()));
     }
 
     #[test]
     fn env_sans_nom_est_ignoree() {
-        let mut settings = Settings::default();
-        settings.env = vec![EnvVar::new("   ", "x"), EnvVar::new("", "y")];
-        assert!(launch_env(&jeu(Vec::new()), &settings).is_empty());
+        assert!(launch_env(&jeu(vec![EnvVar::new("   ", "x"), EnvVar::new("", "y")])).is_empty());
+    }
+
+    #[test]
+    fn l_overlay_steam_confie_le_lancement_a_steam() {
+        let mut game = Game::new("Jeu", "/tmp/jeu.exe");
+        game.steam_launch_id = Some(3_546_210_478);
+        let resolu = resolve(&game, &Settings::default(), &[]).unwrap();
+        // Steam doit lancer le jeu lui-même : lui seul injecte l'overlay.
+        assert_eq!(resolu.kind, LaunchKind::Steam);
+        assert_eq!(resolu.spec.program, PathBuf::from("steam"));
+        assert_eq!(resolu.spec.args, ["-applaunch", "3546210478"]);
+        assert!(resolu.prefix.is_none(), "Steam gère son propre préfixe");
+        assert_eq!(resolu.label(), "Steam · overlay");
+
+        // AppID à zéro : message clair plutôt qu'un Steam sans jeu.
+        game.steam_launch_id = Some(0);
+        let err = resolve(&game, &Settings::default(), &[]).unwrap_err();
+        assert!(err.contains("AppID"), "{err}");
     }
 
     fn faux_runtime(root: &Path, name: &str) {
@@ -661,14 +697,10 @@ mod tests {
 
     #[test]
     fn l_ordre_des_variables_est_conserve() {
-        let settings = Settings::default();
-        let env = launch_env(
-            &jeu(vec![
-                EnvVar::new("PROTON_LOG", "1"),
-                EnvVar::new("WINEDEBUG", "-all"),
-            ]),
-            &settings,
-        );
+        let env = launch_env(&jeu(vec![
+            EnvVar::new("PROTON_LOG", "1"),
+            EnvVar::new("WINEDEBUG", "-all"),
+        ]));
         assert_eq!(
             env.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(),
             ["PROTON_LOG", "WINEDEBUG"]

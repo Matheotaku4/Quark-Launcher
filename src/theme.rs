@@ -60,6 +60,24 @@ pub fn on_accent(accent: Color32) -> Color32 {
     }
 }
 
+/// Couleur d'un symbole posé sur `bg` : la même teinte, très assombrie, sur un
+/// fond clair (une icône blanche sur un bleu clair disparaît), et un blanc cassé
+/// sur un fond sombre. C'est ce qui rend les icônes lisibles sur une bannière
+/// claire comme sur le noir AMOLED.
+pub fn on_surface(bg: Color32) -> Color32 {
+    let [r, g, b, _] = bg.to_array();
+    let luminance = 0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32;
+    if luminance > 150.0 {
+        // Même teinte, gardée très sombre : bleu clair -> bleu foncé. L'alpha est
+        // remis à 255 : `gamma_multiply` le réduit aussi, et une icône à 22 %
+        // d'opacité disparaîtrait sur son fond.
+        let c = bg.gamma_multiply(0.22);
+        Color32::from_rgb(c.r(), c.g(), c.b())
+    } else {
+        rgb(0xF2, 0xF5, 0xF9)
+    }
+}
+
 /// Conversion teinte/saturation/valeur -> RVB.
 fn hsv(hue: f32, saturation: f32, value: f32) -> Color32 {
     let h = hue.rem_euclid(360.0) / 60.0;
@@ -279,6 +297,20 @@ mod tests {
         // Jaune : texte noir ; bleu : texte blanc.
         assert_eq!(on_accent(accent_from_hue(60.0)), Color32::BLACK);
         assert_eq!(on_accent(accent_from_hue(230.0)), Color32::WHITE);
+    }
+
+    #[test]
+    fn une_icone_s_oppose_au_fond_qui_la_porte() {
+        // Fond clair (bleu ciel) : l'icône est de la même teinte, très foncée.
+        let ciel = rgb(0x7F, 0xC8, 0xFF);
+        let icone = on_surface(ciel);
+        let [r, g, b, a] = icone.to_array();
+        assert_eq!(a, 255, "l'icône doit rester opaque : {icone:?}");
+        assert!(r < 90 && g < 120 && b < 140, "icône trop claire : {icone:?}");
+        assert!(b > r, "la teinte doit rester bleutée : {icone:?}");
+        // Fond sombre : l'icône repasse en blanc cassé.
+        let sombre = on_surface(rgb(0x0B, 0x0E, 0x11));
+        assert!(sombre.r() > 200, "{sombre:?}");
     }
 
     #[test]

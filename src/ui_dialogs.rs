@@ -54,7 +54,16 @@ impl QuarkApp {
 
                 match step {
                     AddStep::Name => {
-                        ui.label(RichText::new("Nom du jeu").size(12.0).color(pal.text_dim));
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Nom du jeu").size(12.0).color(pal.text_dim));
+                            widgets::info_button(
+                                ui,
+                                &pal,
+                                "Quark cherche le jeu sur Steam puis sur SteamGridDB pour \
+                                 récupérer les artworks originaux (bannière, logo, couverture, \
+                                 icône). La recherche part dès 2 lettres.",
+                            );
+                        });
                         ui.add_space(4.0);
                         let response = ui.add(
                             egui::TextEdit::singleline(&mut self.add.name)
@@ -70,15 +79,6 @@ impl QuarkApp {
                         if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                             self.start_search(ui.ctx());
                         }
-                        ui.add_space(4.0);
-                        ui.label(
-                            RichText::new(
-                                "Quark cherche le jeu sur Steam puis sur SteamGridDB pour récupérer \
-                                 les artworks originaux (bannière, logo, couverture).",
-                            )
-                            .size(11.0)
-                            .color(pal.text_faint),
-                        );
                         ui.add_space(12.0);
 
                         let mut warnings: Vec<String> = Vec::new();
@@ -86,7 +86,7 @@ impl QuarkApp {
                             SearchState::Idle => {
                                 ui.label(
                                     RichText::new("Tape au moins 2 lettres, la recherche est automatique.")
-                                        .size(12.0)
+                                        .size(11.5)
                                         .color(pal.text_faint),
                                 );
                             }
@@ -152,25 +152,26 @@ impl QuarkApp {
                             {
                                 browse_folder = true;
                             }
-                            ui.add_space(8.0);
-                            ui.label(
-                                RichText::new(
-                                    "analyse un dossier et propose les jeux qu'il contient",
-                                )
-                                .size(11.0)
-                                .color(pal.text_faint),
+                            widgets::info_button(
+                                ui,
+                                &pal,
+                                "Analyse un dossier, propose les jeux qu'il contient et te laisse \
+                                 confirmer chaque titre (ou dire que ce n'est pas un jeu).",
                             );
                         });
                     }
                     AddStep::Artwork => {
-                        ui.label(
-                            RichText::new(
-                                "Choisis les images téléchargées pour ce jeu. La première \
-                                 proposition de chaque type est choisie par défaut.",
-                            )
-                            .size(11.0)
-                            .color(pal.text_faint),
-                        );
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new("Images du jeu").size(12.0).color(pal.text_dim),
+                            );
+                            widgets::info_button(
+                                ui,
+                                &pal,
+                                "La première proposition de chaque type est choisie par défaut : \
+                                 clique une vignette pour en prendre une autre.",
+                            );
+                        });
                         ui.add_space(10.0);
 
                         let plan = self.add.artwork.plan.clone();
@@ -423,6 +424,9 @@ impl QuarkApp {
             let mut game = crate::config::Game::new(name, self.add.exe.trim());
             game.args = self.add.args.trim().to_string();
             game.proton = self.add.proton.clone();
+            // Réglages « par défaut » : recopiés dans chaque nouveau jeu.
+            game.anticheat = self.lib.settings.default_anticheat;
+            game.env = self.lib.settings.default_env.clone();
             if self.add.custom_prefix && !self.add.prefix.trim().is_empty() {
                 game.prefix = Some(self.add.prefix.trim().to_string());
             }
@@ -492,7 +496,9 @@ impl QuarkApp {
         let mut download_update = false;
         let mut open_url: Option<String> = None;
 
-        let max_height = (ctx.screen_rect().height() * 0.66).max(300.0);
+        // Hauteur généreuse : une liste de variables d'environnement longue doit
+        // tenir sans faire défiler une petite boîte.
+        let max_height = (ctx.screen_rect().height() * 0.70).max(320.0);
         let modal = egui::Modal::new(egui::Id::new("quark_settings")).show(ctx, |ui| {
             ui.set_min_width(720.0);
             ui.horizontal(|ui| {
@@ -522,7 +528,9 @@ impl QuarkApp {
             egui::ScrollArea::vertical()
                 .id_salt("quark_settings_scroll")
                 .max_height(max_height)
-                .auto_shrink([false, false])
+                // Se rétrécit quand la page est courte, mais grandit jusqu'à
+                // `max_height` quand les variables s'accumulent.
+                .auto_shrink([false, true])
                 .show(ui, |ui| match self.settings_tab {
                     SettingsTab::Appearance => {
                         section(ui, "THÈME", &pal);
@@ -535,15 +543,13 @@ impl QuarkApp {
                                     self.touch();
                                 }
                             }
-                        });
-                        ui.label(
-                            RichText::new(
+                            widgets::info_button(
+                                ui,
+                                &pal,
                                 "AMOLED est noir pur (#000000) ; Graphite adoucit les noirs sur \
                                  les écrans qui ne sont pas OLED.",
-                            )
-                            .size(11.0)
-                            .color(pal.text_faint),
-                        );
+                            );
+                        });
 
                         section(ui, "BIBLIOTHÈQUE", &pal);
                         ui.horizontal(|ui| {
@@ -557,50 +563,15 @@ impl QuarkApp {
                                     self.touch();
                                 }
                             }
-                            ui.add_space(8.0);
-                            ui.label(
-                                RichText::new("(bascule aussi depuis la colonne de gauche)")
-                                    .size(11.0)
-                                    .color(pal.text_faint),
+                            widgets::info_button(
+                                ui,
+                                &pal,
+                                "La vue se bascule aussi depuis la colonne de gauche (icônes \
+                                 liste / grille).",
                             );
                         });
                     }
                     SettingsTab::Proton => {
-                        section(ui, "PRÉFIXE", &pal);
-                        ui.horizontal(|ui| {
-                            let mut text =
-                                self.lib.settings.default_prefix.clone().unwrap_or_default();
-                            let field = (ui.available_width() - 210.0).max(220.0);
-                            let response = ui.add(
-                                egui::TextEdit::singleline(&mut text)
-                                    .hint_text(format!("auto : {}", config::prefix_root().display()))
-                                    .desired_width(field),
-                            );
-                            if response.changed() {
-                                self.lib.settings.default_prefix = if text.trim().is_empty() {
-                                    None
-                                } else {
-                                    Some(text.clone())
-                                };
-                                self.touch();
-                            }
-                            if widgets::ghost_button(ui, "Parcourir…", &pal, Icon::Folder).clicked() {
-                                browse_prefix = true;
-                            }
-                            if widgets::ghost_button(ui, "Auto", &pal, Icon::None).clicked() {
-                                self.lib.settings.default_prefix = None;
-                                self.touch();
-                            }
-                        });
-                        ui.label(
-                            RichText::new(
-                                "Utilisé par tous les jeux qui n'ont pas leur propre préfixe. Le \
-                                 dossier est utilisé tel quel : Quark n'y crée aucun sous-dossier.",
-                            )
-                            .size(11.0)
-                            .color(pal.text_faint),
-                        );
-
                         section(ui, "RUNTIME", &pal);
                         let mut mode = self
                             .lib
@@ -642,23 +613,24 @@ impl QuarkApp {
                                 redetect = true;
                             }
                         });
-                        ui.label(
-                            RichText::new(format!(
-                                "Anti-triche : {}",
-                                proton::anticheat_summary(&self.runtimes)
-                            ))
-                            .size(11.0)
-                            .color(pal.text_faint),
-                        );
-                        ui.label(
-                            RichText::new(
-                                "BattlEye et EasyAntiCheat sont deux options indépendantes, cochables \
-                                 ensemble dans les paramètres du jeu : Quark les déclare à Proton via \
-                                 PROTON_BATTLEYE_RUNTIME / PROTON_EAC_RUNTIME.",
-                            )
-                            .size(11.0)
-                            .color(pal.text_faint),
-                        );
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(format!(
+                                    "Anti-triche : {}",
+                                    proton::anticheat_summary(&self.runtimes)
+                                ))
+                                .size(11.0)
+                                .color(pal.text_faint),
+                            );
+                            widgets::info_button(
+                                ui,
+                                &pal,
+                                "BattlEye et EasyAntiCheat sont deux options indépendantes, \
+                                 cochables ensemble dans les paramètres du jeu : Quark déclare les \
+                                 dossiers trouvés à ton Proton via PROTON_BATTLEYE_RUNTIME et \
+                                 PROTON_EAC_RUNTIME. Ces dossiers ne se lancent pas eux-mêmes.",
+                            );
+                        });
                         if self.runtimes.is_empty() {
                             ui.add_space(4.0);
                             ui.label(
@@ -671,18 +643,134 @@ impl QuarkApp {
                             );
                         }
                     }
-                    SettingsTab::Environment => {
-                        section(ui, "VARIABLES GLOBALES", &pal);
-                        ui.label(
-                            RichText::new(
-                                "Appliquées à tous les lancements. Un jeu qui définit la même \
-                                 variable dans ses propres paramètres écrase celle-ci.",
-                            )
-                            .size(11.0)
-                            .color(pal.text_faint),
+                    SettingsTab::Defaults => {
+                        section_hint(
+                            ui,
+                            "PAR DÉFAUT",
+                            &pal,
+                            "Ce ne sont pas des réglages globaux : ces valeurs sont recopiées \
+                             dans un jeu au moment où tu l'ajoutes, puis chaque jeu garde les \
+                             siennes. Changer un défaut ne modifie donc aucun jeu déjà dans la \
+                             bibliothèque, et modifier un jeu ne touche pas les autres.",
                         );
-                        ui.add_space(6.0);
-                        if env_editor(ui, &pal, &mut self.lib.settings.env) {
+
+                        ui.label(RichText::new("Préfixe Proton").size(12.5).color(pal.text_dim));
+                        ui.horizontal(|ui| {
+                            let mut text =
+                                self.lib.settings.default_prefix.clone().unwrap_or_default();
+                            let field = (ui.available_width() - 210.0).max(220.0);
+                            let response = ui.add(
+                                egui::TextEdit::singleline(&mut text)
+                                    .hint_text(format!("auto : {}", config::prefix_root().display()))
+                                    .desired_width(field),
+                            );
+                            if response.changed() {
+                                self.lib.settings.default_prefix = if text.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(text.clone())
+                                };
+                                self.touch();
+                            }
+                            if widgets::ghost_button(ui, "Parcourir…", &pal, Icon::Folder).clicked() {
+                                browse_prefix = true;
+                            }
+                            if widgets::ghost_button(ui, "Auto", &pal, Icon::None).clicked() {
+                                self.lib.settings.default_prefix = None;
+                                self.touch();
+                            }
+                            widgets::info_button(
+                                ui,
+                                &pal,
+                                "Le dossier choisi est utilisé tel quel : Quark n'y crée aucun \
+                                 sous-dossier. Vide = un préfixe par jeu sous \
+                                 ~/.local/share/quark/prefixes/.",
+                            );
+                        });
+
+                        section(ui, "ARGUMENTS", &pal);
+                        ui.horizontal(|ui| {
+                            let response = ui.add(
+                                egui::TextEdit::singleline(&mut self.lib.settings.default_args)
+                                    .hint_text("ex. -windowed -novid")
+                                    .desired_width((ui.available_width() - 50.0).max(300.0)),
+                            );
+                            if response.changed() {
+                                self.touch();
+                            }
+                            widgets::info_button(
+                                ui,
+                                &pal,
+                                "Passés après l'exécutable, comme dans les options de lancement \
+                                 Steam. Les guillemets sont respectés : --chemin \"un dossier\".",
+                            );
+                        });
+
+                        section(ui, "RUNTIME PROTON", &pal);
+                        let mut mode = self
+                            .lib
+                            .settings
+                            .default_proton
+                            .clone()
+                            .map(ProtonMode::Runtime)
+                            .unwrap_or(ProtonMode::Default);
+                        if runtime_combo(
+                            ui,
+                            &pal,
+                            "default_runtime",
+                            &mut mode,
+                            &self.runtimes,
+                            false,
+                        ) {
+                            self.lib.settings.default_proton = match mode {
+                                ProtonMode::Runtime(key) => Some(key),
+                                _ => None,
+                            };
+                            self.touch();
+                        }
+
+                        section_hint(
+                            ui,
+                            "ANTI-TRICHE",
+                            &pal,
+                            "Deux options indépendantes, cochables ensemble. Les dossiers trouvés \
+                             dans Steam sont déclarés à ton Proton par PROTON_BATTLEYE_RUNTIME et \
+                             PROTON_EAC_RUNTIME.",
+                        );
+                        let mut battleye = self.lib.settings.default_anticheat.battleye();
+                        let mut eac = self.lib.settings.default_anticheat.eac();
+                        let mut changed = false;
+                        ui.horizontal(|ui| {
+                            if ui
+                                .checkbox(&mut battleye, "BattlEye AntiCheat Runtime")
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                            ui.add_space(10.0);
+                            if ui.checkbox(&mut eac, "EasyAntiCheat Runtime").changed() {
+                                changed = true;
+                            }
+                        });
+                        if changed {
+                            self.lib.settings.default_anticheat = self
+                                .lib
+                                .settings
+                                .default_anticheat
+                                .with_battleye(battleye)
+                                .with_eac(eac);
+                            self.touch();
+                        }
+
+                        section_hint(
+                            ui,
+                            "VARIABLES D'ENVIRONNEMENT",
+                            &pal,
+                            "Format NOM=valeur, par exemple \
+                             WINEDLLOVERRIDES=winmm=n,b;steam_api64. Chaque jeu ajouté en reçoit \
+                             une copie qu'il peut modifier sans toucher aux autres.",
+                        );
+                        if env_editor(ui, &pal, &mut self.lib.settings.default_env) {
                             self.touch();
                         }
                     }
@@ -691,6 +779,12 @@ impl QuarkApp {
                         ui.horizontal(|ui| {
                             ui.label(
                                 RichText::new("Clé API SteamGridDB").size(12.5).color(pal.text_dim),
+                            );
+                            widgets::info_button(
+                                ui,
+                                &pal,
+                                "Sans clé, Quark se limite aux artworks officiels du CDN Steam. \
+                                 Clé gratuite : steamgriddb.com/profile/preferences/api",
                             );
                             ui.add_space(8.0);
                             let response = ui.add(
@@ -703,15 +797,6 @@ impl QuarkApp {
                                 self.touch();
                             }
                         });
-                        ui.label(
-                            RichText::new(
-                                "Sans clé, Quark se limite aux artworks officiels du CDN Steam. \
-                                 Clé gratuite : steamgriddb.com/profile/preferences/api",
-                            )
-                            .size(11.0)
-                            .color(pal.text_faint),
-                        );
-                        ui.add_space(8.0);
                         ui.horizontal(|ui| {
                             ui.label(
                                 RichText::new("Langue / pays (recherche Steam)")
@@ -755,15 +840,6 @@ impl QuarkApp {
                                 self.touch();
                             }
                         });
-                        ui.add_space(10.0);
-                        ui.label(
-                            RichText::new(
-                                "Pour changer les images d'un jeu : bouton « Personnaliser » sur sa \
-                                 fiche, ou clic droit sur sa ligne.",
-                            )
-                            .size(11.0)
-                            .color(pal.text_faint),
-                        );
                     }
                     SettingsTab::About => {
                         section(ui, "VERSION", &pal);
@@ -974,7 +1050,7 @@ impl QuarkApp {
         let mut browse_prefix = false;
         let mut remove = false;
 
-        let max_height = (ctx.screen_rect().height() * 0.62).max(260.0);
+        let max_height = (ctx.screen_rect().height() * 0.70).max(280.0);
         let modal = egui::Modal::new(egui::Id::new("quark_game_settings")).show(ctx, |ui| {
                 ui.set_min_width(660.0);
                 ui.label(
@@ -985,7 +1061,7 @@ impl QuarkApp {
                 ui.add_space(10.0);
                 egui::ScrollArea::vertical()
                     .max_height(max_height)
-                    .auto_shrink([false, false])
+                    .auto_shrink([false, true])
                     .show(ui, |ui| {
                 section(ui, "JEU", &pal);
                 ui.label(RichText::new("Nom affiché").size(12.5).color(pal.text_dim));
@@ -1021,26 +1097,23 @@ impl QuarkApp {
                     true,
                 );
                 ui.add_space(8.0);
-                let default_prefix = self
-                    .lib
-                    .settings
-                    .default_prefix
-                    .clone()
-                    .unwrap_or_else(|| format!("auto : {}", config::prefix_root().display()));
-                ui.label(
-                    RichText::new(format!(
-                        "Préfixe par défaut : {default_prefix} (utilisé tel quel, sans sous-dossier)"
-                    ))
-                    .size(11.0)
-                    .color(pal.text_faint),
-                );
                 let mut custom = game.prefix.is_some();
-                if ui
-                    .checkbox(&mut custom, "Préfixe Proton propre à ce jeu")
-                    .changed()
-                {
-                    game.prefix = if custom { Some(String::new()) } else { None };
-                }
+                ui.horizontal(|ui| {
+                    if ui
+                        .checkbox(&mut custom, "Préfixe Proton propre à ce jeu")
+                        .changed()
+                    {
+                        game.prefix = if custom { Some(String::new()) } else { None };
+                    }
+                    widgets::info_button(
+                        ui,
+                        &pal,
+                        "Sans préfixe propre, le jeu prend celui de l'onglet « Par défaut » (sinon \
+                         ~/.local/share/quark/prefixes/<jeu>). Le dossier choisi est utilisé tel \
+                         quel, sans sous-dossier.",
+                    );
+                });
+
                 if let Some(prefix) = game.prefix.as_mut() {
                     ui.horizontal(|ui| {
                         let field = (ui.available_width() - 130.0).max(200.0);
@@ -1062,7 +1135,53 @@ impl QuarkApp {
                         .color(pal.text_faint),
                 );
 
-                section(ui, "ANTI-TRICHE", &pal);
+                section_hint(
+                    ui,
+                    "OVERLAY STEAM",
+                    &pal,
+                    "L'overlay est injecté par le client Steam : une DLL override \
+                     (WINEDLLOVERRIDES=gameoverlayrenderer.dll=n,b) ne suffit pas, il faut que \
+                     Steam lance le jeu. Ajoute le jeu comme raccourci non-Steam, ouvre ses \
+                     propriétés et reporte ici son AppID (celui de l'URL steam://rungameid/…). \
+                     Quark lance alors « steam -applaunch <AppID> » : Steam applique son Proton, \
+                     son préfixe et l'overlay ; les réglages Proton et les variables de Quark ne \
+                     s'appliquent plus dans ce mode.",
+                );
+                let mut via_steam = game.steam_launch_id.is_some();
+                ui.horizontal(|ui| {
+                    if ui
+                        .checkbox(&mut via_steam, "Lancer via Steam (overlay)")
+                        .changed()
+                    {
+                        game.steam_launch_id = if via_steam { Some(0) } else { None };
+                    }
+                    if let Some(app_id) = game.steam_launch_id.as_mut() {
+                        ui.add_space(10.0);
+                        ui.label(RichText::new("AppID").size(12.0).color(pal.text_dim));
+                        let mut text = if *app_id == 0 {
+                            String::new()
+                        } else {
+                            app_id.to_string()
+                        };
+                        let response = ui.add(
+                            egui::TextEdit::singleline(&mut text)
+                                .hint_text("ex. 3546210478")
+                                .desired_width(150.0),
+                        );
+                        if response.changed() {
+                            *app_id = text.trim().parse().unwrap_or(0);
+                        }
+                    }
+                });
+
+                section_hint(
+                    ui,
+                    "ANTI-TRICHE",
+                    &pal,
+                    "Cochés, ces dossiers sont déclarés à ton Proton par PROTON_BATTLEYE_RUNTIME / \
+                     PROTON_EAC_RUNTIME : ils ne sont pas lancés directement (Steam ne les livre \
+                     pas avec un script `proton`), donc cocher les deux est sans risque.",
+                );
                 // Deux cases indépendantes, comme dans Heroic : un jeu peut avoir
                 // besoin des deux runtimes.
                 let mut battleye = game.anticheat.battleye();
@@ -1112,26 +1231,13 @@ impl QuarkApp {
                         ),
                     };
                 }
-                ui.label(
-                    RichText::new(
-                        "Cochés, ces dossiers sont déclarés à ton Proton par PROTON_BATTLEYE_RUNTIME / \
-                         PROTON_EAC_RUNTIME : ils ne sont pas lancés directement (Steam ne les livre \
-                         pas avec un script `proton`), donc cocher les deux est sans risque.",
-                    )
-                    .size(11.0)
-                    .color(pal.text_faint),
+                section_hint(
+                    ui,
+                    "VARIABLES D'ENVIRONNEMENT",
+                    &pal,
+                    "Copiées depuis l'onglet « Par défaut » au moment de l'ajout : les modifier ici \
+                     ne touche que ce jeu. Format NOM=valeur.",
                 );
-
-                section(ui, "VARIABLES D'ENVIRONNEMENT", &pal);
-                ui.label(
-                    RichText::new(
-                        "Passées au jeu au lancement, après celles des réglages généraux : une \
-                         variable du même nom ici écrase la variable globale.",
-                    )
-                    .size(11.0)
-                    .color(pal.text_faint),
-                );
-                ui.add_space(6.0);
                 env_editor(ui, &pal, &mut game.env);
 
                 section(ui, "ARTWORKS", &pal);
@@ -1288,14 +1394,15 @@ impl QuarkApp {
                     .color(pal.text),
             );
             ui.add_space(4.0);
-            ui.label(
-                RichText::new(
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Images").size(12.0).color(pal.text_dim));
+                widgets::info_button(
+                    ui,
+                    &pal,
                     "Choisis l'image de chaque emplacement : une proposition en ligne, un fichier \
                      de ton disque, ou aucune (rendu de secours).",
-                )
-                .size(11.0)
-                .color(pal.text_faint),
-            );
+                );
+            });
             ui.add_space(10.0);
 
             // Couleur de jeu : déduite de la couverture, rien à régler.
@@ -1571,9 +1678,11 @@ fn env_editor(ui: &mut egui::Ui, pal: &Palette, vars: &mut Vec<EnvVar>) -> bool 
     for index in 0..vars.len() {
         ui.horizontal(|ui| {
             let width = ui.available_width();
-            let name_width = ((width - 70.0) * 0.40).max(110.0);
+            // Le nom prend un tiers de la ligne, la valeur tout le reste : une
+            // valeur longue (WINEDLLOVERRIDES=…) reste lisible sans défiler.
+            let name_width = ((width - 96.0) * 0.32).max(110.0);
             let name = ui.add_sized(
-                Vec2::new(name_width, 24.0),
+                Vec2::new(name_width, 26.0),
                 egui::TextEdit::singleline(&mut vars[index].name).hint_text("NOM"),
             );
             if name.changed() {
@@ -1588,9 +1697,9 @@ fn env_editor(ui: &mut egui::Ui, pal: &Palette, vars: &mut Vec<EnvVar>) -> bool 
                 }
             }
             ui.label(RichText::new("=").size(12.0).color(pal.text_faint));
-            let value_width = (width - name_width - 70.0).max(90.0);
+            let value_width = (width - name_width - 66.0).max(150.0);
             let value = ui.add_sized(
-                Vec2::new(value_width, 24.0),
+                Vec2::new(value_width, 26.0),
                 egui::TextEdit::singleline(&mut vars[index].value).hint_text("valeur"),
             );
             if value.changed() {
@@ -1607,11 +1716,12 @@ fn env_editor(ui: &mut egui::Ui, pal: &Palette, vars: &mut Vec<EnvVar>) -> bool 
         if widgets::ghost_button(ui, "Ajouter une variable", pal, Icon::Plus).clicked() {
             add = true;
         }
-        ui.add_space(8.0);
-        ui.label(
-            RichText::new("format NOM=valeur, ex. WINEDLLOVERRIDES=winmm=n,b;steam_api64")
-                .size(11.0)
-                .color(pal.text_faint),
+        widgets::info_button(
+            ui,
+            pal,
+            "Une ligne par variable, au format NOM=valeur (par exemple \
+             WINEDLLOVERRIDES=winmm=n,b;steam_api64). Coller « NOM=valeur » dans le champ du \
+             nom le sépare automatiquement.",
         );
     });
 
@@ -1629,6 +1739,19 @@ fn env_editor(ui: &mut egui::Ui, pal: &Palette, vars: &mut Vec<EnvVar>) -> bool 
 fn section(ui: &mut egui::Ui, title: &str, pal: &Palette) {
     ui.add_space(12.0);
     ui.label(RichText::new(title).size(11.0).color(pal.text_faint));
+    ui.add_space(2.0);
+    ui.separator();
+    ui.add_space(8.0);
+}
+
+/// Titre de section avec son ⓘ : l'explication reste disponible au survol au
+/// lieu d'occuper une ligne de texte gris sous chaque réglage.
+fn section_hint(ui: &mut egui::Ui, title: &str, pal: &Palette, hint: &str) {
+    ui.add_space(12.0);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(title).size(11.0).color(pal.text_faint));
+        widgets::info_button(ui, pal, hint);
+    });
     ui.add_space(2.0);
     ui.separator();
     ui.add_space(8.0);
@@ -1738,12 +1861,48 @@ fn artwork_choice(ui: &mut egui::Ui, pal: &Palette, url: &str, selected: bool) -
         ui.allocate_exact_size(Vec2::new(132.0, 76.0), Sense::click());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 4.0, pal.surface);
-    ui.put(
-        rect.shrink(3.0),
-        egui::Image::new(url)
-            .max_size(rect.size() - Vec2::splat(6.0))
-            .maintain_aspect_ratio(true),
-    );
+    // Chargement explicite : egui affiche une icône d'avertissement rouge quand
+    // une image distante échoue, alors que la proposition reste utilisable. On
+    // dessine donc nos propres états (chargement / aperçu indisponible).
+    let area = rect.shrink(3.0);
+    match ui.ctx().try_load_texture(
+        url,
+        egui::TextureOptions::LINEAR,
+        egui::load::SizeHint::Scale(1.0.into()),
+    ) {
+        Ok(egui::load::TexturePoll::Ready { texture }) => {
+            let size = texture.size;
+            if size.x > 0.0 && size.y > 0.0 {
+                let scale = (area.width() / size.x).max(area.height() / size.y);
+                let fitted = Rect::from_center_size(area.center(), size * scale);
+                ui.painter_at(area).image(
+                    texture.id,
+                    fitted,
+                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
+            }
+        }
+        Ok(egui::load::TexturePoll::Pending { .. }) => {
+            painter.text(
+                rect.center(),
+                Align2::CENTER_CENTER,
+                "chargement…",
+                FontId::proportional(10.5),
+                pal.text_faint,
+            );
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(120));
+        }
+        Err(_) => {
+            painter.text(
+                rect.center(),
+                Align2::CENTER_CENTER,
+                "aperçu indisponible",
+                FontId::proportional(10.5),
+                pal.text_faint,
+            );
+        }
+    }
     if selected || response.hovered() {
         widgets::border_rect(
             &painter,

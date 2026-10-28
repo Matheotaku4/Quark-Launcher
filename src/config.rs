@@ -330,14 +330,26 @@ pub struct Settings {
     pub language: String,
     /// Pays demandé à l'API Steam (storesearch).
     pub country: String,
-    /// Clé du runtime Proton utilisé par défaut (None = meilleur détecté).
+    /// Runtime Proton prérempli dans chaque jeu ajouté (None = meilleur
+    /// détecté au lancement).
     pub default_proton: Option<String>,
-    /// Préfixe Proton par défaut pour les jeux qui n'en ont pas d'autre.
-    /// Le dossier est utilisé tel quel : Quark n'y crée aucun sous-dossier.
+    /// Préfixe Proton prérempli dans chaque jeu ajouté. Le dossier est utilisé
+    /// tel quel : Quark n'y crée aucun sous-dossier.
     pub default_prefix: Option<String>,
-    /// Variables d'environnement appliquées à tous les lancements (le jeu peut
-    /// écraser une variable du même nom).
-    pub env: Vec<EnvVar>,
+    /// Arguments préremplis dans chaque jeu ajouté.
+    pub default_args: String,
+    /// Anti-triche prérempli dans chaque jeu ajouté.
+    pub default_anticheat: AnticheatMode,
+    /// Variables d'environnement recopiées dans chaque jeu ajouté.
+    ///
+    /// Ce ne sont **pas** des variables globales : chaque jeu en reçoit une
+    /// copie à l'ajout, puis gère la sienne. Une variable ajoutée après coup
+    /// ici ne touche donc aucun jeu existant.
+    #[serde(alias = "env")]
+    pub default_env: Vec<EnvVar>,
+    /// Migration des anciennes variables globales : elles ont été recopiées
+    /// une fois dans les jeux qui n'en avaient pas.
+    pub defaults_migrated: bool,
 }
 
 impl Default for Settings {
@@ -350,7 +362,10 @@ impl Default for Settings {
             country: "FR".to_string(),
             default_proton: None,
             default_prefix: None,
-            env: Vec::new(),
+            default_args: String::new(),
+            default_anticheat: AnticheatMode::None,
+            default_env: Vec::new(),
+            defaults_migrated: false,
         }
     }
 }
@@ -369,6 +384,9 @@ pub struct Game {
     pub args: String,
     /// AppID Steam si le jeu a été rapproché de la fiche Steam.
     pub steam_app_id: Option<u32>,
+    /// AppID du raccourci (non-Steam) à lancer via le client Steam, pour avoir
+    /// l'overlay Steam. Vide/0 : Quark lance le jeu lui-même.
+    pub steam_launch_id: Option<u32>,
     /// Identifiant SteamGridDB si le jeu vient de la recherche SteamGridDB.
     pub sgdb_id: Option<u64>,
     pub artwork: Artwork,
@@ -393,6 +411,7 @@ impl Default for Game {
             exe: String::new(),
             args: String::new(),
             steam_app_id: None,
+            steam_launch_id: None,
             sgdb_id: None,
             artwork: Artwork::default(),
             playtime_secs: 0,
@@ -554,7 +573,10 @@ impl Library {
             return Self::default();
         };
         match serde_json::from_str::<Library>(&text) {
-            Ok(lib) => lib,
+            Ok(mut lib) => {
+                lib.migrate_defaults();
+                lib
+            }
             Err(err) => {
                 eprintln!("[quark] config illisible ({}): {err}", path.display());
                 let backup = config_dir().join("config.json.corrompu");
@@ -570,6 +592,24 @@ impl Library {
         let tmp = config_dir().join("config.json.tmp");
         std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
         std::fs::rename(&tmp, config_path()).map_err(|e| e.to_string())
+    }
+
+    /// Ancienne version : `settings.env` était appliqué à tous les lancements.
+    /// Les variables sont désormais recopiées dans chaque jeu, donc on les
+    /// verse une seule fois dans ceux qui n'en ont pas encore : le lancement
+    /// des jeux existants ne change pas.
+    pub fn migrate_defaults(&mut self) {
+        if self.settings.defaults_migrated {
+            return;
+        }
+        if !self.settings.default_env.is_empty() {
+            for game in &mut self.games {
+                if game.env.is_empty() {
+                    game.env = self.settings.default_env.clone();
+                }
+            }
+        }
+        self.settings.defaults_migrated = true;
     }
 
     pub fn get(&self, id: &str) -> Option<&Game> {
@@ -635,7 +675,7 @@ mod tests {
         let game: Game = serde_json::from_str(json).unwrap();
         assert!(game.env.is_empty());
         let settings: Settings = serde_json::from_str(r#"{ "language": "english" }"#).unwrap();
-        assert!(settings.env.is_empty());
+        assert!(settings.default_env.is_empty());
     }
 
     #[test]
@@ -660,6 +700,28 @@ mod tests {
         assert!(EnvVar::parse("WINEDLLOVERRIDES").is_none());
         assert!(EnvVar::parse("=valeur").is_none());
         assert!(!EnvVar::new("  ", "x").is_valid());
+    }
+
+    #[test]
+    fn les_anciennes_variables_globales_deviennent_un_defaut_par_jeu() {
+        // Config de la version précédente : "env" au niveau des réglages.
+        let json = r#"{
+            "settings": { "env": [{ "name": "MANGOHUD", "value": "1" }] },
+            "games": [
+                { "id": "a", "name": "Sans variables" },
+                { "id": "b", "name": "Avec", "env": [{ "name": "DXVK_HUD", "value": "fps" }] }
+            ]
+        }"#;
+        let mut lib: Library = serde_json::from_str(json).unwrap();
+        assert_eq!(lib.settings.default_env.len(), 1);
+        lib.migrate_defaults();
+        // Le jeu sans variables reçoit la copie, celui qui en a garde les siennes.
+        assert_eq!(lib.get("a").unwrap().env[0].name, "MANGOHUD");
+        assert_eq!(lib.get("b").unwrap().env[0].name, "DXVK_HUD");
+        // La migration ne s'applique qu'une fois.
+        lib.settings.default_env.push(EnvVar::new("PROTON_LOG", "1"));
+        lib.migrate_defaults();
+        assert_eq!(lib.get("a").unwrap().env.len(), 1);
     }
 
     #[test]

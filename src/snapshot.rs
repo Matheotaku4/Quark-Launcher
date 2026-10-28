@@ -271,9 +271,9 @@ fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
             app.settings_open = true;
             app.settings_tab = crate::app::SettingsTab::Proton;
         }
-        "settings-env" => {
+        "settings-env" | "settings-defaults" => {
             app.settings_open = true;
-            app.settings_tab = crate::app::SettingsTab::Environment;
+            app.settings_tab = crate::app::SettingsTab::Defaults;
         }
         "settings-artworks" => {
             app.settings_open = true;
@@ -732,8 +732,12 @@ fn demo_library() -> Result<Library, String> {
     games.push(demo_game("Another World", "/jeux/another/another", &[], &art, None));
 
     let mut settings = crate::config::Settings::default();
-    settings.env = vec![
+    settings.default_args = "-windowed -novid".to_string();
+    settings.default_prefix = Some("~/Games/prefixes".to_string());
+    settings.default_anticheat = crate::config::AnticheatMode::EasyAntiCheat;
+    settings.default_env = vec![
         crate::config::EnvVar::new("MANGOHUD", "1"),
+        crate::config::EnvVar::new("WINEDLLOVERRIDES", "winmm=n,b;steam_api64"),
         crate::config::EnvVar::new("DXVK_HUD", "fps"),
     ];
 

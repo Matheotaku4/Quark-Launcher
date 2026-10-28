@@ -44,12 +44,23 @@ through **Proton**.
 - **AMOLED theme** (`#000000`) by default, plus a "Graphite" variant (softer black) in the
   settings.
 - **Proton**: automatic runtime detection (`steamapps/common/Proton*` and
-  `compatibilitytools.d/*`, including Flatpak/Snap), runtime chosen **per game** or
-  globally, a **default Proton prefix** in the settings and a **per-game override**.
+  `compatibilitytools.d/*`, including Flatpak/Snap), runtime chosen **per game** or as a
+  default, a **default Proton prefix** in the settings and a **per-game override**.
+- **Steam overlay, the honest way**: a DLL override alone cannot make the overlay appear;
+  Steam has to launch the game itself. Each game can therefore be marked *Launch via Steam*,
+  with the AppID of its non-Steam shortcut — Quark then runs `steam -applaunch <AppID>` and
+  Steam applies its own Proton, prefix and overlay. See [Steam overlay](#steam-overlay).
 - **Playtime tracking**: every session is timed (relaunch, total time, last session).
 - **Environment variables per game**: a `NAME=value` list (for example
-  `WINEDLLOVERRIDES=winmm=n,b;steam_api64`), plus global defaults in the settings — a game
-  value overrides the global one with the same name.
+  `WINEDLLOVERRIDES=winmm=n,b;steam_api64`) with a wide value field, plus default variables in
+  the settings that are **copied into each game when you add it** — each game then owns its
+  own copy, so editing one never touches the others.
+- **"Defaults" settings page**: prefix, arguments, Proton runtime, anti-cheat and environment
+  variables that are **pre-filled** in every new game. These are defaults, not global
+  settings: changing one does not modify games already in the library.
+- **Icons that follow their background**: icons drawn over a banner use a translucent panel
+  and switch to a dark tint of the background colour on a light image (a white icon over a
+  sky-blue banner would be invisible). Monograms follow the same rule.
 - **Right-click a game** to open its settings. **Ctrl+click** marks several games and
   removes them in one go; `Esc` clears the selection.
 - **Proton prefix used as-is**: the folder you pick (per game, or as the global default) *is*
@@ -60,7 +71,8 @@ through **Proton**.
 - **Customize** a game from its page (or by right-clicking it): each image — cover,
   banner, logo, icon — can be replaced by another online proposal or by a file from your
   disk, or removed to fall back to the built-in rendering.
-- **Settings in tabs**: Appearance, Proton, Environment, Artworks, About.
+- **Settings in tabs**: Appearance, Defaults, Proton, Artworks, About. Explanations live in
+  small ⓘ buttons next to each setting instead of lines of grey text.
 - **BattlEye and EasyAntiCheat runtimes** are detected next to Proton — including Steam's
   `Proton BattlEye Runtime` / `Proton EasyAntiCheat Runtime` folders, which carry no `proton`
   script — and each one can be enabled separately per game (both at once is allowed). Quark
@@ -118,9 +130,11 @@ Note: `egui` 0.37 reshuffles its API (panels / `App::ui`); Quark intentionally t
    API key is set).
 3. Click the right result, then fill in the executable → **Add game**.
    Artwork downloads in the background (progress shown at the bottom of the column).
+   Arguments, Proton runtime and prefix come pre-filled from **Settings → Defaults**.
 4. The game appears selected: banner, logo, **Play** button and playtime.
    The gear in the top right of the pane opens the **game settings**
-   (executable, arguments, Proton runtime, per-game Proton prefix, removal).
+   (executable, arguments, Proton runtime, per-game Proton prefix, Steam overlay, anti-cheat,
+   per-game variables, removal).
 
 ### SteamGridDB API key (optional but recommended)
 
@@ -152,9 +166,29 @@ as the **quark-ui-renders** artifact — so every push can be reviewed without i
 anything.
 
 ```bash
-tar -xzf quark-0.5.1-linux-x86_64.tar.gz
+tar -xzf quark-0.6.0-linux-x86_64.tar.gz
 cd quark && ./quark
 ```
+
+## Steam overlay
+
+The overlay is injected by the Steam client into a process it launched itself. That is why
+`WINEDLLOVERRIDES=gameoverlayrenderer.dll=n,b` alone does nothing visible: Proton loads the
+DLL, but no Steam client is there to render anything. `SteamClientLaunch`, `SteamAppId` and
+friends do not create that connection either.
+
+What works is letting Steam own the launch:
+
+1. Steam → **Games → Add a Non-Steam Game to My Library**, pick the game (or a small script
+   that starts it).
+2. In that shortcut's **Properties**, enable the overlay and choose the Proton version and
+   prefix Steam should use.
+3. Read its AppID — it is the number in the shortcut's `steam://rungameid/<AppID>` URL.
+4. In Quark: game settings → **Overlay Steam** → *Launch via Steam*, paste the AppID.
+
+Quark then starts `steam -applaunch <AppID>`; Steam applies its compatibility tool, prefix and
+overlay. Quark's own Proton, prefix and variables are **not** used in that mode — Steam's
+shortcut settings take over — and playtime is measured until the `steam` command returns.
 
 ## Proton, concretely
 
@@ -186,7 +220,7 @@ target/release/quark --ui dialog.png --demo --dialog settings
 
 Options: `--size WxH`, `--scale N`, `--frames N`, `--view list|grid`, `--tab library|store`,
 `--theme amoled|graphite`, `--select <game>`, `--info`, `--running`,
-`--dialog none|add|artwork|exe|scan|settings|game|remove|updates`, `--hover X,Y`,
+`--dialog none|add|artwork|exe|scan|settings|settings-defaults|settings-proton|settings-artworks|game|customize|remove|updates`, `--hover X,Y`,
 `--click X,Y`, `--key up|down|left|right|enter|escape`, `--marked`, `--demo`.
 
 `--click` and `--key` send real input events, so a render also checks the interactions:

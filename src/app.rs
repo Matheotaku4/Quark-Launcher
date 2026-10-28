@@ -226,8 +226,9 @@ pub struct NativePicker {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SettingsTab {
     Appearance,
+    /// Ce qui est prérempli dans chaque jeu ajouté (ce n'est pas global).
+    Defaults,
     Proton,
-    Environment,
     Artworks,
     About,
 }
@@ -235,8 +236,8 @@ pub enum SettingsTab {
 impl SettingsTab {
     pub const ALL: [(SettingsTab, &'static str); 5] = [
         (SettingsTab::Appearance, "Apparence"),
+        (SettingsTab::Defaults, "Par défaut"),
         (SettingsTab::Proton, "Proton"),
-        (SettingsTab::Environment, "Environnement"),
         (SettingsTab::Artworks, "Artworks"),
         (SettingsTab::About, "À propos"),
     ];
@@ -300,6 +301,9 @@ pub struct QuarkApp {
     /// Couleur d'accent de chaque jeu, déduite de sa couverture (une seule
     /// analyse par image).
     pub accents: HashMap<PathBuf, egui::Color32>,
+    /// Images claires (bannière bleu ciel…) : une seule analyse par fichier,
+    /// pour y poser des icônes sombres.
+    pub light_images: HashMap<PathBuf, bool>,
     /// Rampe de dégradé des bannières (créée au premier usage).
     pub gradient: Option<egui::TextureHandle>,
     /// Actualités par jeu (chargées une fois, mises en cache).
@@ -349,6 +353,7 @@ impl QuarkApp {
             job_queue: VecDeque::new(),
             textures: crate::images::TextureCache::default(),
             accents: HashMap::new(),
+            light_images: HashMap::new(),
             gradient: None,
             news: HashMap::new(),
             news_job: None,
@@ -382,8 +387,28 @@ impl QuarkApp {
         });
     }
 
+    /// Ouvre l'ajout de jeu en préremplissant les réglages « par défaut ».
     pub fn open_add_dialog(&mut self) {
         self.add = AddGame::reset();
+        let settings = &self.lib.settings;
+        self.add.args = settings.default_args.clone();
+        self.add.proton = settings
+            .default_proton
+            .clone()
+            .map(ProtonMode::Runtime)
+            .unwrap_or_default();
+        self.add.custom_prefix = settings.default_prefix.is_some();
+        self.add.prefix = settings.default_prefix.clone().unwrap_or_default();
+    }
+
+    /// Vrai si l'image est claire, calculé une seule fois par fichier.
+    pub fn is_light_image(&mut self, path: &std::path::Path) -> bool {
+        if let Some(light) = self.light_images.get(path) {
+            return *light;
+        }
+        let light = crate::images::is_light(path);
+        self.light_images.insert(path.to_path_buf(), light);
+        light
     }
 
     // -----------------------------------------------------------------------
@@ -1017,10 +1042,19 @@ impl QuarkApp {
             return;
         }
         let proton = self.add.proton.clone();
+        let settings = self.lib.settings.clone();
         let mut added = 0usize;
         for (title, exe, hit) in picked {
             let mut game = Game::new(title, exe.display().to_string());
             game.proton = proton.clone();
+            // Chaque jeu ajouté reçoit sa copie des réglages « par défaut ».
+            game.args = settings.default_args.trim().to_string();
+            game.prefix = settings
+                .default_prefix
+                .clone()
+                .filter(|p| !p.trim().is_empty());
+            game.anticheat = settings.default_anticheat;
+            game.env = settings.default_env.clone();
             if let Some(hit) = &hit {
                 game.steam_app_id = hit.steam_app_id;
                 game.sgdb_id = hit.sgdb_id;

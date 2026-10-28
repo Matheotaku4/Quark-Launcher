@@ -318,6 +318,10 @@ impl QuarkApp {
             .as_ref()
             .map(|r| r.kind == LaunchKind::Proton)
             .unwrap_or(false);
+        let is_steam = resolved
+            .as_ref()
+            .map(|r| r.kind == LaunchKind::Steam)
+            .unwrap_or(false);
         let launch_label = match &resolved {
             Ok(r) => r.label(),
             Err(err) => format!("\u{26a0} {err}"),
@@ -365,6 +369,11 @@ impl QuarkApp {
                             .get(AssetKind::Hero)
                             .filter(|p| p.exists())
                             .cloned();
+                        // Bannière claire : les icônes doivent passer en sombre.
+                        let hero_light = hero_path
+                            .as_ref()
+                            .map(|path| self.is_light_image(path))
+                            .unwrap_or(false);
                         let hero_tex = hero_path
                             .as_ref()
                             .and_then(|path| self.texture(ui.ctx(), path));
@@ -455,9 +464,15 @@ impl QuarkApp {
                             Vec2::splat(34.0),
                         );
                         ui.scope_builder(egui::UiBuilder::new().max_rect(info_rect), |ui| {
-                            info_clicked =
-                                widgets::icon_button(ui, 34.0, Icon::Info, &pal, "Informations du jeu")
-                                    .clicked();
+                            info_clicked = widgets::floating_icon_button(
+                                ui,
+                                34.0,
+                                Icon::Info,
+                                &pal,
+                                "Informations du jeu",
+                                hero_light,
+                            )
+                            .clicked();
                         });
 
                         // Personnaliser (images du jeu), puis Infos, puis Paramètres.
@@ -466,12 +481,13 @@ impl QuarkApp {
                             Vec2::splat(34.0),
                         );
                         ui.scope_builder(egui::UiBuilder::new().max_rect(custom_rect), |ui| {
-                            customize_clicked = widgets::icon_button(
+                            customize_clicked = widgets::floating_icon_button(
                                 ui,
                                 34.0,
                                 Icon::Image,
                                 &pal,
                                 "Personnaliser (artworks)",
+                                hero_light,
                             )
                             .clicked();
                         });
@@ -481,9 +497,15 @@ impl QuarkApp {
                             Vec2::splat(34.0),
                         );
                         ui.scope_builder(egui::UiBuilder::new().max_rect(gear_rect), |ui| {
-                            gear_clicked =
-                                widgets::icon_button(ui, 34.0, Icon::Gear, &pal, "Paramètres du jeu")
-                                    .clicked();
+                            gear_clicked = widgets::floating_icon_button(
+                                ui,
+                                34.0,
+                                Icon::Gear,
+                                &pal,
+                                "Paramètres du jeu",
+                                hero_light,
+                            )
+                            .clicked();
                         });
                     },
                 );
@@ -534,7 +556,9 @@ impl QuarkApp {
                         ("Lancement", launch_label),
                         (
                             "Préfixe Proton",
-                            if is_proton {
+                            if is_steam {
+                                "géré par Steam (overlay)".to_string()
+                            } else if is_proton {
                                 prefix.display().to_string()
                             } else {
                                 "\u{2014} (pas de Proton pour ce jeu)".to_string()
