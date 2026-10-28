@@ -28,6 +28,8 @@ pub struct Session {
     /// Identifiant du chef de groupe (voir `process_group(0)` au lancement).
     pub pid: i32,
     pub started: Instant,
+    /// Début de la session en epoch : c'est lui qui date l'historique.
+    pub started_ts: i64,
     /// Secondes écoulées, mises à jour à chaque tick.
     pub session: u64,
     pub log: PathBuf,
@@ -121,6 +123,7 @@ pub fn start(game: &Game, resolved: &Resolved) -> Result<Session, String> {
         child,
         pid,
         started: Instant::now(),
+        started_ts: config::now_ts(),
         session: 0,
         log,
         prefix: resolved.prefix.clone(),
@@ -247,7 +250,7 @@ pub fn timestamp(epoch: i64) -> String {
 
 /// Date civile d'un nombre de jours depuis l'époque Unix (algorithme de
 /// Howard Hinnant, sans table ni bibliothèque).
-fn civil_from_days(days: i64) -> (i64, u32, u32) {
+pub(crate) fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
     let doe = (z - era * 146_097) as i64;

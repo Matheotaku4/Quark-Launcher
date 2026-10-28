@@ -68,6 +68,11 @@ jobs:
             "keyboard:--view list --key down" \
             "marked:--view list --marked" \
             "dialog-remove-many:--marked --dialog remove" \
+            "home:--home" \
+            "grid-overlay:--view grid --dialog overlay" \
+            "settings-stats:--dialog settings-stats" \
+            "settings-disk:--dialog settings-disk" \
+            "dialog-steam:--dialog steam" \
             "wide:--size 2560x900 --view list" \
             "small:--size 1024x640 --view list"; do
             name="${spec%%:*}"
@@ -87,7 +92,46 @@ jobs:
         with:
           tag_name: v${{ steps.version.outputs.value }}
           name: Quark v${{ steps.version.outputs.value }}
-          generate_release_notes: true
+          body: |
+            ## Nouveautés de la 0.9.1
+
+            - **Accueil** : le carrousel peut défiler tout seul (Appearance → Home, 3 à 60 s),
+              avec une ligne de progression sous la bannière.
+            - **Filtres** sur l'accueil et dans la colonne de gauche : statut, genre Steam, tag
+              personnel.
+            - **Statut et notes personnelles** : *À jouer*, *En cours*, *Terminé*,
+              *Abandonné*, plus des notes libres par jeu.
+            - **Collections et tags personnalisés** (par exemple `coop`) : création, suppression
+              et filtrage comme les catégories Steam.
+            - **Métadonnées Steam** : développeur, genres, date de sortie et description
+              courte, depuis l'API `appdetails`, avec filtrage par genre.
+            - **Statistiques** : launcher qui garde l'historique des sessions (début et durée).
+              Temps total, semaine en cours, série de jours consécutifs, heures par semaine,
+              calendrier de chaleur et jeux les plus joués.
+            - **Espace disque** : poids de chaque préfixe Proton, du cache d'artworks, des
+              journaux, des archives de mise à jour et des dossiers de jeux, mesuré en
+              arrière-plan.
+            - **Import de la bibliothèque Steam installée** : lit les `appmanifest_*.acf` de
+              toutes les bibliothèques, détecte l'exécutable et récupère artworks et
+              métadonnées ; les jeux déjà présents ne sont pas dupliqués.
+            - **Vue grille** : la grille seule, la fiche du jeu s'ouvrant en surimpression avec
+              une croix (ou un clic à côté).
+            - **Fiche de jeu** : fond = bannière floutée au lieu du noir complet ; boutons
+              colorés (poubelle rouge, crayon vert, engrenage bleu) ; dernière session affichée.
+            - **Icônes** de la liste et de la grille plus arrondies ; les petites icônes
+              d'action sont colorées.
+            - **Ctrl+Q** quitte complètement Quark (icône de notification comprise).
+            - **Logo Quark** embarqué : icône de fenêtre (X11/Wayland, `app_id=quark`) et
+              fichier `assets/quark.desktop`.
+            - **Exécutable manquant** : le lancement est refusé et le jeu reste surligné en
+              rouge jusqu'à correction du chemin.
+            - **Actualités** : les images ont été retirées des cartes, le texte reste lisible
+              dans l'application.
+            - Libellé « Bibliothèque » et mention « Ctrl+clic : sélection multiple » supprimés
+              de la colonne de gauche.
+
+            Archives Linux x86_64 et sommes SHA-256 ci-dessous. Les aperçus de l'interface
+            sont produits par le rendu hors écran (workflow Actions).
           fail_on_unmatched_files: true
           files: |
             quark-${{ steps.version.outputs.value }}-linux-x86_64.tar.gz

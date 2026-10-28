@@ -6,6 +6,8 @@
 mod app;
 mod artwork;
 mod config;
+mod disk;
+mod icon;
 mod images;
 mod news;
 mod protondb;
@@ -13,6 +15,8 @@ mod proton;
 mod scan;
 mod session;
 mod snapshot;
+mod stats;
+mod steamlib;
 mod theme;
 mod tray;
 mod update;
@@ -44,7 +48,10 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("Quark")
+            // Même identifiant que le fichier `assets/quark.desktop` : c'est lui
+            // qui associe la fenêtre (Wayland comme X11) et son icône.
             .with_app_id("quark")
+            .with_icon(icon::window_icon())
             .with_inner_size([1360.0, 860.0])
             .with_min_inner_size([1024.0, 640.0]),
         ..Default::default()

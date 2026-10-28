@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Quark
+Comment=Lanceur de jeux léger pour Linux
+Exec=quark
+Icon=quark
+Terminal=false
+Categories=Game;Emulator;
+StartupWMClass=quark
+StartupNotify=true

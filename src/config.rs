@@ -278,6 +278,60 @@ impl HomeSort {
     }
 }
 
+/// Statut personnel d'un jeu, comme les colonnes de la bibliothèque Steam.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum GameStatus {
+    /// Aucun statut : le jeu n'est range dans aucune colonne.
+    #[default]
+    None,
+    Backlog,
+    Playing,
+    Finished,
+    Dropped,
+}
+
+impl GameStatus {
+    pub const ALL: [GameStatus; 5] = [
+        GameStatus::None,
+        GameStatus::Backlog,
+        GameStatus::Playing,
+        GameStatus::Finished,
+        GameStatus::Dropped,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GameStatus::None => "Aucun",
+            GameStatus::Backlog => "\u{c0} jouer",
+            GameStatus::Playing => "En cours",
+            GameStatus::Finished => "Termin\u{e9}",
+            GameStatus::Dropped => "Abandonn\u{e9}",
+        }
+    }
+
+    /// Couleur de la pastille de statut.
+    pub fn color(self) -> (u8, u8, u8) {
+        match self {
+            GameStatus::None => (0x6A, 0x70, 0x76),
+            GameStatus::Backlog => (0x5A, 0x8F, 0xD6),
+            GameStatus::Playing => (0x4C, 0xB0, 0x6A),
+            GameStatus::Finished => (0xB4, 0xC7, 0xDC),
+            GameStatus::Dropped => (0xC9, 0x6A, 0x5A),
+        }
+    }
+}
+
+/// Une session de jeu termin\u{e9}e : son d\u{e9}but et sa dur\u{e9}e. C'est ce qui
+/// permet les statistiques (heures par semaine, calendrier, s\u{e9}rie de jours).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlaySession {
+    /// D\u{e9}but de la session (epoch Unix).
+    pub start: i64,
+    /// Dur\u{e9}e en secondes.
+    pub secs: u64,
+}
+
 /// Runtime anti-triche fourni par Steam (BattlEye / EasyAntiCheat).
 ///
 /// C'est une option cochable par jeu, comme dans Heroic : elle ne change rien
@@ -401,6 +455,16 @@ pub struct Settings {
     /// Garde Quark dans la zone de notification : la croix ne quitte plus
     /// l'application, elle la range dans l'icône.
     pub tray_icon: bool,
+    /// Fait défiler le carrousel de l'accueil tout seul.
+    pub carousel_auto: bool,
+    /// Intervalle du défilement automatique, en secondes.
+    pub carousel_secs: f32,
+    /// Filtre de genre de la page d'accueil (vide = tous).
+    pub home_genre: String,
+    /// Filtre de tag personnel (vide = tous).
+    pub home_tag: String,
+    /// Filtre de statut (`None` = tous).
+    pub home_status: GameStatus,
 }
 
 impl Default for Settings {
@@ -422,6 +486,11 @@ impl Default for Settings {
             default_env: Vec::new(),
             defaults_migrated: false,
             tray_icon: true,
+            carousel_auto: true,
+            carousel_secs: 8.0,
+            home_genre: String::new(),
+            home_tag: String::new(),
+            home_status: GameStatus::None,
         }
     }
 }
@@ -524,6 +593,19 @@ pub struct Game {
     /// `PROTON_LOG=1` : Proton écrit un journal détaillé dans le dossier de
     /// logs du jeu, à côté de la sortie standard capturée.
     pub proton_log: bool,
+    /// Statut personnel (à jouer, en cours, terminé, abandonné).
+    pub status: GameStatus,
+    /// Notes personnelles, libres.
+    pub notes: String,
+    /// Tags personnels (« coop », « détente »…) qui servent de catégories.
+    pub tags: Vec<String>,
+    /// Fiche Steam : développeur, genres, date de sortie, description courte.
+    pub developer: String,
+    pub genres: Vec<String>,
+    pub released: String,
+    pub description: String,
+    /// Historique des sessions, du plus ancien au plus récent.
+    pub sessions: Vec<PlaySession>,
 }
 
 impl Default for Game {
@@ -547,6 +629,14 @@ impl Default for Game {
             umu: false,
             umu_game_id: String::new(),
             proton_log: false,
+            status: GameStatus::None,
+            notes: String::new(),
+            tags: Vec::new(),
+            developer: String::new(),
+            genres: Vec::new(),
+            released: String::new(),
+            description: String::new(),
+            sessions: Vec::new(),
         }
     }
 }
@@ -593,6 +683,34 @@ impl Game {
             human_playtime(self.playtime_secs)
         }
     }
+
+    /// Vrai si l'exécutable est absent : chemin vide, ou fichier introuvable.
+    /// Un nom de commande sans `/` (« steam ») n'est pas un chemin, il reste
+    /// accepté (c'est le PATH qui décidera).
+    pub fn exe_missing(&self) -> bool {
+        let exe = self.exe.trim();
+        if exe.is_empty() {
+            return true;
+        }
+        if !exe.contains('/') {
+            return false;
+        }
+        !self.exe_path().is_file()
+    }
+
+    /// Ajoute une session terminée à l'historique et au temps de jeu.
+    pub fn record_session(&mut self, start: i64, secs: u64) {
+        let secs = secs.max(1);
+        self.sessions.push(PlaySession { start, secs });
+        self.playtime_secs += secs;
+        self.last_played = Some(start + secs as i64);
+        // Un jeu lancé n'est plus « à jouer » : il passe « en cours » tant que
+        // le joueur ne lui a pas donné un autre statut.
+        if self.status == GameStatus::Backlog {
+            self.status = GameStatus::Playing;
+        }
+    }
+
 
     pub fn last_played_label(&self) -> String {
         match self.last_played {
@@ -698,6 +816,24 @@ pub struct Library {
 }
 
 impl Library {
+    /// Jeux visibles selon les filtres de l'accueil (genre, tag, statut).
+    pub fn filtered_ids(&self, sort: HomeSort) -> Vec<String> {
+        let settings = &self.settings;
+        self.home_ids(sort)
+            .into_iter()
+            .filter(|id| {
+                self.get(id).is_some_and(|game| {
+                    self.matches(
+                        game,
+                        &settings.home_genre,
+                        &settings.home_tag,
+                        settings.home_status,
+                    )
+                })
+            })
+            .collect()
+    }
+
     pub fn load() -> Self {
         let path = config_path();
         let Ok(text) = std::fs::read_to_string(&path) else {
@@ -779,6 +915,66 @@ impl Library {
                 .then_with(|| b.playtime_secs.cmp(&a.playtime_secs))
         });
         games.into_iter().take(limit).map(|g| g.id.clone()).collect()
+    }
+
+    /// Tags personnels de la bibliothèque, avec leur nombre de jeux.
+    pub fn all_tags(&self) -> Vec<(String, usize)> {
+        let mut tags: Vec<(String, usize)> = Vec::new();
+        for game in &self.games {
+            for tag in &game.tags {
+                let tag = tag.trim();
+                if tag.is_empty() {
+                    continue;
+                }
+                match tags
+                    .iter_mut()
+                    .find(|(name, _)| name.eq_ignore_ascii_case(tag))
+                {
+                    Some((_, count)) => *count += 1,
+                    None => tags.push((tag.to_string(), 1)),
+                }
+            }
+        }
+        tags.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+        tags
+    }
+
+    /// Genres Steam pr\u{e9}sents dans la biblioth\u{e8}que, avec leur nombre de jeux.
+    pub fn all_genres(&self) -> Vec<(String, usize)> {
+        let mut genres: Vec<(String, usize)> = Vec::new();
+        for game in &self.games {
+            for genre in &game.genres {
+                let genre = genre.trim();
+                if genre.is_empty() {
+                    continue;
+                }
+                match genres
+                    .iter_mut()
+                    .find(|(name, _)| name.eq_ignore_ascii_case(genre))
+                {
+                    Some((_, count)) => *count += 1,
+                    None => genres.push((genre.to_string(), 1)),
+                }
+            }
+        }
+        genres.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+        genres
+    }
+
+    /// Vrai si le jeu passe les filtres de genre, de tag et de statut.
+    pub fn matches(&self, game: &Game, genre: &str, tag: &str, status: GameStatus) -> bool {
+        let genre = genre.trim();
+        let tag = tag.trim();
+        if status != GameStatus::None && game.status != status {
+            return false;
+        }
+        if !genre.is_empty() && !game.genres.iter().any(|g| g.eq_ignore_ascii_case(genre)) {
+            return false;
+        }
+        if !tag.is_empty() && !game.tags.iter().any(|t| t.eq_ignore_ascii_case(tag)) {
+            return false;
+        }
+        true
     }
 
     /// Toute la bibliothèque, triée selon le choix de la page d'accueil.
@@ -946,6 +1142,66 @@ mod tests {
         assert_eq!(lib.home_ids(HomeSort::Playtime), vec!["b", "a", "c"]);
         // Jamais joué en dernier quand on trie par session.
         assert_eq!(lib.home_ids(HomeSort::Recent), vec!["b", "a", "c"]);
+    }
+
+    #[test]
+    fn une_session_est_archivee_dans_l_historique() {
+        let mut game = game("a");
+        game.status = GameStatus::Backlog;
+        game.record_session(1_000, 600);
+        assert_eq!(game.playtime_secs, 600);
+        assert_eq!(game.last_played, Some(1_600));
+        assert_eq!(game.sessions.len(), 1);
+        assert_eq!(game.sessions[0].secs, 600);
+        // Un jeu « à jouer » passe « en cours » au premier lancement.
+        assert_eq!(game.status, GameStatus::Playing);
+        // Une durée nulle ne crée jamais une session vide.
+        game.record_session(2_000, 0);
+        assert_eq!(game.sessions[1].secs, 1);
+    }
+
+    #[test]
+    fn les_filtres_de_genre_de_tag_et_de_statut_se_combinent() {
+        let mut lib = Library::default();
+        let mut game = game("a");
+        game.genres = vec!["RPG".to_string()];
+        game.tags = vec!["coop".to_string()];
+        game.status = GameStatus::Playing;
+        lib.games = vec![game];
+        let rpg = lib.games[0].clone();
+        assert!(lib.matches(&rpg, "", "", GameStatus::None));
+        assert!(lib.matches(&rpg, "rpg", "coop", GameStatus::Playing));
+        assert!(!lib.matches(&rpg, "Survie", "", GameStatus::None));
+        assert!(!lib.matches(&rpg, "", "sol", GameStatus::None));
+        assert!(!lib.matches(&rpg, "", "", GameStatus::Finished));
+    }
+
+    #[test]
+    fn les_tags_et_genres_sont_repertories_avec_leur_nombre() {
+        let mut lib = Library::default();
+        let mut a = game("a");
+        a.tags = vec!["coop".to_string(), "Détente".to_string()];
+        a.genres = vec!["RPG".to_string()];
+        let mut b = game("b");
+        b.tags = vec!["COOP".to_string()];
+        b.genres = vec!["RPG".to_string()];
+        lib.games = vec![a, b];
+        let tags = lib.all_tags();
+        // La casse ne crée pas deux catégories.
+        assert_eq!(tags.iter().find(|(name, _)| name.eq_ignore_ascii_case("coop")).unwrap().1, 2);
+        assert_eq!(lib.all_genres()[0], ("RPG".to_string(), 2));
+    }
+
+    #[test]
+    fn un_executable_absent_est_reconnu() {
+        let mut game = game("a");
+        game.exe = "/tmp/quark-fichier-qui-nexiste-pas/game.exe".to_string();
+        assert!(game.exe_missing());
+        // Un nom de commande n'est pas un chemin : il part au PATH.
+        game.exe = "steam".to_string();
+        assert!(!game.exe_missing());
+        game.exe = String::new();
+        assert!(game.exe_missing());
     }
 
     #[test]

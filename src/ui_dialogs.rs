@@ -3,7 +3,9 @@
 //! (XDG Desktop Portal), ouverts via `QuarkApp::pick_file` / `pick_directory`.
 
 use crate::app::{AddStep, PickerTarget, QuarkApp, SearchState, SettingsTab, UpdateState};
-use crate::config::{self, AssetKind, EnvVar, ProtonMode, ThemeMode, ViewMode};
+use crate::config::{self, AssetKind, EnvVar, GameStatus, ProtonMode, ThemeMode, ViewMode};
+use crate::disk;
+use crate::stats;
 use crate::proton::{self, ProtonRuntime, RuntimeKind};
 use crate::theme::{self, Palette};
 use crate::update;
@@ -503,7 +505,7 @@ impl QuarkApp {
         // tenir sans faire défiler une petite boîte.
         let max_height = (ctx.screen_rect().height() * 0.70).max(320.0);
         let modal = egui::Modal::new(egui::Id::new("quark_settings")).show(ctx, |ui| {
-            ui.set_min_width(720.0);
+            ui.set_min_width(860.0);
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Paramètres").size(17.0).color(pal.text));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -516,8 +518,9 @@ impl QuarkApp {
             });
             ui.add_space(12.0);
 
-            // Une page par famille de réglages.
-            ui.horizontal(|ui| {
+            // Une page par famille de réglages (les onglets passent à la ligne
+            // sur une fenêtre étroite).
+            ui.horizontal_wrapped(|ui| {
                 for (tab, label) in SettingsTab::ALL {
                     if widgets::tab(ui, label, self.settings_tab == tab, &pal).clicked() {
                         self.settings_tab = tab;
@@ -573,6 +576,47 @@ impl QuarkApp {
                                  liste / grille).",
                             );
                         });
+
+                        section(ui, "ACCUEIL", &pal);
+                        ui.horizontal(|ui| {
+                            if ui
+                                .checkbox(
+                                    &mut self.lib.settings.carousel_auto,
+                                    "Faire défiler le carrousel tout seul",
+                                )
+                                .changed()
+                            {
+                                self.touch();
+                            }
+                            widgets::info_button(
+                                ui,
+                                &pal,
+                                "Le carrousel de l'accueil passe d'un jeu récent au suivant \
+                                 après le délai ci-dessous. Un clic sur une flèche repart de zéro.",
+                            );
+                        });
+                        if self.lib.settings.carousel_auto {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new("Changer toutes les")
+                                        .size(12.0)
+                                        .color(pal.text_dim),
+                                );
+                                let mut secs = self.lib.settings.carousel_secs;
+                                if ui
+                                    .add(
+                                        egui::DragValue::new(&mut secs)
+                                            .range(3.0..=60.0)
+                                            .speed(0.5)
+                                            .suffix(" s"),
+                                    )
+                                    .changed()
+                                {
+                                    self.lib.settings.carousel_secs = secs;
+                                    self.touch();
+                                }
+                            });
+                        }
 
                         section(ui, "ZONE DE NOTIFICATION", &pal);
                         let mut start_tray: Option<bool> = None;
@@ -931,6 +975,8 @@ impl QuarkApp {
                             }
                         });
                     }
+                    SettingsTab::Stats => self.stats_page(ui, &pal),
+                    SettingsTab::Disk => self.disk_page(ui, &pal, ctx),
                     SettingsTab::About => {
                         section(ui, "VERSION", &pal);
                         ui.horizontal(|ui| {
@@ -1048,7 +1094,8 @@ impl QuarkApp {
                         ui.label(
                             RichText::new(
                                 "Clavier : flèches pour changer de jeu, Entrée pour lancer, \
-                                 Ctrl+F pour chercher, Échap pour vider la recherche.",
+                                 Ctrl+F pour chercher, Échap pour vider la recherche, \
+                                 Ctrl+Q pour quitter complètement.",
                             )
                             .size(11.0)
                             .color(pal.text_faint),
@@ -1121,6 +1168,346 @@ impl QuarkApp {
     }
 
     // -----------------------------------------------------------------------
+    // Statistiques de jeu
+    // -----------------------------------------------------------------------
+
+    /// Résumé, heures par semaine, calendrier de chaleur et jeux les plus joués.
+    fn stats_page(&mut self, ui: &mut egui::Ui, pal: &Palette) {
+        let sessions: Vec<config::PlaySession> = self
+            .lib
+            .games
+            .iter()
+            .flat_map(|game| game.sessions.clone())
+            .collect();
+        let total: u64 = self.lib.games.iter().map(|game| game.playtime_secs).sum();
+        let week_start = stats::week_start(stats::day_of(config::now_ts()));
+        let this_week: u64 = sessions
+            .iter()
+            .filter(|session| stats::day_of(session.start) >= week_start)
+            .map(|session| session.secs)
+            .sum();
+        let streak = stats::streak(&sessions);
+
+        section(ui, "RÉSUMÉ", pal);
+        ui.horizontal(|ui| {
+            metric(ui, pal, "Temps de jeu total", &config::human_playtime(total));
+            ui.add_space(22.0);
+            metric(ui, pal, "Cette semaine", &config::human_playtime(this_week));
+            ui.add_space(22.0);
+            metric(
+                ui,
+                pal,
+                "Série en cours",
+                &format!(
+                    "{streak} jour{}",
+                    if streak > 1 { "s" } else { "" }
+                ),
+            );
+            ui.add_space(22.0);
+            metric(ui, pal, "Sessions", &format!("{}", sessions.len()));
+        });
+
+        if sessions.is_empty() {
+            ui.add_space(12.0);
+            ui.label(
+                RichText::new(
+                    "Aucune session enregistrée : lance un jeu, ses heures apparaîtront ici.",
+                )
+                .size(12.0)
+                .color(pal.text_faint),
+            );
+            return;
+        }
+
+        section_hint(
+            ui,
+            "HEURES PAR SEMAINE",
+            pal,
+            "Les douze dernières semaines, du lundi au dimanche. La hauteur de chaque barre \
+             donne les heures jouées.",
+        );
+        week_chart(ui, pal, &sessions);
+
+        section_hint(
+            ui,
+            "CALENDRIER",
+            pal,
+            "Un carré par jour sur les 26 dernières semaines : plus il est clair, plus tu as \
+             joué ce jour-là. Passe la souris sur un carré pour la durée exacte.",
+        );
+        heatmap_chart(ui, pal, &sessions);
+
+        section(ui, "JEUX LES PLUS JOUÉS", pal);
+        let top = stats::top_games(&self.lib, 6);
+        let max = top.iter().map(|(_, secs)| *secs).max().unwrap_or(1).max(1);
+        for (name, secs) in top {
+            game_bar(ui, pal, &name, secs, max);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Espace disque
+    // -----------------------------------------------------------------------
+
+    fn disk_page(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        section_hint(
+            ui,
+            "ESPACE DISQUE",
+            pal,
+            "Mesure les préfixes Proton, le cache d'artworks, les journaux, les archives de mise \
+             à jour et le dossier de chaque jeu. La mesure tourne en arrière-plan : la fenêtre \
+             ne se fige jamais, même sur un gros préfixe.",
+        );
+        let mut recalc = false;
+        ui.horizontal(|ui| {
+            if widgets::ghost_button(ui, "Recalculer", pal, Icon::Refresh).clicked() {
+                recalc = true;
+            }
+            if let Some(report) = &self.disk_report {
+                ui.add_space(14.0);
+                ui.label(
+                    RichText::new(format!("Total mesuré : {}", disk::format_bytes(report.total)))
+                        .size(13.0)
+                        .strong()
+                        .color(pal.text),
+                );
+            }
+        });
+        if recalc || (self.disk_report.is_none() && self.disk_job.is_none()) {
+            self.start_disk_scan(ctx);
+        }
+        ui.add_space(8.0);
+        if self.disk_job.is_some() {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new("Mesure en cours…")
+                        .size(12.0)
+                        .color(pal.text_dim),
+                );
+            });
+            return;
+        }
+        let Some(report) = &self.disk_report else {
+            return;
+        };
+        let total = report.total.max(1);
+        let rows: Vec<(String, String, PathBuf, u64)> = report
+            .rows
+            .iter()
+            .map(|row| {
+                (
+                    row.label.clone(),
+                    row.detail.clone(),
+                    row.path.clone(),
+                    row.bytes,
+                )
+            })
+            .collect();
+        let mut open: Option<PathBuf> = None;
+        for (label, detail, path, bytes) in rows {
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.set_width(430.0);
+                    ui.label(RichText::new(&label).size(12.5).color(pal.text));
+                    ui.label(RichText::new(&detail).size(10.5).color(pal.text_faint));
+                    ui.label(
+                        RichText::new(path.display().to_string())
+                            .size(10.0)
+                            .color(pal.text_faint),
+                    );
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(disk::format_bytes(bytes))
+                            .size(12.5)
+                            .color(pal.text),
+                    );
+                    ui.add_space(10.0);
+                    if widgets::icon_button(ui, 24.0, Icon::Folder, pal, "Ouvrir le dossier")
+                        .clicked()
+                    {
+                        open = Some(path.clone());
+                    }
+                    ui.add_space(10.0);
+                    let width = 170.0;
+                    let (rect, _) = ui
+                        .allocate_exact_size(Vec2::new(width, 8.0), Sense::hover());
+                    ui.painter().rect_filled(rect, 4.0, pal.surface);
+                    ui.painter().rect_filled(
+                        Rect::from_min_size(
+                            rect.min,
+                            Vec2::new(width * (bytes as f32 / total as f32), 8.0),
+                        ),
+                        4.0,
+                        pal.accent,
+                    );
+                });
+            });
+            ui.add_space(6.0);
+            ui.separator();
+        }
+        if let Some(path) = open {
+            if let Err(err) = crate::session::open_folder(&path) {
+                self.toast_error(format!("Ouverture impossible : {err}"));
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Import de la bibliothèque Steam installée
+    // -----------------------------------------------------------------------
+
+    pub(crate) fn steam_import_dialog(&mut self, ctx: &egui::Context) {
+        if self.steam_import.is_none() {
+            return;
+        }
+        let pal = self.pal;
+        let mut close = false;
+        let mut do_import = false;
+        let modal = egui::Modal::new(egui::Id::new("quark_steam_import")).show(ctx, |ui| {
+            ui.set_min_width(760.0);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Importer depuis Steam").size(17.0).color(pal.text));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(
+                        RichText::new("appmanifest_*.acf")
+                            .size(10.5)
+                            .color(pal.text_faint),
+                    );
+                });
+            });
+            ui.label(
+                RichText::new(
+                    "Jeux installés trouvés dans tes bibliothèques Steam. Les jeux déjà dans \
+                     Quark ne sont pas dupliqués ; l'exécutable est cherché dans le dossier du jeu.",
+                )
+                .size(11.5)
+                .color(pal.text_dim),
+            );
+            ui.add_space(8.0);
+            if let Some(import) = self.steam_import.as_mut() {
+                if import.loading {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.add_space(6.0);
+                        ui.label(
+                            RichText::new("Lecture des bibliothèques Steam…")
+                                .size(12.0)
+                                .color(pal.text_dim),
+                        );
+                    });
+                }
+                if let Some(err) = &import.error {
+                    ui.label(RichText::new(err).size(12.0).color(pal.danger));
+                }
+                if !import.games.is_empty() {
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut import.filter)
+                                .hint_text("Filtrer par nom…")
+                                .desired_width(240.0),
+                        );
+                        ui.add_space(8.0);
+                        let available = import.games.iter().filter(|game| !game.owned).count();
+                        ui.label(
+                            RichText::new(format!("{available} disponible(s)"))
+                                .size(11.0)
+                                .color(pal.text_faint),
+                        );
+                    });
+                    ui.add_space(6.0);
+                    let needle = import.filter.trim().to_lowercase();
+                    egui::ScrollArea::vertical()
+                        .max_height(380.0)
+                        .show(ui, |ui| {
+                            for game in import.games.iter_mut() {
+                                if !needle.is_empty()
+                                    && !game.name.to_lowercase().contains(&needle)
+                                {
+                                    continue;
+                                }
+                                ui.horizontal(|ui| {
+                                    if game.owned {
+                                        ui.add_enabled(
+                                            false,
+                                            egui::Checkbox::without_text(&mut game.include),
+                                        );
+                                    } else {
+                                        ui.checkbox(&mut game.include, "");
+                                    }
+                                    ui.vertical(|ui| {
+                                        ui.label(
+                                            RichText::new(&game.name).size(13.0).color(
+                                                if game.owned { pal.text_faint } else { pal.text },
+                                            ),
+                                        )
+                                        .on_hover_text(game.dir.display().to_string());
+                                        let exe = game
+                                            .exe
+                                            .as_ref()
+                                            .map(|path| path.display().to_string())
+                                            .unwrap_or_else(|| {
+                                                "exécutable non détecté".to_string()
+                                            });
+                                        ui.label(
+                                            RichText::new(format!(
+                                                "AppID {} · {exe}",
+                                                game.app_id
+                                            ))
+                                            .size(10.5)
+                                            .color(pal.text_faint),
+                                        );
+                                    });
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        if game.owned {
+                                            ui.label(
+                                                RichText::new("déjà importé")
+                                                    .size(10.5)
+                                                    .color(pal.text_faint),
+                                            );
+                                        }
+                                    });
+                                });
+                                ui.add_space(2.0);
+                            }
+                        });
+                }
+            }
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if widgets::accent_button(
+                    ui,
+                    Vec2::new(200.0, 34.0),
+                    "Importer la sélection",
+                    &pal,
+                    true,
+                    Icon::Steam,
+                )
+                .clicked()
+                {
+                    do_import = true;
+                }
+                ui.add_space(8.0);
+                if widgets::ghost_button(ui, "Fermer", &pal, Icon::None).clicked() {
+                    close = true;
+                }
+            });
+        });
+        if modal.should_close() {
+            close = true;
+        }
+        if do_import {
+            self.import_steam(ctx);
+            return;
+        }
+        if close {
+            self.steam_import = None;
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Paramètres du jeu (Proton, préfixe, exécutable…)
     // -----------------------------------------------------------------------
 
@@ -1139,6 +1526,7 @@ impl QuarkApp {
         let mut browse_exe = false;
         let mut browse_prefix = false;
         let mut remove = false;
+        let mut refresh_meta = false;
 
         let max_height = (ctx.screen_rect().height() * 0.70).max(280.0);
         let modal = egui::Modal::new(egui::Id::new("quark_game_settings")).show(ctx, |ui| {
@@ -1176,6 +1564,78 @@ impl QuarkApp {
                         .hint_text("--fullscreen")
                         .desired_width(f32::INFINITY),
                 );
+
+                section(ui, "BIBLIOTHÈQUE", &pal);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Statut").size(12.5).color(pal.text_dim));
+                    widgets::info_button(
+                        ui,
+                        &pal,
+                        "Statut personnel : il sert de filtre sur l'accueil et dans la colonne \
+                         de gauche (pastilles de couleur). Aucun effet sur le lancement.",
+                    );
+                });
+                ui.horizontal_wrapped(|ui| {
+                    for option in GameStatus::ALL {
+                        let selected = game.status == option;
+                        let (r, g, b) = option.color();
+                        if widgets::chip_colored(
+                            ui,
+                            option.label(),
+                            selected,
+                            &pal,
+                            egui::Color32::from_rgb(r, g, b),
+                        ) {
+                            game.status = option;
+                        }
+                    }
+                });
+                ui.add_space(8.0);
+                tags_editor(ui, &pal, &mut game.tags);
+                ui.add_space(8.0);
+                ui.label(RichText::new("Notes personnelles").size(12.5).color(pal.text_dim));
+                ui.add(
+                    egui::TextEdit::multiline(&mut game.notes)
+                        .hint_text("Où j'en suis, ce que je veux retenir…")
+                        .desired_rows(2)
+                        .desired_width(f32::INFINITY),
+                );
+
+                section(ui, "FICHE STEAM", &pal);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(if game.steam_app_id.is_some() {
+                            "Développeur, genres, date de sortie et description viennent de l'API \
+                             appdetails."
+                                .to_string()
+                        } else {
+                            "Ce jeu n'est pas lié à une fiche Steam.".to_string()
+                        })
+                        .size(11.5)
+                        .color(pal.text_dim),
+                    );
+                    if game.steam_app_id.is_some()
+                        && widgets::ghost_button(ui, "Récupérer depuis Steam", &pal, Icon::Refresh)
+                            .clicked()
+                    {
+                        // Les champs vides sont remplis par la requête ; on les
+                        // vide ici pour forcer la mise à jour au retour.
+                        game.developer.clear();
+                        game.genres.clear();
+                        game.released.clear();
+                        game.description.clear();
+                        refresh_meta = true;
+                    }
+                });
+                if !game.developer.is_empty() {
+                    info_line(ui, "Développeur", &game.developer, &pal);
+                }
+                if !game.genres.is_empty() {
+                    info_line(ui, "Genres", &game.genres.join(" · "), &pal);
+                }
+                if !game.released.is_empty() {
+                    info_line(ui, "Sortie", &game.released, &pal);
+                }
 
                 section(ui, "PROTON", &pal);
                 runtime_combo(
@@ -1375,6 +1835,9 @@ impl QuarkApp {
             cancel = true;
         }
 
+        if refresh_meta {
+            self.refresh_metadata(ctx, &game.id);
+        }
         if browse_exe {
             self.pick_file(ctx, own_dir(&game.exe), PickerTarget::GameExe);
         }
@@ -1802,6 +2265,232 @@ fn env_editor(ui: &mut egui::Ui, pal: &Palette, vars: &mut Vec<EnvVar>) -> bool 
         changed = true;
     }
     changed
+}
+
+/// Grand chiffre du résumé (valeur + libellé).
+fn metric(ui: &mut egui::Ui, pal: &Palette, label: &str, value: &str) {
+    ui.vertical(|ui| {
+        ui.label(RichText::new(label).size(10.5).color(pal.text_faint));
+        ui.label(RichText::new(value).size(19.0).strong().color(pal.text));
+    });
+}
+
+/// Histogramme des douze dernières semaines.
+fn week_chart(ui: &mut egui::Ui, pal: &Palette, sessions: &[config::PlaySession]) {
+    let weeks = stats::weeks(sessions, 12);
+    let max = weeks.iter().map(|(_, secs)| *secs).max().unwrap_or(0).max(1);
+    let (rect, _) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 150.0), Sense::hover());
+    let painter = ui.painter_at(rect);
+    let base = rect.bottom() - 22.0;
+    painter.rect_filled(
+        Rect::from_min_size(Pos2::new(rect.left(), base), Vec2::new(rect.width(), 1.0)),
+        0.0,
+        pal.border,
+    );
+    let slot = rect.width() / weeks.len().max(1) as f32;
+    for (index, (start, secs)) in weeks.iter().enumerate() {
+        let x = rect.left() + slot * index as f32 + slot * 0.18;
+        let width = (slot * 0.64).max(6.0);
+        let bar_height = (base - rect.top() - 18.0) * (*secs as f32 / max as f32);
+        let bar_height = if *secs > 0 { bar_height.max(3.0) } else { 0.0 };
+        let bar = Rect::from_min_size(Pos2::new(x, base - bar_height), Vec2::new(width, bar_height));
+        let hovered = ui.rect_contains_pointer(bar);
+        painter.rect_filled(
+            bar,
+            3.0,
+            if hovered {
+                pal.accent
+            } else {
+                pal.accent.gamma_multiply(0.75)
+            },
+        );
+        if *secs > 0 {
+            painter.text(
+                Pos2::new(bar.center().x, bar.top() - 2.0),
+                Align2::CENTER_BOTTOM,
+                stats::human(*secs),
+                FontId::proportional(9.0),
+                pal.text_dim,
+            );
+        }
+        // Une date sur deux : les libellés ne se chevauchent pas.
+        if index % 2 == 1 || index + 1 == weeks.len() {
+            painter.text(
+                Pos2::new(bar.center().x, base + 4.0),
+                Align2::CENTER_TOP,
+                stats::date_label(*start),
+                FontId::proportional(9.0),
+                pal.text_faint,
+            );
+        }
+    }
+}
+
+/// Calendrier de chaleur : 26 semaines de 7 jours.
+fn heatmap_chart(ui: &mut egui::Ui, pal: &Palette, sessions: &[config::PlaySession]) {
+    let map = stats::heatmap(sessions, 26);
+    let weeks = map.cells.len();
+    let cell = 13.0;
+    let gap = 3.0;
+    let label_width = 46.0;
+    let width = label_width + weeks as f32 * (cell + gap);
+    let height = 7.0 * (cell + gap) + 20.0;
+    let (rect, _) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width().max(width), height),
+        Sense::hover(),
+    );
+    let painter = ui.painter_at(rect);
+    for day in 0..7 {
+        painter.text(
+            Pos2::new(
+                rect.left(),
+                rect.top() + 16.0 + day as f32 * (cell + gap) + cell / 2.0,
+            ),
+            Align2::LEFT_CENTER,
+            stats::weekday_label(day),
+            FontId::proportional(9.0),
+            pal.text_faint,
+        );
+    }
+    let mut last_month = String::new();
+    // Un libellé de mois tous les quatre au moins : « septembre 2026 » et
+    // « octobre 2026 » se chevauchaient sur la même ligne.
+    let mut last_label_week: i64 = -8;
+    for (week, days) in map.cells.iter().enumerate() {
+        let monday = map.first_day + week as i64 * 7;
+        let month = stats::month_short(monday);
+        if month != last_month {
+            if week as i64 - last_label_week >= 4 {
+                painter.text(
+                    Pos2::new(rect.left() + label_width + week as f32 * (cell + gap), rect.top()),
+                    Align2::LEFT_TOP,
+                    &month,
+                    FontId::proportional(9.0),
+                    pal.text_faint,
+                );
+                last_label_week = week as i64;
+            }
+            last_month = month;
+        }
+        for (day, secs) in days.iter().enumerate() {
+            let ratio = if map.max > 0 {
+                *secs as f32 / map.max as f32
+            } else {
+                0.0
+            };
+            let color = if *secs == 0 {
+                pal.surface
+            } else {
+                theme::lerp_color(pal.surface_hover, pal.accent, 0.25 + 0.75 * ratio.sqrt())
+            };
+            let cell_rect = Rect::from_min_size(
+                Pos2::new(
+                    rect.left() + label_width + week as f32 * (cell + gap),
+                    rect.top() + 16.0 + day as f32 * (cell + gap),
+                ),
+                Vec2::splat(cell),
+            );
+            painter.rect_filled(cell_rect, 2.5, color);
+            let response = ui.interact(
+                cell_rect,
+                egui::Id::new(("quark_heatmap", week, day)),
+                Sense::hover(),
+            );
+            if response.hovered() {
+                painter.rect_stroke(
+                    cell_rect,
+                    2.5,
+                    egui::Stroke::new(1.0_f32, pal.text),
+                    egui::StrokeKind::Inside,
+                );
+                response.on_hover_text(format!(
+                    "{} · joué {}",
+                    stats::date_label(monday + day as i64),
+                    stats::human(*secs)
+                ));
+            }
+        }
+    }
+}
+
+/// Ligne « jeu · durée » avec une barre proportionnelle.
+fn game_bar(ui: &mut egui::Ui, pal: &Palette, name: &str, secs: u64, max: u64) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(name).size(12.0).color(pal.text));
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.label(
+                RichText::new(config::human_playtime(secs))
+                    .size(11.5)
+                    .color(pal.text_dim),
+            );
+            let width = 260.0;
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 8.0), Sense::hover());
+            ui.painter().rect_filled(rect, 4.0, pal.surface);
+            ui.painter().rect_filled(
+                Rect::from_min_size(
+                    rect.min,
+                    Vec2::new(width * (secs as f32 / max.max(1) as f32), 8.0),
+                ),
+                4.0,
+                pal.accent,
+            );
+        });
+    });
+}
+
+/// Éditeur de tags : pastilles supprimables et champ d'ajout. Le champ garde
+/// sa saisie dans la mémoire d'egui, donc une virgule fraîche n'efface rien.
+fn tags_editor(ui: &mut egui::Ui, pal: &Palette, tags: &mut Vec<String>) {
+    let buffer_id = ui.id().with("quark_tag_field");
+    let mut buffer = ui
+        .data(|data| data.get_temp::<String>(buffer_id))
+        .unwrap_or_default();
+
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Tags personnels").size(12.5).color(pal.text_dim));
+        widgets::info_button(
+            ui,
+            pal,
+            "Les tags servent de catégories : sur l'accueil et dans la colonne de gauche, \
+             cliquer sur « coop » n'affiche que les jeux qui le portent.",
+        );
+    });
+    let mut remove: Option<usize> = None;
+    if tags.is_empty() {
+        ui.label(
+            RichText::new("aucun tag")
+                .size(11.0)
+                .color(pal.text_faint),
+        );
+    } else {
+        ui.horizontal_wrapped(|ui| {
+            for (index, tag) in tags.iter().enumerate() {
+                if widgets::chip(ui, &format!("{tag} ×"), true, pal) {
+                    remove = Some(index);
+                }
+            }
+        });
+    }
+    if let Some(index) = remove {
+        tags.remove(index);
+    }
+    ui.horizontal(|ui| {
+        let response = ui.add(
+            egui::TextEdit::singleline(&mut buffer)
+                .hint_text("coop, détente, à finir…")
+                .desired_width(240.0),
+        );
+        let enter = response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+        if widgets::ghost_button(ui, "Ajouter", pal, Icon::Plus).clicked() || enter {
+            let tag = buffer.trim().to_string();
+            if !tag.is_empty() && !tags.iter().any(|existing| existing.eq_ignore_ascii_case(&tag)) {
+                tags.push(tag);
+            }
+            buffer.clear();
+        }
+    });
+    ui.data_mut(|data| data.insert_temp(buffer_id, buffer));
 }
 
 fn section(ui: &mut egui::Ui, title: &str, pal: &Palette) {

@@ -30,6 +30,22 @@ impl QuarkApp {
         if self.carousel >= recent.len() {
             self.carousel = 0;
         }
+        // Défilement automatique : chaque vignette reste `carousel_secs` à
+        // l'écran, puis glisse vers la suivante. Le minuteur ne demande des
+        // images qu'à intervalles larges, la vitesse de l'interface ne change
+        // donc pas.
+        if self.lib.settings.carousel_auto && recent.len() > 1 {
+            let period = self.lib.settings.carousel_secs.clamp(3.0, 120.0);
+            let elapsed = self.carousel_at.elapsed().as_secs_f32();
+            if elapsed >= period {
+                let next = (self.carousel + 1) % recent.len();
+                self.show_slide(next, recent.len());
+            } else {
+                let remaining = ((period - elapsed) * 1000.0).max(16.0) as u64;
+                ui.ctx()
+                    .request_repaint_after(Duration::from_millis(remaining.min(250)));
+            }
+        }
         egui::ScrollArea::vertical()
             .id_salt("quark_home_scroll")
             .auto_shrink([false, false])
@@ -92,6 +108,14 @@ impl QuarkApp {
 
     fn carousel_section(&mut self, ui: &mut egui::Ui, recent: &[String]) {
         let base = self.pal;
+        // Position dans la période de défilement automatique (0 = début).
+        let auto_progress = if self.lib.settings.carousel_auto {
+            (self.carousel_at.elapsed().as_secs_f32()
+                / self.lib.settings.carousel_secs.clamp(3.0, 120.0))
+                .clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         let width = (ui.available_width() - PADDING * 2.0).max(320.0);
         let height = (width / 2.7).clamp(240.0, 410.0);
 
@@ -178,6 +202,17 @@ impl QuarkApp {
                         );
                     }
                     images::rounded_veil(&painter, hero, CAROUSEL_RADIUS, ease * 0.95, 0.72);
+                    // Fine ligne de progression du défilement automatique.
+                    if self.lib.settings.carousel_auto && recent.len() > 1 {
+                        painter.rect_filled(
+                            Rect::from_min_size(
+                                Pos2::new(hero.left(), hero.bottom() - 3.0),
+                                Vec2::new(hero.width() * auto_progress, 2.0),
+                            ),
+                            1.0,
+                            pal.accent.gamma_multiply(0.85),
+                        );
+                    }
 
                     // Toute la vignette ouvre la fiche du jeu ; les boutons
                     // posés dessus restent prioritaires car créés après.
@@ -377,8 +412,13 @@ impl QuarkApp {
             self.show_slide(index, recent.len());
         }
         if open_game {
-            self.selected = Some(id);
-            self.home = false;
+            self.selected = Some(id.clone());
+            // En vue grille, la fiche s'ouvre par-dessus le carrousel.
+            if self.lib.settings.view == crate::config::ViewMode::Grid {
+                self.overlay = Some(id);
+            } else {
+                self.home = false;
+            }
         }
         if open_protondb {
             if let Some(app_id) = game.steam_app_id {
@@ -399,6 +439,8 @@ impl QuarkApp {
         let sort = self.lib.settings.home_sort;
         let mut new_sort: Option<HomeSort> = None;
 
+        self.home_filters(ui);
+        ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.add_space(PADDING);
             ui.label(
@@ -422,7 +464,7 @@ impl QuarkApp {
         });
         ui.add_space(14.0);
 
-        let ids = self.lib.home_ids(sort);
+        let ids = self.lib.filtered_ids(sort);
         // Chemins puis textures, en deux passes : `texture` a besoin de `&mut
         // self`, que la lecture de la bibliothèque interdit en même temps.
         let mut paths: Vec<Option<PathBuf>> = Vec::with_capacity(ids.len());
@@ -447,6 +489,9 @@ impl QuarkApp {
         let cover_h = tile_w * theme::COVER_RATIO;
         let row_h = cover_h + 34.0;
 
+        // Entrée en cascade : chaque tuile apparaît un peu après la précédente.
+        // Une fois l'animation finie, plus aucune image n'est demandée.
+        let age = self.home_at.elapsed().as_secs_f32();
         let mut opened: Option<String> = None;
         let mut index = 0usize;
         while index < ids.len() {
@@ -466,6 +511,13 @@ impl QuarkApp {
                     }
                     let (tile, response) =
                         ui.allocate_exact_size(Vec2::new(tile_w, row_h), Sense::click());
+                    // Apparition en cascade (décalage par tuile, 0,35 s).
+                    let order = (index + slot) as f32;
+                    let appear = ((age - order * 0.025) / 0.35).clamp(0.0, 1.0);
+                    if appear < 1.0 {
+                        ui.ctx().request_repaint();
+                    }
+                    let tile = tile.translate(Vec2::new(0.0, (1.0 - appear) * 10.0));
                     let painter = ui.painter_at(tile);
                     let anim = ui.ctx().animate_bool_with_time(
                         egui::Id::new(("quark_home_tile", id.as_str())),
@@ -477,7 +529,13 @@ impl QuarkApp {
                     painter.rect_filled(tile, TILE_RADIUS, pal.surface);
                     match covers.get(index + slot).and_then(|cover| cover.as_ref()) {
                         Some(texture) => {
-                            images::rounded_cover(ui, cover, texture, TILE_RADIUS);
+                            images::rounded_cover_tinted(
+                                ui,
+                                cover,
+                                texture,
+                                TILE_RADIUS,
+                                Color32::from_white_alpha((appear * 255.0).round() as u8),
+                            );
                         }
                         None => {
                             painter.rect_filled(cover, TILE_RADIUS, pal.surface_hover);
@@ -498,7 +556,8 @@ impl QuarkApp {
                             egui::StrokeKind::Inside,
                         );
                     }
-                    let title_color = theme::lerp_color(pal.text_dim, pal.text, anim);
+                    let title_color = theme::lerp_color(pal.text_dim, pal.text, anim)
+                        .gamma_multiply(appear);
                     let job = single_line(&game.name, 12.5, title_color, tile_w);
                     let galley = painter.layout_job(job);
                     painter.galley(
@@ -515,8 +574,16 @@ impl QuarkApp {
                             game.playtime_label()
                         },
                         FontId::proportional(10.5),
-                        pal.text_faint,
+                        pal.text_faint.gamma_multiply(appear),
                     );
+                    if game.exe_missing() {
+                        painter.rect_stroke(
+                            cover,
+                            TILE_RADIUS,
+                            egui::Stroke::new(2.0_f32, pal.danger),
+                            egui::StrokeKind::Inside,
+                        );
+                    }
                     if response.clicked() {
                         opened = Some(id.clone());
                     }
@@ -528,11 +595,100 @@ impl QuarkApp {
         }
 
         if let Some(id) = opened {
-            self.selected = Some(id);
-            self.home = false;
+            // Vue grille : la fiche s'ouvre en surimpression, la grille reste
+            // en place derrière. Vue liste : la fiche prend la place du panneau.
+            if self.lib.settings.view == crate::config::ViewMode::Grid {
+                self.selected = Some(id.clone());
+                self.overlay = Some(id);
+            } else {
+                self.selected = Some(id);
+                self.home = false;
+            }
         }
         if let Some(option) = new_sort {
             self.lib.settings.home_sort = option;
+            self.touch();
+        }
+    }
+
+    /// Filtres de la bibliothèque : statut, genre Steam, tag personnel.
+    /// Un second clic sur une pastille active retire son filtre.
+    fn home_filters(&mut self, ui: &mut egui::Ui) {
+        let pal = self.pal;
+        let tags = self.lib.all_tags();
+        let genres = self.lib.all_genres();
+        if tags.is_empty() && genres.is_empty() {
+            return;
+        }
+        let mut new_status: Option<crate::config::GameStatus> = None;
+        let mut new_tag: Option<String> = None;
+        let mut new_genre: Option<String> = None;
+        let status = self.lib.settings.home_status;
+        let tag = self.lib.settings.home_tag.clone();
+        let genre = self.lib.settings.home_genre.clone();
+
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.add_space(PADDING);
+            ui.label(RichText::new("FILTRES").size(10.5).color(pal.text_faint));
+        });
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.add_space(PADDING);
+            if widgets::chip_colored(ui, "Tout", status == crate::config::GameStatus::None
+                && tag.is_empty()
+                && genre.is_empty(), &pal, pal.accent)
+            {
+                new_status = Some(crate::config::GameStatus::None);
+                new_tag = Some(String::new());
+                new_genre = Some(String::new());
+            }
+            for option in crate::config::GameStatus::ALL.iter().skip(1) {
+                let selected = status == *option;
+                let (r, g, b) = option.color();
+                if widgets::chip_colored(
+                    ui,
+                    option.label(),
+                    selected,
+                    &pal,
+                    Color32::from_rgb(r, g, b),
+                ) {
+                    new_status = Some(if selected {
+                        crate::config::GameStatus::None
+                    } else {
+                        *option
+                    });
+                }
+            }
+            for (name, count) in &genres {
+                let selected = genre.eq_ignore_ascii_case(name);
+                if widgets::chip(
+                    ui,
+                    &format!("{name}"),
+                    selected,
+                    &pal,
+                ) {
+                    new_genre = Some(if selected { String::new() } else { name.clone() });
+                }
+                let _ = count;
+            }
+            for (name, count) in &tags {
+                let selected = tag.eq_ignore_ascii_case(name);
+                if widgets::chip(ui, &format!("#{name} · {count}"), selected, &pal) {
+                    new_tag = Some(if selected { String::new() } else { name.clone() });
+                }
+            }
+        });
+        if let Some(status) = new_status {
+            self.lib.settings.home_status = status;
+            self.touch();
+        }
+        if let Some(tag) = new_tag {
+            self.lib.settings.home_tag = tag;
+            self.touch();
+        }
+        if let Some(genre) = new_genre {
+            self.lib.settings.home_genre = genre;
             self.touch();
         }
     }

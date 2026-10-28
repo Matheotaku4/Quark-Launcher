@@ -1,7 +1,7 @@
 //! Onglet Bibliothèque : colonne de gauche (liste ou grille) + panneau du jeu.
 
 use crate::app::{NewsState, QuarkApp};
-use crate::config::{self, AssetKind, Game, ViewMode};
+use crate::config::{self, AssetKind, Game, GameStatus, ViewMode};
 use crate::images::{draw_cover, draw_fit_left, hero_placeholder, rounded_cover};
 use crate::news;
 use crate::proton::{self, LaunchKind};
@@ -9,35 +9,295 @@ use crate::theme::{self, Palette};
 use crate::ui_home::linux_chip;
 use crate::widgets::{self, Icon};
 use eframe::egui::{self, Align, Align2, Color32, FontId, Layout, Pos2, Rect, RichText, Sense, Vec2};
+use std::path::PathBuf;
 
 impl QuarkApp {
     pub(crate) fn library_tab(&mut self, ctx: &egui::Context) {
         let pal = self.pal;
         let view = self.lib.settings.view;
-        let sidebar_width = match view {
-            ViewMode::List => 292.0,
-            ViewMode::Grid => 468.0,
-        };
+        // Vue grille : **seulement** la grille. La fiche du jeu s'ouvre en
+        // surimpression, avec sa croix, et se ferme d'un clic à côté.
+        let grid_only = view == ViewMode::Grid;
+        if !grid_only {
+            egui::SidePanel::left("quark_library_list")
+                .exact_width(292.0)
+                .resizable(false)
+                .frame(
+                    egui::Frame::new()
+                        .fill(pal.panel)
+                        .stroke(egui::Stroke::new(1.0_f32, pal.border)),
+                )
+                .show(ctx, |ui| self.sidebar(ui));
+        }
 
-        egui::SidePanel::left("quark_library_list")
-            .exact_width(sidebar_width)
-            .resizable(false)
-            .frame(
-                egui::Frame::new()
-                    .fill(pal.panel)
-                    .stroke(egui::Stroke::new(1.0_f32, pal.border)),
-            )
-            .show(ctx, |ui| self.sidebar(ui));
-
+        // La fiche dessine sa propre bannière floutée : le panneau doit laisser
+        // passer le fond au lieu de le repeindre en noir uni.
+        let see_through = !self.home && !grid_only;
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(pal.bg))
+            .frame(egui::Frame::new().fill(if see_through {
+                Color32::TRANSPARENT
+            } else {
+                pal.bg
+            }))
             .show(ctx, |ui| {
                 if self.home {
                     self.home_pane(ui);
+                } else if grid_only {
+                    self.grid_page(ui);
                 } else {
                     self.detail_pane(ui);
                 }
             });
+
+        if grid_only {
+            self.detail_overlay(ctx);
+        }
+    }
+
+    /// Grille pleine largeur (vue grille) : toutes les couvertures, sans fiche.
+    fn grid_page(&mut self, ui: &mut egui::Ui) {
+        let pal = self.pal;
+        let ids = self.display_ids();
+        let total = self.lib.games.len();
+        ui.add_space(14.0);
+        ui.horizontal(|ui| {
+            ui.add_space(24.0);
+            ui.label(
+                RichText::new(format!(
+                    "{} jeu{} · clic pour ouvrir la fiche",
+                    ids.len(),
+                    if ids.len() > 1 { "x" } else { "" }
+                ))
+                .size(11.0)
+                .color(pal.text_faint),
+            );
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.add_space(24.0);
+                if widgets::icon_button(ui, 26.0, Icon::Plus, &pal, "Ajouter un jeu").clicked() {
+                    self.open_add_dialog();
+                }
+                ui.add_space(6.0);
+                if widgets::icon_button(
+                    ui,
+                    26.0,
+                    Icon::Steam,
+                    &pal,
+                    "Importer les jeux Steam installés",
+                )
+                .clicked()
+                {
+                    self.open_steam_import(ui.ctx());
+                }
+                ui.add_space(6.0);
+                if widgets::icon_button(ui, 26.0, Icon::List, &pal, "Vue liste (Steam)").clicked() {
+                    self.set_view(ViewMode::List);
+                }
+            });
+        });
+        ui.add_space(12.0);
+        if ids.is_empty() {
+            ui.vertical_centered(|ui| {
+                ui.add_space(120.0);
+                ui.label(
+                    RichText::new(if total == 0 {
+                        "Ta bibliothèque est vide."
+                    } else {
+                        "Aucun jeu ne correspond au filtre."
+                    })
+                    .size(14.0)
+                    .color(pal.text_dim),
+                );
+            });
+            return;
+        }
+
+        // Même rendu que l'accueil : couvertures arrondies, titre, temps de jeu.
+        let mut paths: Vec<Option<PathBuf>> = Vec::with_capacity(ids.len());
+        for id in &ids {
+            paths.push(
+                self.lib
+                    .get(id)
+                    .and_then(|game| game.artwork.get(AssetKind::Cover))
+                    .filter(|path| path.exists())
+                    .cloned(),
+            );
+        }
+        let covers: Vec<Option<egui::TextureHandle>> = paths
+            .iter()
+            .map(|path| path.as_ref().and_then(|path| self.texture(ui.ctx(), path)))
+            .collect();
+
+        let mut opened: Option<String> = None;
+        egui::ScrollArea::vertical()
+            .id_salt("quark_grid_page")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                let padding = 24.0;
+                let gap = 16.0;
+                let available = (ui.available_width() - padding * 2.0).max(240.0);
+                let columns = ((available + gap) / 172.0).floor().clamp(2.0, 8.0) as usize;
+                let tile_w =
+                    ((available - gap * (columns as f32 - 1.0)) / columns as f32).max(110.0);
+                let cover_h = tile_w * theme::COVER_RATIO;
+                let row_h = cover_h + 36.0;
+                let mut index = 0usize;
+                while index < ids.len() {
+                    ui.horizontal(|ui| {
+                        ui.add_space(padding);
+                        for slot in 0..columns {
+                            let Some(id) = ids.get(index + slot) else {
+                                break;
+                            };
+                            let Some(game) = self.lib.get(id).cloned() else {
+                                continue;
+                            };
+                            if slot > 0 {
+                                ui.add_space(gap);
+                            }
+                            let (tile, response) = ui
+                                .allocate_exact_size(Vec2::new(tile_w, row_h), Sense::click());
+                            let painter = ui.painter_at(tile);
+                            let anim = ui.ctx().animate_bool_with_time(
+                                egui::Id::new(("quark_grid_tile", id.as_str())),
+                                response.hovered(),
+                                0.14,
+                            );
+                            let missing = game.exe_missing();
+                            let cover = Rect::from_min_size(tile.min, Vec2::new(tile_w, cover_h))
+                                .shrink(2.0 * anim);
+                            painter.rect_filled(
+                                tile,
+                                12.0,
+                                if missing {
+                                    Color32::from_rgb(0x2A, 0x10, 0x10)
+                                } else {
+                                    pal.surface
+                                },
+                            );
+                            match covers.get(index + slot).and_then(|cover| cover.as_ref()) {
+                                Some(texture) => {
+                                    rounded_cover(ui, cover, texture, 10.0);
+                                }
+                                None => {
+                                    painter.rect_filled(cover, 10.0, pal.surface_hover);
+                                    widgets::monogram(
+                                        &painter,
+                                        cover.shrink(cover.width() * 0.18),
+                                        &game.monogram_letter(),
+                                        theme::monogram_color(&game.name),
+                                        &pal,
+                                    );
+                                }
+                            }
+                            if anim > 0.0 {
+                                painter.rect_stroke(
+                                    tile,
+                                    12.0,
+                                    egui::Stroke::new(2.0_f32, pal.accent.gamma_multiply(anim)),
+                                    egui::StrokeKind::Inside,
+                                );
+                            }
+                            if missing {
+                                painter.text(
+                                    Pos2::new(tile.left() + 6.0, cover.bottom() + 6.0),
+                                    Align2::LEFT_TOP,
+                                    "exécutable introuvable",
+                                    FontId::proportional(10.0),
+                                    pal.danger,
+                                );
+                            }
+                            let title_color = if missing {
+                                pal.danger
+                            } else {
+                                theme::lerp_color(pal.text_dim, pal.text, anim)
+                            };
+                            let job = single_line(&game.name, 12.5, title_color, tile_w);
+                            let galley = painter.layout_job(job);
+                            painter.galley(
+                                Pos2::new(tile.left(), cover.bottom() + if missing { 21.0 } else { 7.0 }),
+                                galley,
+                                title_color,
+                            );
+                            if let Some((r, g, b)) = status_color(game.status) {
+                                painter.circle_filled(
+                                    Pos2::new(tile.left() + 4.0, cover.top() + 8.0),
+                                    4.0,
+                                    Color32::from_rgb(r, g, b),
+                                );
+                            }
+                            if response.clicked() {
+                                opened = Some(id.clone());
+                            }
+                            let _ = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+                        }
+                    });
+                    ui.add_space(gap);
+                    index += columns;
+                }
+                ui.add_space(20.0);
+            });
+        if let Some(id) = opened {
+            self.overlay = Some(id.clone());
+            self.selected = Some(id);
+        }
+    }
+
+    /// Fiche du jeu en surimpression : croix, clic à côté, ou Échap pour fermer.
+    fn detail_overlay(&mut self, ctx: &egui::Context) {
+        let Some(id) = self.overlay.clone() else {
+            return;
+        };
+        if self.lib.get(&id).is_none() {
+            self.overlay = None;
+            return;
+        }
+        self.selected = Some(id);
+        let pal = self.pal;
+        let screen = ctx.screen_rect();
+        let size = Vec2::new(
+            (screen.width() * 0.94).max(720.0),
+            (screen.height() * 0.92).max(480.0),
+        );
+        let name = self
+            .lib
+            .get(&self.overlay.clone().unwrap_or_default())
+            .map(|game| game.name.clone())
+            .unwrap_or_default();
+        let mut close = false;
+        let modal = egui::Modal::new(egui::Id::new("quark_game_overlay"))
+            .backdrop_color(Color32::from_black_alpha(200))
+            .frame(
+                egui::Frame::new()
+                    .fill(pal.bg)
+                    .stroke(egui::Stroke::new(1.0_f32, pal.border))
+                    .corner_radius(14.0)
+                    .inner_margin(egui::Margin::ZERO),
+            )
+            .show(ctx, |ui| {
+                ui.set_min_size(size);
+                ui.set_max_size(size);
+                ui.horizontal(|ui| {
+                    ui.add_space(16.0);
+                    ui.label(
+                        RichText::new(&name)
+                            .size(13.0)
+                            .color(pal.text_dim),
+                    );
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.add_space(10.0);
+                        if widgets::icon_button(ui, 30.0, Icon::Close, &pal, "Fermer (Échap)")
+                            .clicked()
+                        {
+                            close = true;
+                        }
+                    });
+                });
+                ui.add_space(6.0);
+                self.detail_pane(ui);
+            });
+        if modal.should_close() || close {
+            self.overlay = None;
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -76,11 +336,6 @@ impl QuarkApp {
             });
         });
 
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            ui.add_space(16.0);
-            ui.label(RichText::new("BIBLIOTHÈQUE").size(11.0).color(pal.text_dim));
-        });
         ui.add_space(6.0);
         if marked_count == 0 {
             ui.horizontal(|ui| {
@@ -91,12 +346,6 @@ impl QuarkApp {
                     format!("{} / {total} jeux", ids.len())
                 };
                 ui.label(RichText::new(count).size(11.0).color(pal.text_faint));
-                ui.add_space(10.0);
-                ui.label(
-                    RichText::new("Ctrl+clic : sélection multiple")
-                        .size(10.5)
-                        .color(pal.text_faint),
-                );
             });
         } else {
             // Barre de sélection : supprimer plusieurs jeux d'un coup.
@@ -124,6 +373,7 @@ impl QuarkApp {
                 });
             });
         }
+        self.quick_filters(ui);
         ui.add_space(8.0);
 
         egui::ScrollArea::vertical()
@@ -320,6 +570,58 @@ impl QuarkApp {
         }
     }
 
+    /// Filtres rapides de la colonne : statut puis tags personnels, comme les
+    /// catégories Steam. Un second clic sur la pastille active retire le filtre.
+    fn quick_filters(&mut self, ui: &mut egui::Ui) {
+        let pal = self.pal;
+        let mut new_status: Option<GameStatus> = None;
+        let mut new_tag: Option<String> = None;
+        let status = self.lib.settings.home_status;
+        let tag = self.lib.settings.home_tag.clone();
+        let tags = self.lib.all_tags();
+
+        ui.add_space(6.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.add_space(12.0);
+            for option in GameStatus::ALL {
+                let selected = status == option;
+                let color = status_color(option)
+                    .map(|(r, g, b)| Color32::from_rgb(r, g, b))
+                    .unwrap_or(pal.surface_hover);
+                if widgets::chip_colored(ui, option.label(), selected, &pal, color) {
+                    new_status = Some(if selected {
+                        GameStatus::None
+                    } else {
+                        option
+                    });
+                }
+                ui.add_space(4.0);
+            }
+        });
+        if !tags.is_empty() {
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.add_space(12.0);
+                for (name, count) in tags {
+                    let selected = tag.eq_ignore_ascii_case(&name);
+                    if widgets::chip(ui, &format!("{name} · {count}"), selected, &pal) {
+                        new_tag = Some(if selected { String::new() } else { name.clone() });
+                    }
+                    ui.add_space(4.0);
+                }
+            });
+        }
+
+        if let Some(status) = new_status {
+            self.lib.settings.home_status = status;
+            self.touch();
+        }
+        if let Some(tag) = new_tag {
+            self.lib.settings.home_tag = tag;
+            self.touch();
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Panneau du jeu (bannière, Jouer, temps de jeu, paramètres)
     // -----------------------------------------------------------------------
@@ -378,6 +680,26 @@ impl QuarkApp {
             None => "—".to_string(),
         };
 
+        // Fond de la fiche : la bannière du jeu, floutée et assombrie, au lieu
+        // d'un noir complet. Peinte avant la zone défilante, donc derrière.
+        if let Some(hero) = game
+            .artwork
+            .get(AssetKind::Hero)
+            .filter(|path| path.exists())
+            .cloned()
+        {
+            if let Some(texture) = self.blurred_texture(ui.ctx(), &hero) {
+                // À partir du curseur : en surimpression, la barre de titre et
+                // sa croix restent visibles au-dessus du fond flouté.
+                let area = Rect::from_min_size(ui.cursor().min, ui.available_size_before_wrap());
+                let painter = ui.painter_at(area);
+                draw_cover(&painter, &texture, area);
+                // Voile sombre : le texte garde son contraste, la teinte du jeu
+                // reste visible.
+                painter.rect_filled(area, 0.0, Color32::from_black_alpha(202));
+            }
+        }
+
         egui::ScrollArea::vertical()
             .id_salt("quark_detail_scroll")
             .auto_shrink([false, false])
@@ -397,6 +719,7 @@ impl QuarkApp {
                 let mut gear_clicked = false;
                 let mut customize_clicked = false;
                 let mut log_clicked = false;
+                let mut remove_clicked = false;
                 let mut open_protondb = false;
                 ui.scope_builder(
                     egui::UiBuilder::new()
@@ -452,6 +775,10 @@ impl QuarkApp {
                                 .max_rect(badge_rect)
                                 .layout(Layout::left_to_right(Align::Center)),
                             |ui| {
+                                if game.exe_missing() {
+                                    danger_chip(ui, &pal, "EXÉCUTABLE INTROUVABLE");
+                                    ui.add_space(6.0);
+                                }
                                 if native {
                                     linux_chip(ui, &pal);
                                     ui.add_space(6.0);
@@ -542,29 +869,52 @@ impl QuarkApp {
                                         .color(pal.text_faint),
                                     );
                                 }
+                                if game.status != GameStatus::None {
+                                    ui.add_space(14.0);
+                                    status_chip(ui, &pal, game.status);
+                                }
                             },
                         );
 
-                        // Infos (\u{24d8}) puis engrenage, à droite de la bannière (comme Steam).
-                        let info_rect = Rect::from_min_size(
-                            Pos2::new(hero.right() - 92.0, hero.top() + 14.0),
-                            Vec2::splat(34.0),
+                        // Actions de la fiche, de droite à gauche : engrenage
+                        // bleu (configurer), crayon vert (personnaliser),
+                        // poubelle rouge (retirer), puis le journal et les
+                        // informations du jeu.
+                        let action = |ui: &mut egui::Ui, slot: f32, icon: Icon, color: Color32, tip: &str| {
+                            let rect = Rect::from_min_size(
+                                Pos2::new(hero.right() - slot, hero.top() + 14.0),
+                                Vec2::splat(34.0),
+                            );
+                            let mut clicked = false;
+                            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                                clicked = widgets::tinted_icon_button(ui, 32.0, icon, color, tip)
+                                    .clicked();
+                            });
+                            clicked
+                        };
+                        gear_clicked = action(
+                            ui,
+                            50.0,
+                            Icon::Gear,
+                            Color32::from_rgb(0x3F, 0x9B, 0xE8),
+                            "Configurer ce jeu",
                         );
-                        ui.scope_builder(egui::UiBuilder::new().max_rect(info_rect), |ui| {
-                            info_clicked = widgets::floating_icon_button(
-                                ui,
-                                34.0,
-                                Icon::Info,
-                                &pal,
-                                "Informations du jeu",
-                                hero_light,
-                            )
-                            .clicked();
-                        });
-
-                        // Journal de session, à gauche de « Personnaliser ».
+                        customize_clicked = action(
+                            ui,
+                            90.0,
+                            Icon::Pencil,
+                            Color32::from_rgb(0x4C, 0xB0, 0x6A),
+                            "Personnaliser (artworks, notes, tags)",
+                        );
+                        remove_clicked = action(
+                            ui,
+                            130.0,
+                            Icon::Trash,
+                            Color32::from_rgb(0xD9, 0x41, 0x41),
+                            "Retirer de la bibliothèque",
+                        );
                         let log_rect = Rect::from_min_size(
-                            Pos2::new(hero.right() - 176.0, hero.top() + 14.0),
+                            Pos2::new(hero.right() - 178.0, hero.top() + 14.0),
                             Vec2::splat(34.0),
                         );
                         ui.scope_builder(egui::UiBuilder::new().max_rect(log_rect), |ui| {
@@ -578,35 +928,17 @@ impl QuarkApp {
                             )
                             .clicked();
                         });
-
-                        // Personnaliser (images du jeu), puis Infos, puis Paramètres.
-                        let custom_rect = Rect::from_min_size(
-                            Pos2::new(hero.right() - 134.0, hero.top() + 14.0),
+                        let info_rect = Rect::from_min_size(
+                            Pos2::new(hero.right() - 222.0, hero.top() + 14.0),
                             Vec2::splat(34.0),
                         );
-                        ui.scope_builder(egui::UiBuilder::new().max_rect(custom_rect), |ui| {
-                            customize_clicked = widgets::floating_icon_button(
+                        ui.scope_builder(egui::UiBuilder::new().max_rect(info_rect), |ui| {
+                            info_clicked = widgets::floating_icon_button(
                                 ui,
                                 34.0,
-                                Icon::Image,
+                                Icon::Info,
                                 &pal,
-                                "Personnaliser (artworks)",
-                                hero_light,
-                            )
-                            .clicked();
-                        });
-
-                        let gear_rect = Rect::from_min_size(
-                            Pos2::new(hero.right() - 50.0, hero.top() + 14.0),
-                            Vec2::splat(34.0),
-                        );
-                        ui.scope_builder(egui::UiBuilder::new().max_rect(gear_rect), |ui| {
-                            gear_clicked = widgets::floating_icon_button(
-                                ui,
-                                34.0,
-                                Icon::Gear,
-                                &pal,
-                                "Paramètres du jeu",
+                                "Informations du jeu",
                                 hero_light,
                             )
                             .clicked();
@@ -625,6 +957,9 @@ impl QuarkApp {
                 }
                 if log_clicked {
                     self.open_logs(&id);
+                }
+                if remove_clicked {
+                    self.request_remove(&id);
                 }
                 if open_protondb {
                     if let Some(app_id) = game.steam_app_id {
@@ -667,6 +1002,46 @@ impl QuarkApp {
                         ("Exécutable", game.exe.clone()),
                         ("Lancement", launch_label),
                         (
+                            "Développeur",
+                            if game.developer.is_empty() {
+                                "—".to_string()
+                            } else {
+                                game.developer.clone()
+                            },
+                        ),
+                        (
+                            "Genres",
+                            if game.genres.is_empty() {
+                                "—".to_string()
+                            } else {
+                                game.genres.join(" · ")
+                            },
+                        ),
+                        (
+                            "Sortie",
+                            if game.released.is_empty() {
+                                "—".to_string()
+                            } else {
+                                game.released.clone()
+                            },
+                        ),
+                        (
+                            "Statut",
+                            if game.status == GameStatus::None {
+                                "aucun".to_string()
+                            } else {
+                                game.status.label().to_string()
+                            },
+                        ),
+                        (
+                            "Tags",
+                            if game.tags.is_empty() {
+                                "aucun".to_string()
+                            } else {
+                                game.tags.join(" · ")
+                            },
+                        ),
+                        (
                             "Préfixe Proton",
                             if is_proton {
                                 prefix.display().to_string()
@@ -692,6 +1067,27 @@ impl QuarkApp {
                         });
                     }
 
+                    if !game.description.is_empty() {
+                        ui.horizontal(|ui| {
+                            ui.add_space(32.0);
+                            ui.vertical(|ui| {
+                                ui.set_max_width((width - 64.0).max(200.0));
+                                ui.label(RichText::new(&game.description).size(12.5).color(pal.text_dim));
+                                ui.add_space(8.0);
+                            });
+                        });
+                    }
+                    if !game.notes.is_empty() {
+                        ui.horizontal(|ui| {
+                            ui.add_space(32.0);
+                            ui.vertical(|ui| {
+                                ui.set_max_width((width - 64.0).max(200.0));
+                                ui.label(RichText::new("NOTES").size(11.0).color(pal.text_faint));
+                                ui.label(RichText::new(&game.notes).size(12.5).color(pal.text_dim));
+                                ui.add_space(8.0);
+                            });
+                        });
+                    }
                     if let Some(app_id) = game.steam_app_id {
                         ui.horizontal(|ui| {
                             ui.add_space(32.0);
@@ -704,11 +1100,44 @@ impl QuarkApp {
                     }
                     ui.horizontal(|ui| {
                         ui.add_space(32.0);
-                        if widgets::ghost_button(ui, "Paramètres du jeu", &pal, Icon::Gear).clicked() {
+                        if widgets::tinted_icon_button(
+                            ui,
+                            28.0,
+                            Icon::Gear,
+                            Color32::from_rgb(0x3F, 0x9B, 0xE8),
+                            "Configurer ce jeu",
+                        )
+                        .clicked()
+                        {
                             self.editing = Some(game.clone());
                         }
-                        if widgets::ghost_button(ui, "Personnaliser", &pal, Icon::Image).clicked() {
+                        ui.add_space(4.0);
+                        if widgets::tinted_icon_button(
+                            ui,
+                            28.0,
+                            Icon::Pencil,
+                            Color32::from_rgb(0x4C, 0xB0, 0x6A),
+                            "Personnaliser (artworks, notes, tags)",
+                        )
+                        .clicked()
+                        {
                             self.open_customize(&id);
+                        }
+                        ui.add_space(4.0);
+                        if widgets::tinted_icon_button(
+                            ui,
+                            28.0,
+                            Icon::Trash,
+                            Color32::from_rgb(0xD9, 0x41, 0x41),
+                            "Retirer de la bibliothèque",
+                        )
+                        .clicked()
+                        {
+                            self.request_remove(&id);
+                        }
+                        ui.add_space(10.0);
+                        if widgets::ghost_button(ui, "Paramètres", &pal, Icon::None).clicked() {
+                            self.editing = Some(game.clone());
                         }
                         if game.steam_app_id.is_some() || game.sgdb_id.is_some() {
                             if widgets::ghost_button(ui, "Rafraîchir les artworks", &pal, Icon::Refresh)
@@ -1031,12 +1460,26 @@ fn game_row(
     let mark = ui
         .ctx()
         .animate_bool_with_time(id.with("selected"), selected || marked, 0.16);
+    // Exécutable disparu : la ligne passe en rouge, comme un avertissement.
+    let missing = game.exe_missing();
 
     if hover > 0.0 {
         painter.rect_filled(
             rect,
             4.0,
             theme::lerp_color(Color32::TRANSPARENT, pal.surface_hover, hover),
+        );
+    }
+    if missing {
+        painter.rect_filled(
+            rect,
+            4.0,
+            Color32::from_rgba_unmultiplied(0xD9, 0x41, 0x41, 26),
+        );
+        painter.rect_filled(
+            Rect::from_min_size(rect.left_top(), Vec2::new(3.0, rect.height())),
+            1.5,
+            pal.danger,
         );
     }
     if mark > 0.0 {
@@ -1084,7 +1527,11 @@ fn game_row(
     // Titre sur une seule ligne, coupé par une ellipsis : les noms longs ne
     // débordent plus de la colonne.
     let title_x = rect.left() + 66.0;
-    let title_color = theme::lerp_color(pal.text_dim, pal.text, mark.max(hover * 0.7));
+    let title_color = if missing {
+        pal.danger
+    } else {
+        theme::lerp_color(pal.text_dim, pal.text, mark.max(hover * 0.7))
+    };
     let job = single_line(
         &game.name,
         13.5,
@@ -1098,10 +1545,30 @@ fn game_row(
         title_color,
     );
 
+    if let Some((r, g, b)) = status_color(game.status) {
+        painter.circle_filled(
+            Pos2::new(rect.right() - 34.0, rect.center().y),
+            3.5,
+            Color32::from_rgb(r, g, b),
+        );
+    }
     if running {
         painter.circle_filled(Pos2::new(rect.right() - 18.0, rect.center().y), 4.0, pal.accent);
     }
 
+    let response = if missing {
+        response.on_hover_text(format!(
+            "{} · exécutable introuvable : {}",
+            game.name,
+            if game.exe.trim().is_empty() {
+                "aucun chemin défini".to_string()
+            } else {
+                game.exe.clone()
+            }
+        ))
+    } else {
+        response
+    };
     response
 }
 
@@ -1158,6 +1625,14 @@ fn game_tile(
             egui::StrokeKind::Inside,
         );
     }
+    if game.exe_missing() {
+        painter.rect_stroke(
+            rect,
+            8.0,
+            egui::Stroke::new(2.0_f32, pal.danger),
+            egui::StrokeKind::Inside,
+        );
+    }
     if running {
         let badge = Rect::from_min_size(
             Pos2::new(rect.left() + 6.0, rect.top() + 6.0),
@@ -1174,6 +1649,56 @@ fn game_tile(
     }
 
     response.on_hover_text(format!("{} · clic droit : paramètres", game.name))
+}
+
+/// Couleur d'une pastille de statut (`None` : pas de pastille).
+pub(crate) fn status_color(status: GameStatus) -> Option<(u8, u8, u8)> {
+    if status == GameStatus::None {
+        None
+    } else {
+        Some(status.color())
+    }
+}
+
+/// Pastille de statut (À jouer, En cours, Terminé, Abandonné).
+pub(crate) fn status_chip(ui: &mut egui::Ui, pal: &Palette, status: GameStatus) {
+    let Some((r, g, b)) = status_color(status) else {
+        return;
+    };
+    let color = Color32::from_rgb(r, g, b);
+    ui.add(
+        egui::Button::new(
+            RichText::new(status.label())
+                .size(10.5)
+                .strong()
+                .color(theme::on_accent(color)),
+        )
+        .fill(color)
+        .stroke(egui::Stroke::NONE)
+        .corner_radius(9.0)
+        .min_size(Vec2::new(0.0, 20.0)),
+    )
+    .on_hover_text("Statut personnel du jeu (modifiable dans ses paramètres)");
+    let _ = pal;
+}
+
+/// Pastille d'alerte rouge (exécutable introuvable).
+pub(crate) fn danger_chip(ui: &mut egui::Ui, pal: &Palette, label: &str) {
+    ui.add(
+        egui::Button::new(
+            RichText::new(label)
+                .size(10.0)
+                .strong()
+                .color(Color32::WHITE),
+        )
+        .fill(pal.danger)
+        .stroke(egui::Stroke::NONE)
+        .corner_radius(9.0)
+        .min_size(Vec2::new(0.0, 20.0)),
+    )
+    .on_hover_text(
+        "Le fichier n'existe plus à ce chemin : corrige l'exécutable dans les paramètres du jeu.",
+    );
 }
 
 /// Texte sur une seule ligne, coupé par une ellipsis s'il dépasse `max_width`.

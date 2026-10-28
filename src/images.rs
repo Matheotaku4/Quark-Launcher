@@ -48,6 +48,58 @@ impl QuarkApp {
     }
 }
 
+/// Versions floutées des bannières (fond de la fiche jeu).
+///
+/// L'image est réduite à `BLUR_WIDTH` pixels, floutée, puis agrandie par la
+/// carte graphique : le résultat est un vrai flou doux, coûteux une seule fois
+/// par fichier.
+#[derive(Default)]
+pub struct BlurCache {
+    entries: HashMap<PathBuf, (Option<SystemTime>, TextureHandle)>,
+}
+
+const BLUR_WIDTH: u32 = 96;
+
+impl BlurCache {
+    pub fn get(&mut self, ctx: &egui::Context, path: &Path) -> Option<&TextureHandle> {
+        let modified = std::fs::metadata(path).ok().and_then(|m| m.modified().ok());
+        let stale = match self.entries.get(path) {
+            Some((stamp, _)) => *stamp != modified,
+            None => true,
+        };
+        if stale {
+            let bytes = std::fs::read(path).ok()?;
+            let decoded = image::load_from_memory(&bytes).ok()?;
+            let (width, height) = (decoded.width().max(1), decoded.height().max(1));
+            let scaled_height = ((BLUR_WIDTH as f32 * height as f32) / width as f32)
+                .round()
+                .clamp(1.0, 4096.0) as u32;
+            let small = decoded
+                .resize(BLUR_WIDTH, scaled_height, image::imageops::FilterType::Triangle)
+                .to_rgba8();
+            let blurred = image::imageops::blur(&small, 4.0);
+            let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                [blurred.width() as usize, blurred.height() as usize],
+                blurred.as_raw(),
+            );
+            let texture = ctx.load_texture(
+                format!("blur:{}", path.display()),
+                color_image,
+                egui::TextureOptions::LINEAR,
+            );
+            self.entries.insert(path.to_path_buf(), (modified, texture));
+        }
+        self.entries.get(path).map(|(_, texture)| texture)
+    }
+}
+
+impl QuarkApp {
+    /// Texture floutée d'une bannière, pour le fond de la fiche.
+    pub fn blurred_texture(&mut self, ctx: &egui::Context, path: &Path) -> Option<TextureHandle> {
+        self.blurs.get(ctx, path).cloned()
+    }
+}
+
 /// Dessine la texture dans `rect` en conservant ses proportions.
 
 /// Dessine la texture dans `rect` en conservant ses proportions, collée en bas

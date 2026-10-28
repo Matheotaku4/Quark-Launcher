@@ -8,13 +8,34 @@ through **Proton** — or through **umu-launcher**.
 ## Features
 
 - **Two tabs**: `Store` (deliberately empty for now) and `Library`, plus a **Home** page
-  reachable from the button above the game list.
+  reachable from the button above the game list. `Ctrl+Q` quits completely (tray icon
+  included); the title bar and the executable carry the Quark icon (`assets/quark.png`,
+  `assets/quark.desktop`).
 - **Home page**: a carousel of the games you played last — the banner as background with
   rounded corners, the game's logo (or title), a **Continue** button (it becomes
   **Stop** while the game runs), playtime and last session next to it, the ProtonDB score
   and a *Linux native* pill in the top-left corner, arrows and dots to move between the five
   most recent games. Below it, the whole library as rounded covers, sorted by **last
-  session**, **date added** or **hours played** — the choice is remembered.
+  session**, **date added** or **hours played** — the choice is remembered. The carousel can
+  advance **by itself** (Appearance → Home, 3–60 s), with a thin progress line under the
+  banner; filters above the grid narrow the library by **status**, **Steam genre** or
+  **personal tag**.
+- **Personal library data**: a status per game (*To play*, *Playing*, *Finished*,
+  *Dropped*), free-form **notes**, and **tags** (`coop`, `relaxing`…) with a real tag editor
+  (add/remove chips). Statuses and tags become filter chips on the home page and in the left
+  column — like Steam categories — and the search box also matches tags, genres and
+  developer.
+- **Steam metadata**: developer, genres, release date and short description come from the
+  same `appdetails` endpoint already used as an artwork fallback, fetched once when a game
+  is added (per-game *Fetch from Steam* button to refresh). Genres feed the genre filter.
+- **Grid view shows the grid, nothing else**: the game page opens **as an overlay** with a
+  close button, a click next to it, or `Esc`. The page background is the game's own banner,
+  **blurred** and darkened instead of a flat black, and the four action buttons are now
+  colour-coded small icons: **red bin** (remove), **green pencil** (customize), **blue gear**
+  (configure).
+- **Missing executable**: launching a game whose `.exe` no longer exists is refused with a
+  clear message, and the game stays **highlighted in red** in the list, the grid and its page
+  until the path is fixed.
 - **Adding a game in two steps**:
   1. type the game name — Quark searches **Steam** (public `storesearch` API) then
      **SteamGridDB** and fetches the **original artwork** (banner `library_hero`,
@@ -53,8 +74,8 @@ through **Proton** — or through **umu-launcher**.
   a Linux binary that runs without Proton, plus a row in the information block. Clicking it
   opens `protondb.com/app/<id>`. Cached per AppID; games without an AppID or without a report
   simply show no rating.
-- **List / Grid switch** from the left column (the grid widens the column and shows the
-  2:3 covers).
+- **List / Grid switch** from the top bar; grid view shows only the grid, the game page
+  being an overlay.
 - **Launch options as checkboxes, per game** — no command line to remember:
   - **gamemoderun** (CPU governor from GameMode);
   - **MangoHud** (`MANGOHUD=1`, no wrapper binary needed);
@@ -86,7 +107,18 @@ through **Proton** — or through **umu-launcher**.
   everything. This is deliberately not "hide the window": `set_visible` does not exist on
   Wayland, where the window would have stayed open. If your desktop has no watcher, the
   settings page says why and the close button quits.
-- **Playtime tracking**: every session is timed (relaunch, total time, last session).
+- **Playtime tracking with history**: every session is timed and **stored** (start date and
+  duration), not just summed.
+- **Statistics page** (Settings → Statistics): total time, this week, current streak, hours
+  per week for the last twelve weeks, a **heat-map calendar** of the last 26 weeks, and the
+  most played games.
+- **Disk space page** (Settings → Disk space): size of each Proton prefix, the artwork cache,
+  session logs, downloaded update archives and each game folder, measured in a background
+  thread so the window never freezes.
+- **Steam library import**: the `+` menu reads `appmanifest_*.acf` files from every Steam
+  library (`libraryfolders.vdf`, Flatpak and Snap included), lists installed games with their
+  AppID and detected executable, skips games already in Quark, and fetches artwork and
+  metadata for each imported game.
 - **Environment variables per game**: a `NAME=value` list (for example
   `WINEDLLOVERRIDES=winmm=n,b;steam_api64`) with a wide value field, plus default variables in
   the settings that are **copied into each game when you add it** — each game then owns its
@@ -200,7 +232,6 @@ configuration file.
 | --- | --- |
 | `~/.config/quark/config.json` | settings + games (readable, hand-editable JSON) |
 | `~/.local/share/quark/artwork/<id>/` | downloaded artwork (no network request while displaying) |
-| `~/.local/share/quark/news/<appid>/` | cached news images (one file per post) |
 | `~/.local/share/quark/prefixes/<id>/` | automatically created Proton prefixes |
 | `~/.local/share/quark/logs/<id>/session.log` | last session: command, environment, game and Wine output |
 | `~/.local/share/quark/updates/` | downloaded release archives (never installed automatically) |
@@ -219,8 +250,17 @@ as the **quark-ui-renders** artifact — so every push can be reviewed without i
 anything.
 
 ```bash
-tar -xzf quark-0.9.0-linux-x86_64.tar.gz
+tar -xzf quark-0.9.1-linux-x86_64.tar.gz
 cd quark && ./quark
+```
+
+To get the Quark icon in your dock and application menu (the window carries the image
+itself, on X11 and Wayland alike), copy the bundled desktop entry and icon:
+
+```bash
+install -Dm644 assets/quark.desktop ~/.local/share/applications/quark.desktop
+install -Dm644 assets/quark.png ~/.local/share/icons/hicolor/512x512/apps/quark.png
+update-desktop-database ~/.local/share/applications 2>/dev/null || true
 ```
 
 ## Proton, concretely
@@ -295,7 +335,7 @@ target/release/quark --ui logs.png --demo --dialog logs
 
 Options: `--size WxH`, `--scale N`, `--frames N`, `--view list|grid`, `--tab library|store`,
 `--theme amoled|graphite`, `--select <game>`, `--info`, `--running`,
-`--dialog none|add|artwork|exe|scan|settings|settings-defaults|settings-proton|settings-artworks|game|logs|customize|remove|updates`, `--hover X,Y`,
+`--dialog none|add|artwork|exe|scan|settings|settings-defaults|settings-proton|settings-artworks|settings-stats|settings-disk|game|logs|customize|remove|updates|steam|overlay`, `--hover X,Y`,
 `--click X,Y`, `--key up|down|left|right|enter|escape`, `--marked`, `--home`, `--demo`.
 
 `--click` and `--key` send real input events, so a render also checks the interactions:
@@ -336,6 +376,10 @@ src/scan.rs         game discovery inside a folder (batch adding)
 src/news.rs         per-game news (public Steam feed) and opening links
 src/protondb.rs     ProtonDB rating (public API), tier colours and labels
 src/session.rs      launching, stdout/stderr capture, Stop (wineserver), log tail
+src/stats.rs        session history: hours per week, heat-map calendar, streak, top games
+src/disk.rs         disk usage of prefixes, artwork, logs, updates and game folders
+src/steamlib.rs     installed Steam library import (appmanifest_*.acf)
+src/icon.rs         embedded Quark icon (window and executable)
 src/tray.rs         notification-area icon (StatusNotifierItem via ksni) + `quark --tray`
 src/images.rs       texture cache, rounded/cropped drawing, accent and luminance analysis
 src/proton.rs       Proton runtime detection + launch command (options, umu, anti-cheat)

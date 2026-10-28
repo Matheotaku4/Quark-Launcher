@@ -2,7 +2,9 @@
 //! Aucune dépendance à une police d'icônes : tout est tracé.
 
 use crate::theme::{self, Palette};
-use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Response, Sense, Shape, Stroke, Vec2};
+use eframe::egui::{
+    self, Align2, Color32, FontId, Pos2, Rect, Response, RichText, Sense, Shape, Stroke, Vec2,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
@@ -19,8 +21,12 @@ pub enum Icon {
     List,
     Grid,
     Folder,
-    /// Image (personnalisation des artworks).
-    Image,
+    /// Crayon (modifier la fiche, les tags, les notes).
+    Pencil,
+    /// Logo Steam, pour l'import de la bibliothèque.
+    Steam,
+    /// Croix de fermeture.
+    Close,
     /// Maison de la page d'accueil.
     Home,
     ArrowLeft,
@@ -218,19 +224,65 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
                 color,
             );
         }
-        Icon::Image => {
-            let frame = Rect::from_center_size(c, Vec2::splat(s * 0.80));
-            border_rect(painter, frame, (s * 0.09).max(1.0), color);
-            painter.circle_filled(Pos2::new(c.x - s * 0.17, c.y - s * 0.16), s * 0.07, color);
+        Icon::Pencil => {
+            // Corps diagonal du crayon, puis la pointe.
+            let dir = Vec2::new(0.707, -0.707);
+            let normal = Vec2::new(0.707, 0.707);
+            let body = |along: f32, across: f32| {
+                Pos2::new(
+                    c.x + dir.x * s * along + normal.x * s * across,
+                    c.y + dir.y * s * along + normal.y * s * across,
+                )
+            };
+            painter.add(Shape::convex_polygon(
+                vec![body(0.30, 0.13), body(-0.16, 0.13), body(-0.16, -0.13), body(0.30, -0.13)],
+                color,
+                Stroke::NONE,
+            ));
+            painter.add(Shape::convex_polygon(
+                vec![body(-0.16, 0.13), body(-0.40, 0.0), body(-0.16, -0.13)],
+                color,
+                Stroke::NONE,
+            ));
+            // Bague du haut, pour distinguer le crayon d'un simple trait.
+            painter.rect_filled(
+                Rect::from_center_size(body(0.30, 0.0), Vec2::splat(s * 0.10)),
+                1.0,
+                color,
+            );
+        }
+        Icon::Steam => {
+            ring(painter, c, s * 0.40, s * 0.30, color, 0.0, std::f32::consts::TAU);
+            // Petit cercle en bas à droite et le trait qui le relie au centre.
+            let dot = Pos2::new(c.x + s * 0.14, c.y + s * 0.14);
+            painter.circle_filled(dot, s * 0.11, color);
             painter.add(Shape::convex_polygon(
                 vec![
-                    Pos2::new(c.x - s * 0.30, c.y + s * 0.22),
-                    Pos2::new(c.x - s * 0.05, c.y - s * 0.06),
-                    Pos2::new(c.x + s * 0.19, c.y + s * 0.22),
+                    Pos2::new(c.x - s * 0.28, c.y - s * 0.10),
+                    Pos2::new(c.x - s * 0.02, c.y + s * 0.02),
+                    Pos2::new(c.x - s * 0.10, c.y + s * 0.16),
                 ],
                 color,
                 Stroke::NONE,
             ));
+        }
+        Icon::Close => {
+            let arm = s * 0.34;
+            let thickness = s * 0.15;
+            for sign in [-1.0_f32, 1.0] {
+                let from = Pos2::new(c.x - arm, c.y - arm * sign);
+                let to = Pos2::new(c.x + arm, c.y + arm * sign);
+                painter.add(Shape::convex_polygon(
+                    vec![
+                        Pos2::new(from.x, from.y - thickness / 2.0),
+                        Pos2::new(to.x, to.y - thickness / 2.0),
+                        Pos2::new(to.x, to.y + thickness / 2.0),
+                        Pos2::new(from.x, from.y + thickness / 2.0),
+                    ],
+                    color,
+                    Stroke::NONE,
+                ));
+            }
         }
         Icon::Home => {
             // Toit (triangle) puis corps (rectangle plein).
@@ -455,6 +507,47 @@ pub fn icon_button(ui: &mut egui::Ui, size: f32, icon: Icon, pal: &Palette, tool
     }
 }
 
+/// Bouton icône carré coloré, pour les actions d'un jeu : poubelle rouge,
+/// crayon vert, engrenage bleu. La couleur reste lisible sur le noir AMOLED et
+/// sur une bannière claire grâce à une pastille teintée.
+pub fn tinted_icon_button(
+    ui: &mut egui::Ui,
+    size: f32,
+    icon: Icon,
+    color: Color32,
+    tooltip: &str,
+) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
+    let painter = ui.painter_at(rect);
+    let hover = ui.ctx().animate_bool_with_time(
+        control_id(ui, rect, tooltip, "tinted"),
+        resp.hovered(),
+        0.12,
+    );
+    // Fond : la couleur de l'action, très diluée ; au survol, un peu plus.
+    painter.circle_filled(
+        rect.center(),
+        size * 0.5,
+        Color32::from_rgba_unmultiplied(
+            color.r(),
+            color.g(),
+            color.b(),
+            (26.0 + 34.0 * hover).round() as u8,
+        ),
+    );
+    paint_icon(
+        &painter,
+        rect.shrink(size * (0.29 + 0.02 * hover)),
+        icon,
+        theme::lerp_color(color, Color32::WHITE, hover * 0.25),
+    );
+    if tooltip.is_empty() {
+        resp
+    } else {
+        resp.on_hover_text(tooltip)
+    }
+}
+
 /// Onglet de la barre supérieure (Boutique / Bibliothèque).
 pub fn tab(ui: &mut egui::Ui, label: &str, selected: bool, pal: &Palette) -> Response {
     let text = label.to_uppercase();
@@ -514,6 +607,37 @@ pub fn monogram(painter: &egui::Painter, rect: Rect, text: &str, fill: Color32, 
         // Sur une couleur claire, une lettre blanche serait illisible.
         theme::on_surface(fill),
     );
+}
+
+/// Pastille de filtre (vue, tri, tag, statut) : pleine quand elle est active.
+pub fn chip(ui: &mut egui::Ui, label: &str, selected: bool, pal: &Palette) -> bool {
+    chip_colored(ui, label, selected, pal, pal.accent)
+}
+
+/// Même pastille avec une couleur propre (statuts, tags).
+pub fn chip_colored(
+    ui: &mut egui::Ui,
+    label: &str,
+    selected: bool,
+    pal: &Palette,
+    accent: Color32,
+) -> bool {
+    let ink = if selected {
+        theme::on_accent(accent)
+    } else {
+        pal.text_dim
+    };
+    ui.add(
+        egui::Button::new(RichText::new(label).size(11.0).color(ink))
+            .fill(if selected { accent } else { pal.surface })
+            .stroke(egui::Stroke::new(
+                1.0_f32,
+                if selected { accent } else { pal.border },
+            ))
+            .corner_radius(9.0)
+            .min_size(Vec2::new(0.0, 22.0)),
+    )
+    .clicked()
 }
 
 /// Bouton « Accueil » posé au-dessus de la liste des jeux : icône maison,

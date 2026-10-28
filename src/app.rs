@@ -1,9 +1,11 @@
 //! État de l'application et assemblage de l'interface.
 
-use crate::artwork::{self, AssetPlan, SearchHit, SearchOutcome};
+use crate::artwork::{self, AssetPlan, GameMetadata, SearchHit, SearchOutcome};
+use crate::disk::{self, DiskReport};
 use crate::config::{
-    Artwork, AssetKind, Game, Library, ProtonMode, ThemeMode, ViewMode, human_playtime, now_ts,
+    Artwork, AssetKind, Game, Library, ProtonMode, ThemeMode, ViewMode, human_playtime,
 };
+use crate::steamlib::{self, SteamGame};
 use crate::news::{self, NewsItem};
 use crate::protondb::{self, Report};
 use crate::proton::{self, ProtonRuntime};
@@ -250,15 +252,21 @@ pub enum SettingsTab {
     Defaults,
     Proton,
     Artworks,
+    /// Historique de jeu : heures par semaine, calendrier, séries.
+    Stats,
+    /// Poids des préfixes, du cache, des journaux et des jeux.
+    Disk,
     About,
 }
 
 impl SettingsTab {
-    pub const ALL: [(SettingsTab, &'static str); 5] = [
+    pub const ALL: [(SettingsTab, &'static str); 7] = [
         (SettingsTab::Appearance, "Apparence"),
         (SettingsTab::Defaults, "Par défaut"),
         (SettingsTab::Proton, "Proton"),
         (SettingsTab::Artworks, "Artworks"),
+        (SettingsTab::Stats, "Statistiques"),
+        (SettingsTab::Disk, "Espace disque"),
         (SettingsTab::About, "À propos"),
     ];
 }
@@ -285,6 +293,44 @@ impl Customize {
             error: None,
         }
     }
+}
+
+/// Un jeu Steam installé proposé à l'import.
+pub struct SteamCandidate {
+    pub app_id: u32,
+    pub name: String,
+    pub dir: PathBuf,
+    pub exe: Option<PathBuf>,
+    pub include: bool,
+    /// Déjà dans la bibliothèque (même AppID) : coché, il ne sera pas dupliqué.
+    pub owned: bool,
+}
+
+/// Fenêtre « Importer depuis Steam ».
+pub struct SteamImport {
+    pub loading: bool,
+    pub rx: Option<Receiver<Result<Vec<SteamGame>, String>>>,
+    pub games: Vec<SteamCandidate>,
+    pub error: Option<String>,
+    pub filter: String,
+}
+
+impl SteamImport {
+    pub fn new() -> Self {
+        Self {
+            loading: true,
+            rx: None,
+            games: Vec::new(),
+            error: None,
+            filter: String::new(),
+        }
+    }
+}
+
+/// Lecture de la fiche Steam (développeur, genres, date, description).
+pub struct MetadataJob {
+    pub game_id: String,
+    pub rx: Receiver<Result<GameMetadata, String>>,
 }
 
 pub struct QuarkApp {
@@ -349,6 +395,25 @@ pub struct QuarkApp {
     pub carousel: usize,
     /// Début du glissement du carrousel (animation).
     pub carousel_at: Instant,
+    /// Instant où la page d'accueil a été ouverte (animation d'entrée).
+    pub home_at: Instant,
+    /// Bannières floutées (fond de la fiche jeu), une par fichier.
+    pub blurs: crate::images::BlurCache,
+    /// Fiche du jeu affichée en surimpression (vue grille).
+    pub overlay: Option<String>,
+    /// Import de la bibliothèque Steam installée.
+    pub steam_import: Option<SteamImport>,
+    /// Métadonnées Steam à charger, une requête à la fois.
+    pub meta_job: Option<MetadataJob>,
+    pub meta_queue: VecDeque<(String, u32)>,
+    /// Mesure de l'espace disque en cours.
+    pub disk_job: Option<Receiver<DiskReport>>,
+    pub disk_report: Option<DiskReport>,
+    /// Jeux dont le lancement a échoué faute d'exécutable : surlignés en rouge
+    /// quelques secondes, même si le chemin n'est plus affiché.
+    pub missing_flash: HashMap<String, Instant>,
+    /// Ctrl+Q : on quitte vraiment, sans relancer l'icône au passage.
+    pub quitting: bool,
 }
 
 impl QuarkApp {
@@ -403,6 +468,16 @@ impl QuarkApp {
             home: false,
             carousel: 0,
             carousel_at: Instant::now(),
+            home_at: Instant::now(),
+            blurs: crate::images::BlurCache::default(),
+            overlay: None,
+            steam_import: None,
+            meta_job: None,
+            meta_queue: VecDeque::new(),
+            disk_job: None,
+            disk_report: None,
+            missing_flash: HashMap::new(),
+            quitting: false,
         }
     }
 
@@ -473,6 +548,9 @@ impl QuarkApp {
         self.ensure_news(ctx);
         self.ensure_protondb(ctx);
         self.poll_protondb();
+        self.poll_metadata(ctx);
+        self.poll_disk(ctx);
+        self.poll_steam_import(ctx);
 
         if self.add.scan.running || self.add.scan.search_rx.is_some() {
             ctx.request_repaint_after(Duration::from_millis(120));
@@ -504,7 +582,8 @@ impl QuarkApp {
             // tenue par le processus dédié (`quark --tray`), prête à relancer le
             // launcher. Cacher la fenêtre n'était pas une option : `set_visible`
             // n'existe pas sur Wayland, où la fenêtre restait ouverte.
-            if self.lib.settings.tray_icon {
+            // Ctrl+Q, lui, arrête tout (voir `quit`).
+            if self.lib.settings.tray_icon && !self.quitting {
                 if let Err(err) = tray::ensure_helper() {
                     eprintln!("[quark] {err}");
                 }
@@ -538,7 +617,7 @@ impl QuarkApp {
     }
 
     fn poll_running_games(&mut self) {
-        let mut finished: Vec<(String, u64)> = Vec::new();
+        let mut finished: Vec<(String, u64, i64)> = Vec::new();
         for (id, game) in self.running.iter_mut() {
             match game.child.try_wait() {
                 Ok(None) => {
@@ -549,16 +628,23 @@ impl QuarkApp {
                         game.escalated();
                     }
                 }
-                Ok(Some(_)) => finished.push((id.clone(), game.started.elapsed().as_secs())),
-                Err(_) => finished.push((id.clone(), game.started.elapsed().as_secs())),
+                Ok(Some(_)) => finished.push((
+                    id.clone(),
+                    game.started.elapsed().as_secs(),
+                    game.started_ts,
+                )),
+                Err(_) => finished.push((
+                    id.clone(),
+                    game.started.elapsed().as_secs(),
+                    game.started_ts,
+                )),
             }
         }
-        for (id, secs) in finished {
+        for (id, secs, started_ts) in finished {
             self.running.remove(&id);
             if let Some(game) = self.lib.get_mut(&id) {
                 let name = game.name.clone();
-                game.playtime_secs += secs;
-                game.last_played = Some(now_ts());
+                game.record_session(started_ts, secs);
                 self.toast_info(format!("{name} : session de {}", human_playtime(secs.max(1))));
             }
             self.touch();
@@ -1297,6 +1383,21 @@ impl QuarkApp {
         let Some(game) = self.lib.get(id).cloned() else {
             return;
         };
+        // Exécutable disparu (jeu déplacé, disque démonté) : le lancement est
+        // refusé et le jeu passe en rouge dans la liste.
+        if game.exe_missing() {
+            self.missing_flash.insert(id.to_string(), Instant::now());
+            self.toast_error(format!(
+                "{} : exécutable introuvable — {}",
+                game.name,
+                if game.exe.trim().is_empty() {
+                    "aucun chemin défini".to_string()
+                } else {
+                    game.exe.clone()
+                }
+            ));
+            return;
+        }
         match proton::resolve(&game, &self.lib.settings, &self.runtimes) {
             Ok(resolved) => {
                 // Une option demandée mais impossible (gamescope absent) ne
@@ -1520,10 +1621,48 @@ impl QuarkApp {
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.add_space(16.0);
-                        if widgets::icon_button(ui, 32.0, Icon::Gear, &pal, "Paramètres").clicked() {
+                        if widgets::icon_button(ui, 32.0, Icon::Gear, &pal, "Paramètres · Ctrl+Q pour quitter")
+                            .clicked()
+                        {
                             self.settings_open = true;
                         }
                         ui.add_space(6.0);
+                        // Toujours accessibles, y compris en vue grille où la
+                        // colonne de gauche n'existe pas.
+                        if self.tab == Tab::Library {
+                            ui.add_space(4.0);
+                            if widgets::icon_button(ui, 28.0, Icon::Grid, &pal, "Vue grille").clicked() {
+                                self.set_view(ViewMode::Grid);
+                            }
+                            if widgets::icon_button(ui, 28.0, Icon::List, &pal, "Vue liste (Steam)")
+                                .clicked()
+                            {
+                                self.set_view(ViewMode::List);
+                            }
+                            if widgets::icon_button(ui, 28.0, Icon::Plus, &pal, "Ajouter un jeu")
+                                .clicked()
+                            {
+                                self.open_add_dialog();
+                            }
+                            if widgets::icon_button(
+                                ui,
+                                28.0,
+                                Icon::Steam,
+                                &pal,
+                                "Importer les jeux Steam installés",
+                            )
+                            .clicked()
+                            {
+                                self.open_steam_import(ctx);
+                            }
+                            if widgets::icon_button(ui, 28.0, Icon::Home, &pal, "Accueil").clicked()
+                            {
+                                self.home = true;
+                                self.home_at = Instant::now();
+                                self.overlay = None;
+                            }
+                            ui.add_space(6.0);
+                        }
                         if self.tab == Tab::Library {
                             ui.add_sized(
                                 Vec2::new(260.0, 30.0),
@@ -1594,19 +1733,38 @@ impl QuarkApp {
             });
     }
 
-    /// Jeux affichés dans la colonne de gauche (tri alphabétique + filtre).
+    /// Jeux affichés dans la colonne de gauche : filtre de recherche, de
+    /// genre, de tag et de statut, comme les catégories Steam.
     pub fn display_ids(&self) -> Vec<String> {
         let needle = self.filter.trim().to_lowercase();
-        let mut ids = self.lib.sorted_ids();
-        if !needle.is_empty() {
-            ids.retain(|id| {
-                self.lib
-                    .get(id)
-                    .map(|g| g.name.to_lowercase().contains(&needle))
-                    .unwrap_or(false)
-            });
-        }
-        ids
+        let settings = &self.lib.settings;
+        self.lib
+            .sorted_ids()
+            .into_iter()
+            .filter(|id| {
+                let Some(game) = self.lib.get(id) else {
+                    return false;
+                };
+                if !self.lib.matches(
+                    game,
+                    &settings.home_genre,
+                    &settings.home_tag,
+                    settings.home_status,
+                ) {
+                    return false;
+                }
+                if needle.is_empty() {
+                    return true;
+                }
+                game.name.to_lowercase().contains(&needle)
+                    || game.developer.to_lowercase().contains(&needle)
+                    || game.tags.iter().any(|tag| tag.to_lowercase().contains(&needle))
+                    || game
+                        .genres
+                        .iter()
+                        .any(|genre| genre.to_lowercase().contains(&needle))
+            })
+            .collect()
     }
 
     /// Sélectionne un jeu ; bascule sur la bibliothèque si besoin. Un clic
@@ -1710,6 +1868,7 @@ impl QuarkApp {
 
         self.add_dialog(ctx);
         self.settings_dialog(ctx);
+        self.steam_import_dialog(ctx);
         self.customize_dialog(ctx);
         self.game_settings_dialog(ctx);
         self.confirm_remove_dialog(ctx);
@@ -1722,6 +1881,11 @@ impl QuarkApp {
     /// Les raccourcis sont ignorés tant qu'une fenêtre ou un champ de saisie a
     /// le focus, pour ne jamais voler une frappe.
     fn keyboard(&mut self, ctx: &egui::Context) {
+        let quit = ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Q));
+        if quit {
+            self.quit(ctx);
+            return;
+        }
         if self.add.open
             || self.settings_open
             || self.editing.is_some()
@@ -1819,16 +1983,20 @@ impl eframe::App for QuarkApp {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         // Les sessions encore en cours sont comptabilisées avant la fermeture,
         // sinon le temps de jeu est perdu en quittant le launcher.
-        let now = now_ts();
-        let sessions: Vec<(String, u64)> = self
+        let sessions: Vec<(String, u64, i64)> = self
             .running
             .iter()
-            .map(|(id, game)| (id.clone(), game.started.elapsed().as_secs()))
+            .map(|(id, game)| {
+                (
+                    id.clone(),
+                    game.started.elapsed().as_secs(),
+                    game.started_ts,
+                )
+            })
             .collect();
-        for (id, secs) in sessions {
+        for (id, secs, started_ts) in sessions {
             if let Some(game) = self.lib.get_mut(&id) {
-                game.playtime_secs += secs;
-                game.last_played = Some(now);
+                game.record_session(started_ts, secs);
             }
         }
         let _ = self.lib.save();
@@ -1955,6 +2123,266 @@ impl QuarkApp {
         if self.lib.settings.view != view {
             self.lib.settings.view = view;
             self.touch();
+        }
+    }
+
+    /// Ctrl+Q : termine Quark **et** l'icône de notification. La croix, elle,
+    /// respecte le réglage de la zone de notification.
+    pub fn quit(&mut self, ctx: &egui::Context) {
+        self.quitting = true;
+        let _ = self.lib.save();
+        tray::stop_helper();
+        tray::clear_gui_pid();
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
+    // -----------------------------------------------------------------------
+    // Import de la bibliothèque Steam installée
+    // -----------------------------------------------------------------------
+
+    pub fn open_steam_import(&mut self, ctx: &egui::Context) {
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(steamlib::installed());
+            repaint.request_repaint();
+        });
+        let mut import = SteamImport::new();
+        import.rx = Some(rx);
+        self.steam_import = Some(import);
+        ctx.request_repaint_after(Duration::from_millis(150));
+    }
+
+    fn poll_steam_import(&mut self, ctx: &egui::Context) {
+        let received = self
+            .steam_import
+            .as_ref()
+            .and_then(|import| import.rx.as_ref())
+            .map(|rx| rx.try_recv());
+        match received {
+            Some(Ok(Ok(games))) => {
+                let owned: Vec<u32> = self
+                    .lib
+                    .games
+                    .iter()
+                    .filter_map(|game| game.steam_app_id)
+                    .collect();
+                if let Some(import) = self.steam_import.as_mut() {
+                    import.loading = false;
+                    import.rx = None;
+                    import.games = games
+                        .into_iter()
+                        .map(|game| SteamCandidate {
+                            owned: owned.contains(&game.app_id),
+                            include: !owned.contains(&game.app_id),
+                            app_id: game.app_id,
+                            name: game.name,
+                            dir: game.dir,
+                            exe: game.exe,
+                        })
+                        .collect();
+                }
+            }
+            Some(Ok(Err(err))) => {
+                if let Some(import) = self.steam_import.as_mut() {
+                    import.loading = false;
+                    import.rx = None;
+                    import.error = Some(err);
+                }
+            }
+            Some(Err(TryRecvError::Disconnected)) => {
+                if let Some(import) = self.steam_import.as_mut() {
+                    import.loading = false;
+                    import.rx = None;
+                    import.error = Some("lecture de Steam interrompue".to_string());
+                }
+            }
+            _ => {}
+        }
+        if self.steam_import.as_ref().is_some_and(|import| import.loading) {
+            // Le thread de lecture ne peut pas réveiller egui : on demande une
+            // image de temps en temps pendant l'analyse des manifestes.
+            ctx.request_repaint_after(Duration::from_millis(150));
+        }
+    }
+
+    /// Ajoute les jeux Steam cochés (jamais deux fois le même AppID).
+    pub fn import_steam(&mut self, ctx: &egui::Context) {
+        let Some(import) = self.steam_import.as_ref() else {
+            return;
+        };
+        let picked: Vec<(u32, String, Option<PathBuf>)> = import
+            .games
+            .iter()
+            .filter(|candidate| candidate.include && !candidate.owned)
+            .map(|candidate| (candidate.app_id, candidate.name.clone(), candidate.exe.clone()))
+            .collect();
+        if picked.is_empty() {
+            self.toast_error("Aucun jeu à importer");
+            return;
+        }
+        let settings = self.lib.settings.clone();
+        let mut added = 0usize;
+        let mut missing_exe = 0usize;
+        let mut hits: Vec<(String, SearchHit)> = Vec::new();
+        for (app_id, name, exe) in picked {
+            if exe.is_none() {
+                missing_exe += 1;
+            }
+            let mut game = Game::new(
+                name,
+                exe.as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_default(),
+            );
+            game.steam_app_id = Some(app_id);
+            // Mêmes préremplissages que l'ajout manuel.
+            game.args = settings.default_args.trim().to_string();
+            game.prefix = settings
+                .default_prefix
+                .clone()
+                .filter(|prefix| !prefix.trim().is_empty());
+            game.anticheat = settings.default_anticheat;
+            game.launch = settings.default_launch.clone();
+            game.proton_log = settings.default_proton_log;
+            game.umu = settings.default_umu;
+            game.env = settings.default_env.clone();
+            let id = game.id.clone();
+            hits.push((id.clone(), SearchHit::from_game(&game)));
+            self.lib.games.push(game);
+            self.queue_metadata(ctx, &id);
+            added += 1;
+        }
+        for (id, hit) in hits {
+            self.start_asset_job(ctx, &id, hit);
+        }
+        self.steam_import = None;
+        self.touch();
+        self.toast_info(format!(
+            "{added} jeu(x) importé(s) de Steam{}",
+            if missing_exe > 0 {
+                format!(" · {missing_exe} sans exécutable détecté")
+            } else {
+                String::new()
+            }
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Métadonnées Steam (développeur, genres, date, description)
+    // -----------------------------------------------------------------------
+
+    /// Demande la fiche Steam d'un jeu (une requête à la fois).
+    pub fn queue_metadata(&mut self, ctx: &egui::Context, game_id: &str) {
+        let Some(app_id) = self
+            .lib
+            .get(game_id)
+            .and_then(|game| game.steam_app_id)
+        else {
+            return;
+        };
+        if self.meta_job.is_some() {
+            self.meta_queue.push_back((game_id.to_string(), app_id));
+            return;
+        }
+        self.start_metadata(ctx, game_id.to_string(), app_id);
+    }
+
+    fn start_metadata(&mut self, ctx: &egui::Context, game_id: String, app_id: u32) {
+        let (tx, rx) = channel();
+        let settings = self.lib.settings.clone();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let client = artwork::http();
+            let result = artwork::metadata(&client, app_id, &settings);
+            let _ = tx.send(result);
+            repaint.request_repaint();
+        });
+        self.meta_job = Some(MetadataJob { game_id, rx });
+        ctx.request_repaint_after(Duration::from_millis(200));
+    }
+
+    fn poll_metadata(&mut self, ctx: &egui::Context) {
+        let received = self
+            .meta_job
+            .as_ref()
+            .map(|job| (job.game_id.clone(), job.rx.try_recv()));
+        if let Some((id, result)) = received {
+            match result {
+                Ok(Ok(meta)) => {
+                    if let Some(game) = self.lib.get_mut(&id) {
+                        // Ne jamais écraser une valeur corrigée à la main.
+                        if game.developer.is_empty() {
+                            game.developer = meta.developer;
+                        }
+                        if game.genres.is_empty() {
+                            game.genres = meta.genres;
+                        }
+                        if game.released.is_empty() {
+                            game.released = meta.released;
+                        }
+                        if game.description.is_empty() {
+                            game.description = meta.description;
+                        }
+                    }
+                    self.meta_job = None;
+                    self.touch();
+                }
+                Ok(Err(err)) => {
+                    self.meta_job = None;
+                    self.toast_error(format!("Fiche Steam : {err}"));
+                }
+                Err(TryRecvError::Empty) => return,
+                Err(TryRecvError::Disconnected) => {
+                    self.meta_job = None;
+                }
+            }
+        }
+        if self.meta_job.is_none() {
+            if let Some((game_id, app_id)) = self.meta_queue.pop_front() {
+                self.start_metadata(ctx, game_id, app_id);
+            }
+        }
+    }
+
+    /// Relance la fiche Steam d'un jeu (bouton dans ses paramètres).
+    pub fn refresh_metadata(&mut self, ctx: &egui::Context, game_id: &str) {
+        if let Some(game) = self.lib.get_mut(game_id) {
+            game.developer.clear();
+            game.genres.clear();
+            game.released.clear();
+            game.description.clear();
+        }
+        self.queue_metadata(ctx, game_id);
+    }
+
+    // -----------------------------------------------------------------------
+    // Espace disque
+    // -----------------------------------------------------------------------
+
+    pub fn start_disk_scan(&mut self, ctx: &egui::Context) {
+        if self.disk_job.is_some() {
+            return;
+        }
+        self.disk_report = None;
+        self.disk_job = Some(disk::spawn(self.lib.clone()));
+        ctx.request_repaint_after(Duration::from_millis(200));
+    }
+
+    fn poll_disk(&mut self, ctx: &egui::Context) {
+        let Some(rx) = self.disk_job.as_ref() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(report) => {
+                self.disk_job = None;
+                self.disk_report = Some(report);
+            }
+            Err(TryRecvError::Empty) => {
+                // Mesure en cours : la page garde son indicateur animé.
+                ctx.request_repaint_after(Duration::from_millis(200));
+            }
+            Err(TryRecvError::Disconnected) => self.disk_job = None,
         }
     }
 

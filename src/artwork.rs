@@ -504,6 +504,55 @@ struct SteamDetails {
     background: String,
     #[serde(default)]
     background_raw: String,
+    #[serde(default)]
+    short_description: String,
+    #[serde(default)]
+    developers: Vec<String>,
+    #[serde(default)]
+    genres: Vec<SteamGenre>,
+    #[serde(default)]
+    release_date: SteamRelease,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct SteamGenre {
+    #[serde(default)]
+    description: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct SteamRelease {
+    #[serde(default)]
+    date: String,
+}
+
+/// Métadonnées Steam d'un jeu, affichées dans sa fiche (onglet Informations).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GameMetadata {
+    pub developer: String,
+    pub genres: Vec<String>,
+    pub released: String,
+    pub description: String,
+}
+
+/// Interroge `appdetails` pour le développeur, les genres, la date de sortie et
+/// la description courte. Même endpoint que les artworks : une requête de plus
+/// quand un jeu est ajouté, rien de récurrent.
+pub fn metadata(client: &Client, appid: u32, s: &Settings) -> Result<GameMetadata, String> {
+    let details = steam_details(client, appid, s)
+        .ok_or_else(|| format!("fiche Steam indisponible pour l'appid {appid}"))?;
+    let genres: Vec<String> = details
+        .genres
+        .iter()
+        .map(|genre| genre.description.trim().to_string())
+        .filter(|genre| !genre.is_empty())
+        .collect();
+    Ok(GameMetadata {
+        developer: details.developers.first().cloned().unwrap_or_default(),
+        genres,
+        released: details.release_date.date.trim().to_string(),
+        description: details.short_description.trim().to_string(),
+    })
 }
 
 /// Fiche Steam d'un jeu : sert de repli pour les artworks manquants.

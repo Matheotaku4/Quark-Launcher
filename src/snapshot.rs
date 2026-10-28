@@ -79,7 +79,8 @@ pub const HELP: &str = "\
       [--view list|grid] [--tab library|store] [--theme amoled|graphite]\n\
       [--select <jeu>] [--info] [--running] [--marked] [--home]\n\
       [--dialog none|add|artwork|exe|scan|settings|settings-proton|\n\
-      settings-env|settings-artworks|game|logs|updates|customize|remove]\n\
+      settings-env|settings-artworks|settings-stats|settings-disk|\n\
+      game|logs|updates|customize|remove|steam|overlay]\n\
       [--hover X,Y] [--click X,Y] [--key up|down|left|right|enter|escape] [--demo]\n\
       --demo : bibliothèque de démonstration avec artworks factices (la\n\
       configuration réelle n'est ni lue ni écrite)\n";
@@ -147,13 +148,22 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
         apply_dialog(&mut app, dialog)?;
     }
     seed_news(&mut app);
+    if opts.demo {
+        // Mesure factice : la VM de rendu n'a ni préfixe Proton ni jeu installé,
+        // la page Espace disque doit quand même montrer ses lignes.
+        app.disk_report = Some(demo_disk_report());
+    }
     if opts.running {
         mark_running(&mut app);
     }
     if opts.home {
         app.home = true;
-        // Animation du carrousel terminée : le rendu montre l'état stable.
-        app.carousel_at = std::time::Instant::now() - std::time::Duration::from_secs(5);
+        // Animations d'entrée terminées : le rendu montre l'état stable. Le
+        // défilement automatique est ralenti pour que le rendu ne change pas de
+        // vignette en cours de rasterisation (lente en logiciel).
+        app.carousel_at = std::time::Instant::now() - std::time::Duration::from_secs(60);
+        app.lib.settings.carousel_secs = 600.0;
+        app.home_at = std::time::Instant::now() - std::time::Duration::from_secs(3);
     }
 
     let width = (size.x * scale).round() as usize;
@@ -303,6 +313,46 @@ fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
         "settings-artworks" => {
             app.settings_open = true;
             app.settings_tab = crate::app::SettingsTab::Artworks;
+        }
+        "settings-stats" => {
+            app.settings_open = true;
+            app.settings_tab = crate::app::SettingsTab::Stats;
+        }
+        "settings-disk" => {
+            app.settings_open = true;
+            app.settings_tab = crate::app::SettingsTab::Disk;
+        }
+        "overlay" => {
+            let id = app
+                .selected
+                .clone()
+                .ok_or_else(|| "aucun jeu sélectionné".to_string())?;
+            app.lib.settings.view = ViewMode::Grid;
+            app.overlay = Some(id);
+        }
+        "steam" => {
+            let mut import = crate::app::SteamImport::new();
+            import.loading = false;
+            for (index, (app_id, name, exe)) in [
+                (292_030, "The Witcher 3: Wild Hunt", "/jeux/witcher3/bin/x64_dx12/witcher3.exe"),
+                (251_570, "7 Days to Die", "/jeux/7dtd/7DaysToDie.exe"),
+                (391_540, "Celeste", "/jeux/Celeste/Celeste.exe"),
+                (367_520, "Hollow Knight", "/jeux/Hollow Knight/hollow_knight.exe"),
+                (620, "Portal 2", "/jeux/Portal 2/portal2.exe"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                import.games.push(crate::app::SteamCandidate {
+                    app_id,
+                    name: name.to_string(),
+                    dir: PathBuf::from(exe).parent().unwrap_or(Path::new("/")).to_path_buf(),
+                    exe: Some(PathBuf::from(exe)),
+                    include: index < 2,
+                    owned: index >= 3,
+                });
+            }
+            app.steam_import = Some(import);
         }
         "updates" => {
             app.settings_open = true;
@@ -619,6 +669,7 @@ fn mark_running(app: &mut QuarkApp) {
                 child,
                 pid: 0,
                 started: std::time::Instant::now(),
+                started_ts: now_ts() - 4_740,
                 session: 4_740,
                 log,
                 prefix: None,
@@ -771,6 +822,14 @@ fn demo_library() -> Result<Library, String> {
         "WINEDLLOVERRIDES",
         "winmm=n,b;steam_api64",
     )];
+    game.status = crate::config::GameStatus::Playing;
+    game.tags = vec!["rpg".to_string(), "monde ouvert".to_string()];
+    game.developer = "CD PROJEKT RED".to_string();
+    game.genres = vec!["RPG".to_string(), "Aventure".to_string()];
+    game.released = "18 mai 2015".to_string();
+    game.description = "Geralt de Riv, chasseur de monstres, part à la recherche de Ciri dans \
+                        un monde ouvert ravagé par la guerre."
+        .to_string();
     games.push(game);
 
     let mut game = demo_game(
@@ -784,6 +843,14 @@ fn demo_library() -> Result<Library, String> {
     game.last_played = Some(now - 4 * 86_400);
     // 7 Days to Die utilise EasyAntiCheat : bon cas pour voir l'option cochée.
     game.anticheat = crate::config::AnticheatMode::EasyAntiCheat;
+    game.status = crate::config::GameStatus::Backlog;
+    game.tags = vec!["coop".to_string(), "survie".to_string()];
+    game.developer = "The Fun Pimps".to_string();
+    game.genres = vec!["Survie".to_string(), "Action".to_string()];
+    game.released = "13 déc. 2013".to_string();
+    game.description =
+        "Survie et construction dans un monde ouvert envahi de zombies, seul ou à plusieurs."
+            .to_string();
     games.push(game);
 
     let mut game = demo_game(
@@ -794,6 +861,12 @@ fn demo_library() -> Result<Library, String> {
         None,
     );
     game.playtime_secs = 2_100;
+    game.status = crate::config::GameStatus::Finished;
+    game.tags = vec!["détente".to_string()];
+    game.developer = "Adam Robinson-Yu".to_string();
+    game.genres = vec!["Aventure".to_string(), "Indépendant".to_string()];
+    game.released = "30 juil. 2019".to_string();
+    game.description = "Une randonnée paisible sur une île, à dos d'oiseau.".to_string();
     games.push(game);
 
     let mut game = demo_game(
@@ -805,25 +878,87 @@ fn demo_library() -> Result<Library, String> {
     );
     game.playtime_secs = 46 * 3600 + 900;
     game.last_played = Some(now - 46 * 3600);
+    game.status = crate::config::GameStatus::Finished;
+    game.tags = vec!["plateforme".to_string(), "difficile".to_string()];
+    game.developer = "Maddy Makes Games".to_string();
+    game.genres = vec!["Plateforme".to_string(), "Indépendant".to_string()];
+    game.released = "25 janv. 2018".to_string();
     games.push(game);
 
-    let game = demo_game(
+    let mut game = demo_game(
         "Hollow Knight",
         "/jeux/Hollow Knight/hollow_knight.exe",
         &[AssetKind::Cover],
         &art,
         Some(367520),
     );
+    game.status = crate::config::GameStatus::Backlog;
+    game.tags = vec!["metroidvania".to_string(), "difficile".to_string()];
+    game.developer = "Team Cherry".to_string();
+    game.genres = vec!["Metroidvania".to_string(), "Action".to_string()];
+    game.released = "24 févr. 2017".to_string();
     games.push(game);
 
-    games.push(demo_game(
+    let mut game = demo_game(
         "Les Chevaliers de Baphomet",
         "/jeux/baphomet/baphomet.exe",
         &[],
         &art,
         None,
-    ));
+    );
+    game.status = crate::config::GameStatus::Dropped;
+    game.tags = vec!["aventure".to_string(), "classique".to_string()];
+    games.push(game);
+    // Exécutable absent du disque : la ligne et la tuile passent en rouge.
     games.push(demo_game("Another World", "/jeux/another/another", &[], &art, None));
+
+    // Historique de sessions : alimente les semaines, le calendrier et la série
+    // de jours consécutifs de la page Statistiques.
+    for (index, game) in games.iter_mut().enumerate() {
+        if game.playtime_secs == 0 {
+            continue;
+        }
+        let mut sessions: Vec<crate::config::PlaySession> = Vec::new();
+        for (day, secs) in [
+            (0_i64, 3_600_u64),
+            (1, 5_400),
+            (2, 2_700),
+            (4, 4_200),
+            (6, 3_000),
+            (9, 7_200),
+            (13, 1_800),
+            (20, 6_600),
+            (27, 4_500),
+            (34, 5_100),
+        ] {
+            if index % 2 == 0 || day < 10 {
+                sessions.push(crate::config::PlaySession {
+                    start: now - day * 86_400 - 3_600,
+                    secs: secs + index as u64 * 420,
+                });
+            }
+        }
+        sessions.sort_by_key(|session| session.start);
+        game.sessions = sessions;
+    }
+
+    // Exécutables de démonstration : de vrais fichiers sur le disque, pour que
+    // seule l'entrée « Another World » soit signalée en rouge (exécutable
+    // introuvable) au lieu de toute la bibliothèque.
+    let demo_root = crate::config::data_dir().join("demo-jeux");
+    for game in games.iter_mut() {
+        let Some(rest) = game.exe.strip_prefix("/jeux/") else {
+            continue;
+        };
+        let path = demo_root.join(rest);
+        if game.name != "Another World" {
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let _ = std::fs::write(&path, b"demo");
+        }
+        game.exe = path.display().to_string();
+    }
 
     let mut settings = crate::config::Settings::default();
     settings.default_args = "-windowed -novid".to_string();
@@ -850,6 +985,58 @@ fn demo_library() -> Result<Library, String> {
         game.added_at = now - index as i64 * 86_400;
     }
     Ok(Library { games, settings })
+}
+
+/// Mesure d'espace disque factice, pour le rendu de la page correspondante.
+fn demo_disk_report() -> crate::disk::DiskReport {
+    let root = crate::config::data_dir();
+    let mut rows = vec![
+        crate::disk::DiskRow {
+            label: "Jeu".to_string(),
+            path: root.join("demo-jeux/witcher3"),
+            bytes: 62_400_000_000,
+            detail: "The Witcher 3: Wild Hunt".to_string(),
+        },
+        crate::disk::DiskRow {
+            label: "Préfixe Proton".to_string(),
+            path: root.join("demo-jeux/prefixes/witcher3"),
+            bytes: 4_812_000_000,
+            detail: "The Witcher 3: Wild Hunt · préfixe Proton".to_string(),
+        },
+        crate::disk::DiskRow {
+            label: "Jeu".to_string(),
+            path: root.join("demo-jeux/7dtd"),
+            bytes: 12_800_000_000,
+            detail: "7 Days to Die".to_string(),
+        },
+        crate::disk::DiskRow {
+            label: "Préfixe Proton".to_string(),
+            path: root.join("demo-jeux/prefixes/7dtd"),
+            bytes: 1_204_000_000,
+            detail: "7 Days to Die · préfixe Proton".to_string(),
+        },
+        crate::disk::DiskRow {
+            label: "Cache d'artworks".to_string(),
+            path: crate::config::artwork_root(),
+            bytes: 244_000_000,
+            detail: "5 jeu(x) avec des images".to_string(),
+        },
+        crate::disk::DiskRow {
+            label: "Journaux de session".to_string(),
+            path: crate::config::data_dir().join("logs"),
+            bytes: 18_400_000,
+            detail: "un fichier session.log par jeu, réécrit à chaque lancement".to_string(),
+        },
+        crate::disk::DiskRow {
+            label: "Archives de mise à jour".to_string(),
+            path: crate::config::data_dir().join("updates"),
+            bytes: 9_200_000,
+            detail: "téléchargées depuis les releases GitHub".to_string(),
+        },
+    ];
+    rows.sort_by(|a, b| b.bytes.cmp(&a.bytes));
+    let total = rows.iter().map(|row| row.bytes).sum();
+    crate::disk::DiskReport { rows, total }
 }
 
 /// Runtimes Proton et anti-triche factices, pour les rendus de contrôle.
