@@ -1049,6 +1049,7 @@ impl QuarkApp {
         let mut browse_exe = false;
         let mut browse_prefix = false;
         let mut remove = false;
+        let mut redetect_steam = false;
 
         let max_height = (ctx.screen_rect().height() * 0.70).max(280.0);
         let modal = egui::Modal::new(egui::Id::new("quark_game_settings")).show(ctx, |ui| {
@@ -1141,11 +1142,12 @@ impl QuarkApp {
                     &pal,
                     "L'overlay est injecté par le client Steam : une DLL override \
                      (WINEDLLOVERRIDES=gameoverlayrenderer.dll=n,b) ne suffit pas, il faut que \
-                     Steam lance le jeu. Ajoute le jeu comme raccourci non-Steam, ouvre ses \
-                     propriétés et reporte ici son AppID (celui de l'URL steam://rungameid/…). \
-                     Quark lance alors « steam -applaunch <AppID> » : Steam applique son Proton, \
-                     son préfixe et l'overlay ; les réglages Proton et les variables de Quark ne \
-                     s'appliquent plus dans ce mode.",
+                     Steam lance le jeu. Ajoute le jeu comme raccourci non-Steam, puis choisis ce \
+                     raccourci ici : Quark lit shortcuts.vdf tout seul. Un AppID du magasin n'est \
+                     pas un raccourci et, sans licence, Steam répond « no license » en refermant \
+                     le jeu aussitôt. Quark lance alors « steam -applaunch <AppID> » : Steam \
+                     applique son Proton, son préfixe et l'overlay ; les réglages Proton et les \
+                     variables de Quark ne s'appliquent plus dans ce mode.",
                 );
                 let mut via_steam = game.steam_launch_id.is_some();
                 ui.horizontal(|ui| {
@@ -1155,13 +1157,66 @@ impl QuarkApp {
                     {
                         game.steam_launch_id = if via_steam { Some(0) } else { None };
                     }
-                    if let Some(app_id) = game.steam_launch_id.as_mut() {
-                        ui.add_space(10.0);
-                        ui.label(RichText::new("AppID").size(12.0).color(pal.text_dim));
-                        let mut text = if *app_id == 0 {
+                    if widgets::info_button(
+                        ui,
+                        &pal,
+                        "Choisis le raccourci non-Steam : Quark lit la liste directement dans \
+                         shortcuts.vdf, donc rien à recopier. Un AppID du magasin ne sert que si \
+                         tu possèdes et as installé ce jeu ; sinon Steam répond « no license » et \
+                         referme le jeu aussitôt.",
+                    )
+                    .clicked()
+                    {
+                        redetect_steam = true;
+                    }
+                });
+                if let Some(app_id) = game.steam_launch_id.as_mut() {
+                    let current = *app_id;
+                    ui.horizontal(|ui| {
+                        let selected_name = self
+                            .steam_shortcuts
+                            .iter()
+                            .find(|shortcut| shortcut.app_id == current)
+                            .map(|shortcut| shortcut.name.clone())
+                            .unwrap_or_else(|| {
+                                if current == 0 {
+                                    "Choisir un raccourci…".to_string()
+                                } else {
+                                    format!("AppID {current}")
+                                }
+                            });
+                        egui::ComboBox::from_id_salt("quark_steam_shortcut")
+                            .width(300.0)
+                            .selected_text(selected_name)
+                            .show_ui(ui, |ui| {
+                                if self.steam_shortcuts.is_empty() {
+                                    ui.label(
+                                        RichText::new("aucun raccourci non-Steam détecté")
+                                            .size(11.0)
+                                            .color(pal.text_faint),
+                                    );
+                                }
+                                for shortcut in &self.steam_shortcuts {
+                                    if ui
+                                        .selectable_label(
+                                            shortcut.app_id == current,
+                                            shortcut.label(),
+                                        )
+                                        .clicked()
+                                    {
+                                        *app_id = shortcut.app_id;
+                                    }
+                                }
+                            });
+                        if widgets::ghost_button(ui, "Détecter", &pal, Icon::Refresh).clicked() {
+                            redetect_steam = true;
+                        }
+                        ui.add_space(6.0);
+                        ui.label(RichText::new("AppID").size(11.5).color(pal.text_dim));
+                        let mut text = if current == 0 {
                             String::new()
                         } else {
-                            app_id.to_string()
+                            current.to_string()
                         };
                         let response = ui.add(
                             egui::TextEdit::singleline(&mut text)
@@ -1171,8 +1226,64 @@ impl QuarkApp {
                         if response.changed() {
                             *app_id = text.trim().parse().unwrap_or(0);
                         }
+                    });
+
+                    // Ce que Steam fera vraiment de cet identifiant : c'est
+                    // l'explication d'un jeu qui « se ferme instantanément ».
+                    match crate::steam::check(
+                        &self.steam_shortcuts,
+                        &self.steam_installed,
+                        current,
+                    ) {
+                        crate::steam::OverlayCheck::Shortcut { name, exe } => {
+                            ui.label(
+                                RichText::new(format!("Raccourci « {name} » · cible {exe}"))
+                                    .size(11.0)
+                                    .color(pal.text_dim),
+                            );
+                            if !crate::steam::same_exe(&exe, &game.exe) {
+                                ui.label(
+                                    RichText::new(
+                                        "La cible du raccourci n'est pas l'exe de ce jeu : Steam \
+                                         lancera celle du raccourci.",
+                                    )
+                                    .size(11.0)
+                                    .color(pal.danger),
+                                );
+                            }
+                        }
+                        crate::steam::OverlayCheck::StoreInstalled => {
+                            ui.label(
+                                RichText::new(
+                                    "AppID du magasin (jeu installé) : Steam lance le jeu du \
+                                     magasin, sans ton exe ni tes variables.",
+                                )
+                                .size(11.0)
+                                .color(pal.text_dim),
+                            );
+                        }
+                        crate::steam::OverlayCheck::NoLicense => {
+                            ui.label(
+                                RichText::new(
+                                    "Aucun raccourci non-Steam avec cet AppID : Steam répond « no \
+                                     license » et referme aussitôt. Choisis un raccourci ci-dessus.",
+                                )
+                                .size(11.0)
+                                .color(pal.danger),
+                            );
+                        }
+                        crate::steam::OverlayCheck::Unknown => {
+                            ui.label(
+                                RichText::new(
+                                    "Aucun raccourci lisible (Steam absent, ou aucun raccourci \
+                                     non-Steam) : impossible de vérifier cet AppID.",
+                                )
+                                .size(11.0)
+                                .color(pal.text_faint),
+                            );
+                        }
                     }
-                });
+                }
 
                 section_hint(
                     ui,
@@ -1307,6 +1418,13 @@ impl QuarkApp {
             cancel = true;
         }
 
+        if redetect_steam {
+            self.refresh_steam_shortcuts();
+            self.toast_info(format!(
+                "{} raccourci(s) non-Steam détecté(s)",
+                self.steam_shortcuts.len()
+            ));
+        }
         if browse_exe {
             self.pick_file(ctx, own_dir(&game.exe), PickerTarget::GameExe);
         }

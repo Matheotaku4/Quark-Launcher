@@ -47,9 +47,12 @@ through **Proton**.
   `compatibilitytools.d/*`, including Flatpak/Snap), runtime chosen **per game** or as a
   default, a **default Proton prefix** in the settings and a **per-game override**.
 - **Steam overlay, the honest way**: a DLL override alone cannot make the overlay appear;
-  Steam has to launch the game itself. Each game can therefore be marked *Launch via Steam*,
-  with the AppID of its non-Steam shortcut — Quark then runs `steam -applaunch <AppID>` and
-  Steam applies its own Proton, prefix and overlay. See [Steam overlay](#steam-overlay).
+  Steam has to launch the game itself. Each game can therefore be marked *Launch via Steam*:
+  Quark reads your non-Steam shortcuts out of `shortcuts.vdf`, so you pick one from a list
+  instead of pasting an AppID, then runs `steam -applaunch <AppID>` and Steam applies its own
+  Proton, prefix and overlay. A store AppID you do not own is refused **before** launching,
+  because Steam would answer "no license" and close the game instantly. See
+  [Steam overlay](#steam-overlay).
 - **Playtime tracking**: every session is timed (relaunch, total time, last session).
 - **Environment variables per game**: a `NAME=value` list (for example
   `WINEDLLOVERRIDES=winmm=n,b;steam_api64`) with a wide value field, plus default variables in
@@ -166,7 +169,7 @@ as the **quark-ui-renders** artifact — so every push can be reviewed without i
 anything.
 
 ```bash
-tar -xzf quark-0.6.0-linux-x86_64.tar.gz
+tar -xzf quark-0.6.1-linux-x86_64.tar.gz
 cd quark && ./quark
 ```
 
@@ -183,12 +186,23 @@ What works is letting Steam own the launch:
    that starts it).
 2. In that shortcut's **Properties**, enable the overlay and choose the Proton version and
    prefix Steam should use.
-3. Read its AppID — it is the number in the shortcut's `steam://rungameid/<AppID>` URL.
-4. In Quark: game settings → **Overlay Steam** → *Launch via Steam*, paste the AppID.
+3. In Quark: game settings → **Overlay Steam** → *Launch via Steam*, then pick that shortcut
+   from the list. Quark parses `shortcuts.vdf` itself (every profile under
+   `steam/userdata/*/config/`), so there is no AppID to copy; the field remains for shortcuts
+   Quark cannot see.
 
 Quark then starts `steam -applaunch <AppID>`; Steam applies its compatibility tool, prefix and
 overlay. Quark's own Proton, prefix and variables are **not** used in that mode — Steam's
 shortcut settings take over — and playtime is measured until the `steam` command returns.
+
+Under the checkbox Quark says what Steam will actually do with the chosen ID:
+
+- *shortcut found* — it shows the shortcut's name and target, and warns if that target is not
+  the game's own executable;
+- *store AppID, installed* — Steam launches the store game, so your executable, prefix and
+  variables do not apply;
+- *no shortcut, not installed* — Steam answers "no license" and closes the game immediately.
+  Quark refuses that launch instead of flashing a window; the fix is a non-Steam shortcut.
 
 ## Proton, concretely
 

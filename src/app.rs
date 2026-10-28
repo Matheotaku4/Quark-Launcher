@@ -286,6 +286,11 @@ pub struct QuarkApp {
     /// Jeux marqués par Ctrl+clic : ils se retirent en lot.
     pub marked: Vec<String>,
     pub runtimes: Vec<ProtonRuntime>,
+    /// Raccourcis non-Steam détectés : ils servent à l'overlay Steam, et un
+    /// AppID absent de cette liste ne peut pas se lancer.
+    pub steam_shortcuts: Vec<crate::steam::Shortcut>,
+    /// AppIDs des jeux Steam installés (donc sous licence).
+    pub steam_installed: Vec<u32>,
     pub running: HashMap<String, RunningGame>,
     pub job: Option<AssetJob>,
     pub toasts: Vec<Toast>,
@@ -328,6 +333,8 @@ impl QuarkApp {
             applied_theme: Some(lib.settings.theme),
             selected,
             runtimes,
+            steam_shortcuts: crate::steam::detect(),
+            steam_installed: crate::steam::installed_app_ids(),
             lib,
             pal,
             tab: Tab::Library,
@@ -1212,6 +1219,23 @@ impl QuarkApp {
         };
         match proton::resolve(&game, &self.lib.settings, &self.runtimes) {
             Ok(resolved) => {
+                // Overlay Steam : sans raccourci ni licence, Steam referme le
+                // jeu aussitôt (« no license »). Mieux vaut le dire avant de
+                // lancer que laisser une fenêtre clignoter.
+                if resolved.kind == proton::LaunchKind::Steam {
+                    if let Some(app_id) = game.steam_launch_id {
+                        let status =
+                            crate::steam::check(&self.steam_shortcuts, &self.steam_installed, app_id);
+                        if status.is_broken() {
+                            self.toast_error(format!(
+                                "Steam : aucun raccourci non-Steam avec l'AppID {app_id}, et ce jeu \
+                                 n'est pas installé via Steam — il répondra « no license » et \
+                                 refermera le jeu. Choisis un raccourci dans ses paramètres."
+                            ));
+                            return;
+                        }
+                    }
+                }
                 if let Some(prefix) = &resolved.prefix {
                     if let Err(err) = std::fs::create_dir_all(prefix) {
                         self.toast_error(format!("Préfixe Proton : {err}"));
@@ -1455,6 +1479,33 @@ impl QuarkApp {
             return;
         }
         self.confirm_remove = self.marked.clone();
+    }
+
+    /// Demande le retrait depuis le clic droit : tout le lot si le jeu visé
+    /// fait partie de la sélection multiple, lui seul sinon.
+    pub fn request_remove(&mut self, id: &str) {
+        let targets = removal_targets(&self.marked, id);
+        if targets.len() == 1 {
+            self.select(id);
+        }
+        self.confirm_remove = targets;
+    }
+
+    /// Relit les raccourcis non-Steam (Steam vient d'en ajouter un, `.vdf`
+    /// modifié à la main…).
+    pub fn refresh_steam_shortcuts(&mut self) {
+        self.steam_shortcuts = crate::steam::detect();
+        self.steam_installed = crate::steam::installed_app_ids();
+    }
+}
+
+/// Jeux à retirer quand on demande la suppression de `id` : la sélection
+/// multiple entière si `id` en fait partie, sinon ce seul jeu.
+pub fn removal_targets(marked: &[String], id: &str) -> Vec<String> {
+    if marked.len() > 1 && marked.iter().any(|item| item == id) {
+        marked.to_vec()
+    } else {
+        vec![id.to_string()]
     }
 }
 
@@ -1716,4 +1767,24 @@ impl QuarkApp {
         }
     }
 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::removal_targets;
+
+    #[test]
+    fn la_suppression_suit_la_selection_multiple() {
+        let marked = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        // Clic droit sur un jeu sélectionné : tout le lot part.
+        assert_eq!(removal_targets(&marked, "b"), marked);
+        // Clic droit sur un jeu hors sélection : lui seul.
+        assert_eq!(removal_targets(&marked, "z"), vec!["z".to_string()]);
+        // Un seul jeu marqué, ou aucun : comportement d'origine.
+        assert_eq!(
+            removal_targets(&["a".to_string()], "a"),
+            vec!["a".to_string()]
+        );
+        assert_eq!(removal_targets(&[], "a"), vec!["a".to_string()]);
+    }
 }

@@ -11,6 +11,7 @@ mod news;
 mod proton;
 mod scan;
 mod snapshot;
+mod steam;
 mod theme;
 mod update;
 mod ui_dialogs;

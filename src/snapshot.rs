@@ -98,6 +98,9 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
         app.filter.clear();
         // Runtimes factices : la VM n'a ni Steam ni Proton.
         app.runtimes = demo_runtimes();
+        // Raccourcis non-Steam et jeux installés factices, de même.
+        app.steam_shortcuts = demo_shortcuts();
+        app.steam_installed = vec![292_030];
     }
     if let Some(view) = opts.view {
         app.lib.settings.view = view;
@@ -313,7 +316,7 @@ fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
             customize.plan = Some(plan);
             app.customize = Some(customize);
         }
-        "game" => {
+        "game" | "game-nolicense" => {
             let id = app
                 .selected
                 .clone()
@@ -326,6 +329,13 @@ fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
             // Les deux options anti-triche cochées : c'est l'état que le rendu
             // doit montrer (les deux dossiers trouvés et leur variable).
             game.anticheat = crate::config::AnticheatMode::Both;
+            // Et l'overlay Steam : un raccourci connu dans un cas, un AppID
+            // inconnu dans l'autre (le cas « no license »).
+            game.steam_launch_id = Some(if dialog == "game" {
+                3_546_210_478
+            } else {
+                999_999
+            });
             app.editing = Some(game);
         }
         "remove" => {
@@ -655,6 +665,27 @@ fn save_demo_png(
         }
     }
     image.save(path).map_err(|err| err.to_string())
+}
+
+/// Raccourcis non-Steam factices : la VM n'a pas de Steam, mais les rendus
+/// doivent montrer le sélecteur et le diagnostic réels.
+fn demo_shortcuts() -> Vec<crate::steam::Shortcut> {
+    vec![
+        crate::steam::Shortcut {
+            app_id: 3_546_210_478,
+            name: "The Witcher 3: Wild Hunt".to_string(),
+            exe: "/jeux/witcher3/bin/x64_dx12/witcher3.exe".to_string(),
+            start_dir: "/jeux/witcher3/bin/x64_dx12".to_string(),
+            launch_options: String::new(),
+        },
+        crate::steam::Shortcut {
+            app_id: 2_654_321_098,
+            name: "Celeste".to_string(),
+            exe: "/jeux/Celeste/Celeste.exe".to_string(),
+            start_dir: "/jeux/Celeste".to_string(),
+            launch_options: String::new(),
+        },
+    ]
 }
 
 /// Jeux de test : certains complets, d'autres partiels, d'autres sans aucun

@@ -58,6 +58,7 @@ jobs:
             "dialog-settings:--dialog settings" \
             "dialog-updates:--dialog updates" \
             "dialog-game:--dialog game" \
+            "dialog-game-nolicense:--dialog game-nolicense" \
             "dialog-add:--dialog add" \
             "dialog-artwork:--dialog artwork" \
             "dialog-customize:--dialog customize" \

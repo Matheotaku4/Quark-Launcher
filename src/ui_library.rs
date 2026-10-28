@@ -167,7 +167,14 @@ impl QuarkApp {
                             );
                             let clicked = response.clicked();
                             let double = response.double_clicked();
-                            match game_context_menu(&response) {
+                            match game_context_menu(
+                                &response,
+                                if marked && self.marked.len() > 1 {
+                                    self.marked.len()
+                                } else {
+                                    0
+                                },
+                            ) {
                                 Some(RowAction::Launch) => self.launch(ui.ctx(), id),
                                 Some(RowAction::Customize) => {
                                     self.select(id);
@@ -177,10 +184,7 @@ impl QuarkApp {
                                     self.select(id);
                                     self.editing = Some(game.clone());
                                 }
-                                Some(RowAction::Remove) => {
-                                    self.select(id);
-                                    self.confirm_remove = vec![id.clone()];
-                                }
+                                Some(RowAction::Remove) => self.request_remove(id),
                                 None => {
                                     if clicked {
                                         if ui.input(|i| i.modifiers.command) {
@@ -233,7 +237,14 @@ impl QuarkApp {
                                     );
                                     let clicked = response.clicked();
                                     let double = response.double_clicked();
-                                    match game_context_menu(&response) {
+                                    match game_context_menu(
+                                        &response,
+                                        if marked && self.marked.len() > 1 {
+                                            self.marked.len()
+                                        } else {
+                                            0
+                                        },
+                                    ) {
                                         Some(RowAction::Launch) => self.launch(ui.ctx(), id),
                                         Some(RowAction::Customize) => {
                                             self.select(id);
@@ -805,7 +816,7 @@ enum RowAction {
 ///
 /// Le menu ne touche à `self` que par la valeur renvoyée : il reste utilisable
 /// pendant que la boucle qui dessine la liste emprunte les textures.
-fn game_context_menu(response: &egui::Response) -> Option<RowAction> {
+fn game_context_menu(response: &egui::Response, bulk: usize) -> Option<RowAction> {
     let mut action = None;
     response.context_menu(|ui| {
         ui.set_min_width(200.0);
@@ -822,7 +833,12 @@ fn game_context_menu(response: &egui::Response) -> Option<RowAction> {
             ui.close();
         }
         ui.separator();
-        if ui.button("Retirer de la bibliothèque").clicked() {
+        let label = if bulk > 1 {
+            format!("Retirer la sélection ({bulk} jeux)")
+        } else {
+            "Retirer de la bibliothèque".to_string()
+        };
+        if ui.button(label).clicked() {
             action = Some(RowAction::Remove);
             ui.close();
         }
