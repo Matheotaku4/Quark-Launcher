@@ -1,6 +1,6 @@
 //! Détection des runtimes Proton et construction de la commande de lancement.
 
-use crate::config::{Game, ProtonMode, Settings};
+use crate::config::{AnticheatMode, Game, ProtonMode, Settings};
 use std::path::{Path, PathBuf};
 
 /// Nature d'un runtime détecté.
@@ -323,6 +323,27 @@ pub fn resolve(
         }
     };
 
+    // Option anti-triche : quand elle est cochée, c'est le runtime fourni par
+    // Steam (BattlEye / EasyAntiCheat) qui joue le rôle de Proton. Aucune
+    // variable n'est inventée : on lance exactement ce runtime.
+    let runtime = match game.anticheat {
+        AnticheatMode::None => runtime,
+        mode => {
+            let keyword = mode.keyword().unwrap_or_default();
+            runtimes
+                .iter()
+                .find(|r| r.kind == RuntimeKind::AntiCheat && r.name.to_lowercase().contains(keyword))
+                .cloned()
+                .ok_or_else(|| {
+                    format!(
+                        "Runtime {} introuvable : installe-le depuis Steam, ou décoche \
+                         l'option anti-triche.",
+                        mode.label()
+                    )
+                })?
+        }
+    };
+
     let prefix = game.prefix_path(settings);
     let mut args = vec!["run".to_string(), exe.display().to_string()];
     args.extend(extra);
@@ -427,6 +448,51 @@ mod tests {
         assert_eq!(suggested.kind, RuntimeKind::Proton);
         assert_eq!(suggested.name, "Proton 9.0");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn choisit_le_runtime_anti_triche_demande() {
+        let dir = std::env::temp_dir().join(format!("quark-anti-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("jeu.exe");
+        std::fs::write(&exe, b"MZ").unwrap();
+        let root = dir.join("steam");
+        std::fs::create_dir_all(&root).unwrap();
+
+        let runtime = |name: &str, kind: RuntimeKind| ProtonRuntime {
+            key: name.to_string(),
+            name: name.to_string(),
+            version: None,
+            path: root.join(name).join("proton"),
+            steam_root: root.clone(),
+            kind,
+        };
+        let runtimes = vec![
+            runtime("Proton 9.0", RuntimeKind::Proton),
+            runtime("Proton BattlEye Runtime", RuntimeKind::AntiCheat),
+        ];
+
+        let mut game = Game::new("Jeu", exe.display().to_string());
+        game.anticheat = AnticheatMode::BattlEye;
+        let resolu = resolve(&game, &Settings::default(), &runtimes).unwrap();
+        assert_eq!(
+            resolu.runtime.as_ref().map(|r| r.name.as_str()),
+            Some("Proton BattlEye Runtime")
+        );
+
+        // Sans l'option, c'est le Proton normal qui est choisi.
+        game.anticheat = AnticheatMode::None;
+        let resolu = resolve(&game, &Settings::default(), &runtimes).unwrap();
+        assert_eq!(
+            resolu.runtime.as_ref().map(|r| r.name.as_str()),
+            Some("Proton 9.0")
+        );
+
+        // Option cochée mais runtime absent : message clair, pas de lancement.
+        game.anticheat = AnticheatMode::EasyAntiCheat;
+        assert!(resolve(&game, &Settings::default(), &runtimes).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

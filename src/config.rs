@@ -239,6 +239,44 @@ impl ThemeMode {
     }
 }
 
+/// Runtime anti-triche fourni par Steam (BattlEye / EasyAntiCheat).
+///
+/// C'est une option cochable par jeu, comme dans Heroic : elle ne change rien
+/// tant qu'aucun runtime correspondant n'est installé.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AnticheatMode {
+    #[default]
+    None,
+    BattlEye,
+    EasyAntiCheat,
+}
+
+impl AnticheatMode {
+    pub const ALL: [AnticheatMode; 3] = [
+        AnticheatMode::None,
+        AnticheatMode::BattlEye,
+        AnticheatMode::EasyAntiCheat,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            AnticheatMode::None => "Aucun",
+            AnticheatMode::BattlEye => "BattlEye",
+            AnticheatMode::EasyAntiCheat => "EasyAntiCheat",
+        }
+    }
+
+    /// Motif recherché dans le nom du runtime installé par Steam.
+    pub fn keyword(self) -> Option<&'static str> {
+        match self {
+            AnticheatMode::None => None,
+            AnticheatMode::BattlEye => Some("battleye"),
+            AnticheatMode::EasyAntiCheat => Some("easyanticheat"),
+        }
+    }
+}
+
 /// Comment lancer un jeu.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case", tag = "mode", content = "runtime")]
@@ -316,6 +354,8 @@ pub struct Game {
     /// Variables d'environnement propres au jeu (prioritaires sur celles des
     /// réglages généraux).
     pub env: Vec<EnvVar>,
+    /// Runtime anti-triche à utiliser pour ce jeu (aucun par défaut).
+    pub anticheat: AnticheatMode,
 }
 
 impl Default for Game {
@@ -334,6 +374,7 @@ impl Default for Game {
             proton: ProtonMode::Default,
             prefix: None,
             env: Vec::new(),
+            anticheat: AnticheatMode::None,
         }
     }
 }

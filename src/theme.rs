@@ -29,6 +29,58 @@ const fn rgb(r: u8, g: u8, b: u8) -> Color32 {
     Color32::from_rgb(r, g, b)
 }
 
+impl Palette {
+    /// Même palette avec la couleur d'accent d'un jeu (bouton Jouer, liseré de
+    /// sélection, ligne sélectionnée). Le reste du thème ne bouge pas.
+    pub fn with_accent(self, accent: Color32) -> Palette {
+        let mut pal = self;
+        pal.accent = accent;
+        pal.accent_hover = lerp_color(accent, Color32::WHITE, 0.22);
+        pal.accent_pressed = lerp_color(accent, Color32::BLACK, 0.30);
+        pal.row_selected = lerp_color(self.surface, accent, 0.18);
+        pal
+    }
+}
+
+/// Couleur d'accent lisible sur le noir AMOLED à partir d'une teinte (degrés).
+pub fn accent_from_hue(hue: f32) -> Color32 {
+    hsv(hue, 0.78, 0.90)
+}
+
+/// Couleur de texte lisible sur un fond `accent` : noir sur un accent clair
+/// (jaune, vert clair…), blanc sur un accent sombre. Sans ça, un accent déduit
+/// d'une couverture claire donnerait un libellé blanc illisible.
+pub fn on_accent(accent: Color32) -> Color32 {
+    let [r, g, b, _] = accent.to_array();
+    let luminance = 0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32;
+    if luminance > 150.0 {
+        Color32::BLACK
+    } else {
+        Color32::WHITE
+    }
+}
+
+/// Conversion teinte/saturation/valeur -> RVB.
+fn hsv(hue: f32, saturation: f32, value: f32) -> Color32 {
+    let h = hue.rem_euclid(360.0) / 60.0;
+    let c = value * saturation;
+    let x = c * (1.0 - (h % 2.0 - 1.0).abs());
+    let (r, g, b) = match h as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let m = value - c;
+    rgb(
+        ((r + m) * 255.0).round().clamp(0.0, 255.0) as u8,
+        ((g + m) * 255.0).round().clamp(0.0, 255.0) as u8,
+        ((b + m) * 255.0).round().clamp(0.0, 255.0) as u8,
+    )
+}
+
 pub fn palette(mode: ThemeMode) -> Palette {
     let accent = rgb(0x1A, 0x9F, 0xFF); // bleu Steam
     match mode {
@@ -206,6 +258,35 @@ pub fn monogram_color(seed: &str) -> Color32 {
         hash = hash.wrapping_mul(0x0000_0100_0000_01B3);
     }
     MONOGRAM_COLORS[(hash % MONOGRAM_COLORS.len() as u64) as usize]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn l_accent_d_un_jeu_ne_touche_pas_au_reste() {
+        let base = palette(ThemeMode::Amoled);
+        let jeu = base.with_accent(accent_from_hue(150.0));
+        assert_ne!(jeu.accent, base.accent);
+        assert_ne!(jeu.accent_hover, jeu.accent_pressed);
+        assert_eq!(jeu.bg, base.bg);
+        assert_eq!(jeu.text, base.text);
+    }
+
+    #[test]
+    fn le_texte_s_adapte_a_la_couleur_d_accent() {
+        // Jaune : texte noir ; bleu : texte blanc.
+        assert_eq!(on_accent(accent_from_hue(60.0)), Color32::BLACK);
+        assert_eq!(on_accent(accent_from_hue(230.0)), Color32::WHITE);
+    }
+
+    #[test]
+    fn une_teinte_verte_donne_un_accent_vert() {
+        let color = accent_from_hue(140.0);
+        assert!(color.g() > color.r(), "{color:?}");
+        assert!(color.g() > color.b(), "{color:?}");
+    }
 }
 
 /// Mélange linéaire de deux couleurs, pour les transitions (survol, sélection).

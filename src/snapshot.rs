@@ -680,6 +680,8 @@ fn demo_library() -> Result<Library, String> {
     );
     game.playtime_secs = 5 * 3600;
     game.last_played = Some(now - 4 * 86_400);
+    // 7 Days to Die utilise EasyAntiCheat : bon cas pour voir l'option cochée.
+    game.anticheat = crate::config::AnticheatMode::EasyAntiCheat;
     games.push(game);
 
     let mut game = demo_game(

@@ -84,6 +84,69 @@ pub fn draw_cover(painter: &egui::Painter, texture: &TextureHandle, rect: egui::
     );
 }
 
+/// Couleur d'accent déduite d'une image : teinte dominante des pixels
+/// suffisamment colorés, ramenée à une luminosité lisible sur le noir.
+/// Renvoie `None` si l'image est grise ou noire (aucune teinte exploitable).
+pub fn accent_from_path(path: &Path) -> Option<egui::Color32> {
+    let bytes = std::fs::read(path).ok()?;
+    let image = image::load_from_memory(&bytes).ok()?.to_rgb8();
+    let (width, height) = image.dimensions();
+    if width == 0 || height == 0 {
+        return None;
+    }
+
+    // Grille d'échantillonnage d'environ 32 points par axe : assez pour une
+    // teinte stable, assez peu pour un coût négligeable.
+    let step_x = (width / 32).max(1) as usize;
+    let step_y = (height / 32).max(1) as usize;
+    let mut buckets = [0.0_f32; 36];
+    for y in (0..height).step_by(step_y) {
+        for x in (0..width).step_by(step_x) {
+            let pixel = image.get_pixel(x, y);
+            let r = pixel[0] as f32 / 255.0;
+            let g = pixel[1] as f32 / 255.0;
+            let b = pixel[2] as f32 / 255.0;
+            let max = r.max(g).max(b);
+            let min = r.min(g).min(b);
+            let saturation = if max > 0.0 { (max - min) / max } else { 0.0 };
+            // Les gris et les noirs ne portent pas de teinte : les ignorer évite
+            // de sortir un accent terne sur une couverture sombre.
+            if saturation < 0.18 || max < 0.12 {
+                continue;
+            }
+            let bucket = ((hue_degrees(r, g, b) / 10.0).round() as usize).min(35);
+            buckets[bucket] += saturation * max;
+        }
+    }
+
+    let (index, weight) = buckets
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))?;
+    if *weight <= 0.0 {
+        return None;
+    }
+    Some(crate::theme::accent_from_hue(index as f32 * 10.0))
+}
+
+/// Teinte en degrés d'une couleur RVB (0-360).
+fn hue_degrees(r: f32, g: f32, b: f32) -> f32 {
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let delta = max - min;
+    if delta <= f32::EPSILON {
+        return 0.0;
+    }
+    let h = if (max - r).abs() < 1e-6 {
+        ((g - b) / delta).rem_euclid(6.0)
+    } else if (max - g).abs() < 1e-6 {
+        (b - r) / delta + 2.0
+    } else {
+        (r - g) / delta + 4.0
+    };
+    h * 60.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,6 +164,27 @@ mod tests {
         let texture = cache.get(&ctx, &path).expect("texture décodée");
         assert_eq!(texture.size(), [8, 12]);
         assert!(cache.get(&ctx, &path).is_some(), "le cache doit resservir");
+    }
+
+    #[test]
+    fn accent_deduit_d_une_couverture() {
+        let dir = std::env::temp_dir().join("quark-accent-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let rouge = dir.join("rouge.png");
+        image::RgbImage::from_pixel(64, 96, image::Rgb([205, 35, 45]))
+            .save(&rouge)
+            .unwrap();
+        let accent = accent_from_path(&rouge).expect("accent calculé");
+        assert!(
+            accent.r() > 180 && accent.g() < 120,
+            "accent rouge attendu, obtenu {accent:?}"
+        );
+        // Une image grise ne donne aucune teinte : l'appelant garde le thème.
+        let gris = dir.join("gris.png");
+        image::RgbImage::from_pixel(64, 96, image::Rgb([128, 128, 128]))
+            .save(&gris)
+            .unwrap();
+        assert!(accent_from_path(&gris).is_none());
     }
 
     #[test]

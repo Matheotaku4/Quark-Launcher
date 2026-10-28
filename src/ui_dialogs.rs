@@ -3,7 +3,9 @@
 //! (XDG Desktop Portal), ouverts via `QuarkApp::pick_file` / `pick_directory`.
 
 use crate::app::{AddStep, PickerTarget, QuarkApp, SearchState, SettingsTab, UpdateState};
-use crate::config::{self, AssetKind, EnvVar, ProtonMode, ThemeMode, ViewMode};
+use crate::config::{
+    self, AnticheatMode, AssetKind, EnvVar, ProtonMode, ThemeMode, ViewMode,
+};
 use crate::proton::{self, ProtonRuntime, RuntimeKind};
 use crate::theme::{self, Palette};
 use crate::update;
@@ -1053,6 +1055,31 @@ impl QuarkApp {
                         .color(pal.text_faint),
                 );
 
+                section(ui, "ANTI-TRICHE", &pal);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Runtime").size(12.5).color(pal.text_dim));
+                    ui.add_space(8.0);
+                    for mode in AnticheatMode::ALL {
+                        if ui
+                            .selectable_value(&mut game.anticheat, mode, mode.label())
+                            .clicked()
+                        {
+                            // Le runtime est choisi au lancement : rien d'autre
+                            // n'est modifié, aucune variable n'est ajoutée.
+                        }
+                    }
+                });
+                ui.label(
+                    RichText::new(format!(
+                        "Coché, Quark lance le jeu avec le runtime {} installé par Steam, à la \
+                         place de Proton. Rien n'est installé ni deviné : si le runtime est \
+                         absent, le lancement le dit clairement.",
+                        game.anticheat.label(),
+                    ))
+                    .size(11.0)
+                    .color(pal.text_faint),
+                );
+
                 section(ui, "VARIABLES D'ENVIRONNEMENT", &pal);
                 ui.label(
                     RichText::new(
@@ -1207,6 +1234,9 @@ impl QuarkApp {
             })
             .collect();
 
+        // Le calcul de la couleur n'a lieu qu'ici (une fois par couverture).
+        let accent = self.game_accent(&game);
+
         let max_height = (ctx.screen_rect().height() * 0.56).max(240.0);
         let modal = egui::Modal::new(egui::Id::new("quark_customize")).show(ctx, |ui| {
             ui.set_min_width(700.0);
@@ -1224,7 +1254,20 @@ impl QuarkApp {
                 .size(11.0)
                 .color(pal.text_faint),
             );
-            ui.add_space(12.0);
+            ui.add_space(10.0);
+
+            // Couleur de jeu : déduite de la couverture, rien à régler.
+            ui.horizontal(|ui| {
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(16.0, 16.0), Sense::hover());
+                ui.painter_at(rect).rect_filled(rect, 3.0, accent);
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new("Couleur du jeu, déduite de la couverture")
+                        .size(11.0)
+                        .color(pal.text_faint),
+                );
+            });
+            ui.add_space(10.0);
 
             egui::ScrollArea::vertical()
                 .id_salt("quark_customize_scroll")

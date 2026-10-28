@@ -241,7 +241,6 @@ pub fn accent_button(
 ) -> Response {
     let sense = if enabled { Sense::click() } else { Sense::hover() };
     let (rect, resp) = ui.allocate_exact_size(size, sense);
-    let fg = if enabled { Color32::WHITE } else { pal.text_faint };
     let pressed = enabled && resp.is_pointer_button_down_on();
     // Transition douce vers l'état survolé. egui ne redemande une image que
     // pendant la transition : au repos, aucun repaint supplémentaire.
@@ -256,6 +255,8 @@ pub fn accent_button(
     } else {
         theme::lerp_color(base, pal.accent_hover, hover)
     };
+    // Texte noir sur un accent clair, blanc sur un accent sombre.
+    let fg = if enabled { theme::on_accent(bg) } else { pal.text_faint };
     let painter = ui.painter_at(rect);
     // L'enfoncement est peint, jamais alloué : la mise en page ne bouge pas.
     painter.rect_filled(rect.shrink(if pressed { 1.0 } else { 0.0 }), 4.0, bg);

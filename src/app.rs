@@ -297,6 +297,9 @@ pub struct QuarkApp {
     pub job_queue: VecDeque<(String, AssetSource)>,
     /// Textures des artworks (décodées par Quark lui-même).
     pub textures: crate::images::TextureCache,
+    /// Couleur d'accent de chaque jeu, déduite de sa couverture (une seule
+    /// analyse par image).
+    pub accents: HashMap<PathBuf, egui::Color32>,
     /// Rampe de dégradé des bannières (créée au premier usage).
     pub gradient: Option<egui::TextureHandle>,
     /// Actualités par jeu (chargées une fois, mises en cache).
@@ -345,6 +348,7 @@ impl QuarkApp {
             show_info: false,
             job_queue: VecDeque::new(),
             textures: crate::images::TextureCache::default(),
+            accents: HashMap::new(),
             gradient: None,
             news: HashMap::new(),
             news_job: None,
@@ -1381,6 +1385,29 @@ impl QuarkApp {
                 self.marked.push(id.to_string());
                 self.selected = Some(id.to_string());
             }
+        }
+    }
+
+    /// Couleur d'accent d'un jeu : la teinte dominante de sa couverture, sinon
+    /// celle du thème. Le calcul est fait une seule fois par image.
+    pub fn game_accent(&mut self, game: &Game) -> egui::Color32 {
+        let Some(path) = game
+            .artwork
+            .get(AssetKind::Cover)
+            .filter(|path| path.exists())
+            .cloned()
+        else {
+            return self.pal.accent;
+        };
+        if let Some(color) = self.accents.get(&path) {
+            return *color;
+        }
+        match crate::images::accent_from_path(&path) {
+            Some(color) => {
+                self.accents.insert(path, color);
+                color
+            }
+            None => self.pal.accent,
         }
     }
 

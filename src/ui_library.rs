@@ -155,28 +155,44 @@ impl QuarkApp {
                             let selected = self.selected.as_deref() == Some(id.as_str());
                             let marked = self.is_marked(id);
                             let running = self.is_running(id);
+                            let row_pal = pal.with_accent(self.game_accent(&game));
                             let response = game_row(
                                 ui,
-                                &pal,
+                                &row_pal,
                                 &game,
                                 selected,
                                 marked,
                                 running,
                                 &mut self.textures,
                             );
-                            if response.secondary_clicked() {
-                                // Clic droit : les paramètres du jeu, comme Steam.
-                                self.select(id);
-                                self.editing = Some(game.clone());
-                            } else if response.clicked() {
-                                if ui.input(|i| i.modifiers.command) {
-                                    self.toggle_marked(id);
-                                } else {
+                            let clicked = response.clicked();
+                            let double = response.double_clicked();
+                            match game_context_menu(&response) {
+                                Some(RowAction::Launch) => self.launch(ui.ctx(), id),
+                                Some(RowAction::Customize) => {
                                     self.select(id);
+                                    self.open_customize(id);
                                 }
-                            }
-                            if response.double_clicked() {
-                                self.launch(ui.ctx(), id);
+                                Some(RowAction::Settings) => {
+                                    self.select(id);
+                                    self.editing = Some(game.clone());
+                                }
+                                Some(RowAction::Remove) => {
+                                    self.select(id);
+                                    self.confirm_remove = vec![id.clone()];
+                                }
+                                None => {
+                                    if clicked {
+                                        if ui.input(|i| i.modifiers.command) {
+                                            self.toggle_marked(id);
+                                        } else {
+                                            self.select(id);
+                                        }
+                                    }
+                                    if double {
+                                        self.launch(ui.ctx(), id);
+                                    }
+                                }
                             }
                         }
                         ui.add_space(10.0);
@@ -204,9 +220,10 @@ impl QuarkApp {
                                     let selected = self.selected.as_deref() == Some(id.as_str());
                                     let marked = self.is_marked(id);
                                     let running = self.is_running(id);
+                                    let tile_pal = pal.with_accent(self.game_accent(&game));
                                     let response = game_tile(
                                         ui,
-                                        &pal,
+                                        &tile_pal,
                                         &game,
                                         Vec2::new(tile_w, tile_h),
                                         selected,
@@ -214,18 +231,34 @@ impl QuarkApp {
                                         running,
                                         &mut self.textures,
                                     );
-                                    if response.secondary_clicked() {
-                                        self.select(id);
-                                        self.editing = Some(game.clone());
-                                    } else if response.clicked() {
-                                        if ui.input(|i| i.modifiers.command) {
-                                            self.toggle_marked(id);
-                                        } else {
+                                    let clicked = response.clicked();
+                                    let double = response.double_clicked();
+                                    match game_context_menu(&response) {
+                                        Some(RowAction::Launch) => self.launch(ui.ctx(), id),
+                                        Some(RowAction::Customize) => {
                                             self.select(id);
+                                            self.open_customize(id);
                                         }
-                                    }
-                                    if response.double_clicked() {
-                                        self.launch(ui.ctx(), id);
+                                        Some(RowAction::Settings) => {
+                                            self.select(id);
+                                            self.editing = Some(game.clone());
+                                        }
+                                        Some(RowAction::Remove) => {
+                                            self.select(id);
+                                            self.confirm_remove = vec![id.clone()];
+                                        }
+                                        None => {
+                                            if clicked {
+                                                if ui.input(|i| i.modifiers.command) {
+                                                    self.toggle_marked(id);
+                                                } else {
+                                                    self.select(id);
+                                                }
+                                            }
+                                            if double {
+                                                self.launch(ui.ctx(), id);
+                                            }
+                                        }
                                     }
                                     ui.add_space(gap);
                                 }
@@ -267,7 +300,6 @@ impl QuarkApp {
     // -----------------------------------------------------------------------
 
     fn detail_pane(&mut self, ui: &mut egui::Ui) {
-        let pal = self.pal;
         let Some(id) = self.selected.clone() else {
             self.empty_state(ui);
             return;
@@ -277,6 +309,8 @@ impl QuarkApp {
             self.empty_state(ui);
             return;
         };
+        // Le jeu impose sa couleur : bouton Jouer, liserés, ligne sélectionnée.
+        let pal = self.pal.with_accent(self.game_accent(&game));
 
         let settings = self.lib.settings.clone();
         let resolved = proton::resolve(&game, &settings, &self.runtimes);
@@ -733,6 +767,43 @@ impl QuarkApp {
         }
     }
 
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RowAction {
+    Launch,
+    Customize,
+    Settings,
+    Remove,
+}
+
+/// Menu du clic droit sur un jeu (ligne ou tuile). Renvoie l'action choisie.
+///
+/// Le menu ne touche à `self` que par la valeur renvoyée : il reste utilisable
+/// pendant que la boucle qui dessine la liste emprunte les textures.
+fn game_context_menu(response: &egui::Response) -> Option<RowAction> {
+    let mut action = None;
+    response.context_menu(|ui| {
+        ui.set_min_width(200.0);
+        if ui.button("Lancer").clicked() {
+            action = Some(RowAction::Launch);
+            ui.close();
+        }
+        if ui.button("Personnaliser…").clicked() {
+            action = Some(RowAction::Customize);
+            ui.close();
+        }
+        if ui.button("Paramètres…").clicked() {
+            action = Some(RowAction::Settings);
+            ui.close();
+        }
+        ui.separator();
+        if ui.button("Retirer de la bibliothèque").clicked() {
+            action = Some(RowAction::Remove);
+            ui.close();
+        }
+    });
+    action
 }
 
 // ---------------------------------------------------------------------------
