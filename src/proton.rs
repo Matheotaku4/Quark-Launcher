@@ -24,9 +24,9 @@ pub struct ProtonRuntime {
     pub steam_root: PathBuf,
     pub kind: RuntimeKind,
     /// Vrai si le dossier contient le script `proton`. Les runtimes
-    /// anti-triche installés par Steam n'en ont pas toujours : ils restent
-    /// détectés (et signalés), mais ne peuvent pas servir d'outil de
-    /// compatibilité tant que le script manque.
+    /// anti-triche de Steam n'en ont pas : ils ne se lancent pas, ils se
+    /// déclarent à Proton par une variable d'environnement (voir
+    /// [`anticheat_env_name`]).
     pub has_proton_script: bool,
 }
 
@@ -40,6 +40,31 @@ impl ProtonRuntime {
             RuntimeKind::Proton => base,
             RuntimeKind::AntiCheat => format!("{base} · anti-triche"),
         }
+    }
+
+    /// Dossier du runtime. `path` pointe sur le script `proton` pour un Proton
+    /// lançable, sur le dossier lui-même pour un runtime anti-triche.
+    pub fn dir(&self) -> PathBuf {
+        if self.has_proton_script {
+            self.path
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| self.path.clone())
+        } else {
+            self.path.clone()
+        }
+    }
+}
+
+/// Variable que Proton lit pour trouver un runtime anti-triche :
+/// `PROTON_BATTLEYE_RUNTIME` ou `PROTON_EAC_RUNTIME`. C'est le mécanisme
+/// officiel de Proton pour ces dossiers, qui ne contiennent pas de script
+/// `proton` et ne peuvent donc pas être lancés directement.
+pub fn anticheat_env_name(keyword: &str) -> &'static str {
+    if keyword.contains("battleye") {
+        "PROTON_BATTLEYE_RUNTIME"
+    } else {
+        "PROTON_EAC_RUNTIME"
     }
 }
 
@@ -228,19 +253,26 @@ pub enum LaunchKind {
     Proton,
 }
 
+#[derive(Debug)]
 pub struct Resolved {
     pub kind: LaunchKind,
     pub spec: LaunchSpec,
     pub runtime: Option<ProtonRuntime>,
     pub prefix: Option<PathBuf>,
+    /// Option anti-triche effectivement appliquée au lancement.
+    pub anticheat: AnticheatMode,
 }
 
 impl Resolved {
     pub fn label(&self) -> String {
-        match (&self.kind, &self.runtime) {
+        let base = match (&self.kind, &self.runtime) {
             (LaunchKind::Native, _) => "Linux (natif)".to_string(),
             (LaunchKind::Proton, Some(rt)) => rt.label(),
             (LaunchKind::Proton, None) => "Proton".to_string(),
+        };
+        match self.anticheat {
+            AnticheatMode::None => base,
+            mode => format!("{base} · anti-triche {}", mode.label()),
         }
     }
 }
@@ -344,6 +376,7 @@ pub fn resolve(
             },
             runtime: None,
             prefix: None,
+            anticheat: AnticheatMode::None,
         });
     }
 
@@ -364,44 +397,37 @@ pub fn resolve(
         }
     };
 
-    // Option anti-triche : quand elle est cochée, c'est le runtime fourni par
-    // Steam (BattlEye / EasyAntiCheat) qui joue le rôle de Proton. Aucune
-    // variable n'est inventée : on lance exactement ce runtime.
-    let runtime = match game.anticheat {
-        AnticheatMode::None => runtime,
-        mode => {
-            let mut chosen: Option<ProtonRuntime> = None;
-            let mut unusable: Vec<String> = Vec::new();
-            for keyword in mode.keywords() {
-                match anticheat_runtime(runtimes, keyword).cloned() {
-                    Some(runtime) if runtime.has_proton_script => {
-                        chosen.get_or_insert(runtime);
-                    }
-                    Some(runtime) => {
-                        unusable.push(format!("{} ({})", runtime.name, runtime.path.display()))
-                    }
-                    None => {}
-                }
-            }
-            match chosen {
-                Some(runtime) => runtime,
-                None if !unusable.is_empty() => {
-                    return Err(format!(
-                        "Runtime anti-triche trouvé mais inutilisable comme outil de \
-                         compatibilité (aucun script `proton` dedans) : {}.",
-                        unusable.join(" · ")
-                    ));
-                }
-                None => {
-                    return Err(format!(
-                        "Runtime {} introuvable. Dossiers anti-triche détectés : {}.",
-                        mode.label(),
-                        anticheat_summary(runtimes)
-                    ));
-                }
-            }
+    // Option anti-triche : Steam installe ces dossiers à part (« Proton
+    // BattlEye Runtime », « Proton EasyAntiCheat Runtime ») et Proton ne les
+    // lance pas — il les trouve par une variable d'environnement. On garde donc
+    // le Proton choisi et on pointe vers le dossier réellement installé, au lieu
+    // d'exiger un script `proton` qui n'existe pas.
+    let mut anticheat_env: Vec<(String, String)> = Vec::new();
+    let mut missing: Vec<&'static str> = Vec::new();
+    for keyword in game.anticheat.keywords() {
+        let label = if keyword.contains("battleye") {
+            "BattlEye"
+        } else {
+            "EasyAntiCheat"
+        };
+        match anticheat_runtime(runtimes, keyword) {
+            Some(runtime) => anticheat_env.push((
+                anticheat_env_name(keyword).to_string(),
+                runtime.dir().display().to_string(),
+            )),
+            None => missing.push(label),
         }
-    };
+    }
+    if !missing.is_empty() {
+        return Err(format!(
+            "Runtime {} introuvable sous {} (dossiers anti-triche vus : {}). Vérifie le nom du \
+             dossier, ou installe « Proton {} Runtime » depuis Steam.",
+            missing.join(" et "),
+            runtime.steam_root.display(),
+            anticheat_summary(runtimes),
+            missing[0]
+        ));
+    }
 
     let prefix = game.prefix_path(settings);
     let mut args = vec!["run".to_string(), exe.display().to_string()];
@@ -411,6 +437,9 @@ pub fn resolve(
     // `Command::env` garde la dernière valeur, donc le préfixe résolu gagne
     // toujours sur une variable homonyme saisie à la main.
     let mut env = launch_env(game, settings);
+    // Les dossiers anti-triche d'abord : une variable saisie à la main ne peut
+    // pas contredire l'option cochée dans les paramètres du jeu.
+    env.extend(anticheat_env);
     env.push((
         "STEAM_COMPAT_DATA_PATH".to_string(),
         prefix.display().to_string(),
@@ -429,6 +458,7 @@ pub fn resolve(
         kind: LaunchKind::Proton,
         runtime: Some(runtime),
         prefix: Some(prefix),
+        anticheat: game.anticheat,
     })
 }
 
@@ -510,7 +540,7 @@ mod tests {
     }
 
     #[test]
-    fn choisit_le_runtime_anti_triche_demande() {
+    fn pointe_proton_vers_les_runtimes_anti_triche() {
         let dir = std::env::temp_dir().join(format!("quark-anti-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -519,39 +549,82 @@ mod tests {
         let root = dir.join("steam");
         std::fs::create_dir_all(&root).unwrap();
 
-        let runtime = |name: &str, kind: RuntimeKind| ProtonRuntime {
+        // Runtimes anti-triche tels que Steam les installe : un dossier, pas de
+        // script `proton` dedans.
+        let anticheat = |name: &str| ProtonRuntime {
             key: name.to_string(),
             name: name.to_string(),
             version: None,
-            path: root.join(name).join("proton"),
+            path: root.join("steamapps/common").join(name),
             steam_root: root.clone(),
-            kind,
+            kind: RuntimeKind::AntiCheat,
+            has_proton_script: false,
+        };
+        let proton = ProtonRuntime {
+            key: "Proton 9.0".to_string(),
+            name: "Proton 9.0".to_string(),
+            version: None,
+            path: root.join("Proton 9.0").join("proton"),
+            steam_root: root.clone(),
+            kind: RuntimeKind::Proton,
             has_proton_script: true,
         };
         let runtimes = vec![
-            runtime("Proton 9.0", RuntimeKind::Proton),
-            runtime("Proton BattlEye Runtime", RuntimeKind::AntiCheat),
+            proton,
+            anticheat("Proton BattlEye Runtime"),
+            anticheat("Proton EasyAntiCheat Runtime"),
         ];
 
+        // Les deux cases cochées : Proton reste le lanceur, et les deux
+        // dossiers sont déclarés à Proton par variable d'environnement.
         let mut game = Game::new("Jeu", exe.display().to_string());
-        game.anticheat = AnticheatMode::BattlEye;
-        let resolu = resolve(&game, &Settings::default(), &runtimes).unwrap();
-        assert_eq!(
-            resolu.runtime.as_ref().map(|r| r.name.as_str()),
-            Some("Proton BattlEye Runtime")
-        );
-
-        // Sans l'option, c'est le Proton normal qui est choisi.
-        game.anticheat = AnticheatMode::None;
+        game.anticheat = AnticheatMode::Both;
         let resolu = resolve(&game, &Settings::default(), &runtimes).unwrap();
         assert_eq!(
             resolu.runtime.as_ref().map(|r| r.name.as_str()),
             Some("Proton 9.0")
         );
+        let env = &resolu.spec.env;
+        let value = |name: &str| {
+            env.iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.clone())
+        };
+        assert_eq!(
+            value("PROTON_BATTLEYE_RUNTIME"),
+            Some(
+                root.join("steamapps/common/Proton BattlEye Runtime")
+                    .display()
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            value("PROTON_EAC_RUNTIME"),
+            Some(
+                root.join("steamapps/common/Proton EasyAntiCheat Runtime")
+                    .display()
+                    .to_string()
+            )
+        );
+
+        // Sans l'option, aucune variable anti-triche n'est ajoutée.
+        game.anticheat = AnticheatMode::None;
+        let resolu = resolve(&game, &Settings::default(), &runtimes).unwrap();
+        assert!(resolu
+            .spec
+            .env
+            .iter()
+            .all(|(key, _)| !key.contains("ANTICHEAT") && !key.contains("_RUNTIME")));
 
         // Option cochée mais runtime absent : message clair, pas de lancement.
+        let seul_proton: Vec<ProtonRuntime> = runtimes
+            .iter()
+            .filter(|r| r.kind == RuntimeKind::Proton)
+            .cloned()
+            .collect();
         game.anticheat = AnticheatMode::EasyAntiCheat;
-        assert!(resolve(&game, &Settings::default(), &runtimes).is_err());
+        let err = resolve(&game, &Settings::default(), &seul_proton).unwrap_err();
+        assert!(err.contains("EasyAntiCheat"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

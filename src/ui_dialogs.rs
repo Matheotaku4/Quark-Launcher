@@ -653,7 +653,8 @@ impl QuarkApp {
                         ui.label(
                             RichText::new(
                                 "BattlEye et EasyAntiCheat sont deux options indépendantes, cochables \
-                                 ensemble dans les paramètres du jeu.",
+                                 ensemble dans les paramètres du jeu : Quark les déclare à Proton via \
+                                 PROTON_BATTLEYE_RUNTIME / PROTON_EAC_RUNTIME.",
                             )
                             .size(11.0)
                             .color(pal.text_faint),
@@ -1092,21 +1093,14 @@ impl QuarkApp {
                         continue;
                     }
                     match proton::anticheat_runtime(&self.runtimes, keyword) {
-                        Some(runtime) if runtime.has_proton_script => ui.label(
+                        Some(runtime) => ui.label(
                             RichText::new(format!(
-                                "{label} : trouvé — {}",
-                                runtime.path.display()
+                                "{label} : trouvé — {} (variable {})",
+                                runtime.dir().display(),
+                                proton::anticheat_env_name(keyword)
                             ))
                             .size(11.0)
                             .color(pal.text_dim),
-                        ),
-                        Some(runtime) => ui.label(
-                            RichText::new(format!(
-                                "{label} : trouvé mais sans script `proton` — {}",
-                                runtime.path.display()
-                            ))
-                            .size(11.0)
-                            .color(pal.danger),
                         ),
                         None => ui.label(
                             RichText::new(format!(
@@ -1120,9 +1114,9 @@ impl QuarkApp {
                 }
                 ui.label(
                     RichText::new(
-                        "Coché, Quark lance le jeu avec le runtime Steam correspondant à la place \
-                         de Proton. Si le dossier trouvé n'a pas de script `proton`, le message \
-                         de lancement le dit précisément.",
+                        "Cochés, ces dossiers sont déclarés à ton Proton par PROTON_BATTLEYE_RUNTIME / \
+                         PROTON_EAC_RUNTIME : ils ne sont pas lancés directement (Steam ne les livre \
+                         pas avec un script `proton`), donc cocher les deux est sans risque.",
                     )
                     .size(11.0)
                     .color(pal.text_faint),
@@ -1693,9 +1687,11 @@ fn runtime_combo(
         .iter()
         .filter(|runtime| runtime.kind == RuntimeKind::Proton)
         .collect();
+    // Un runtime anti-triche sans script `proton` ne peut pas être lancé : il
+    // s'ajoute à un Proton par variable d'environnement (options du jeu).
     let anticheat: Vec<&ProtonRuntime> = runtimes
         .iter()
-        .filter(|runtime| runtime.kind == RuntimeKind::AntiCheat)
+        .filter(|runtime| runtime.kind == RuntimeKind::AntiCheat && runtime.has_proton_script)
         .collect();
 
     egui::ComboBox::from_id_salt(id)

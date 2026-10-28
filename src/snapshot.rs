@@ -318,7 +318,15 @@ fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
                 .selected
                 .clone()
                 .ok_or_else(|| "aucun jeu sélectionné".to_string())?;
-            app.editing = app.lib.get(&id).cloned();
+            let mut game = app
+                .lib
+                .get(&id)
+                .cloned()
+                .ok_or_else(|| "jeu sélectionné introuvable".to_string())?;
+            // Les deux options anti-triche cochées : c'est l'état que le rendu
+            // doit montrer (les deux dossiers trouvés et leur variable).
+            game.anticheat = crate::config::AnticheatMode::Both;
+            app.editing = Some(game);
         }
         "remove" => {
             // Avec --marked, la confirmation porte sur toute la sélection.

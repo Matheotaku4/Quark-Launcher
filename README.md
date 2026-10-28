@@ -62,10 +62,12 @@ through **Proton**.
   disk, or removed to fall back to the built-in rendering.
 - **Settings in tabs**: Appearance, Proton, Environment, Artworks, About.
 - **BattlEye and EasyAntiCheat runtimes** are detected next to Proton — including Steam's
-  `BattlEye_Runtime` / `EasyAntiCheat_Runtime` folders, which carry no `proton` script — and
-  each one can be enabled separately per game (both at once is allowed). They are never
-  suggested as the default runtime, and the game settings show the path Quark actually
-  found instead of asking you to install something you already have.
+  `Proton BattlEye Runtime` / `Proton EasyAntiCheat Runtime` folders, which carry no `proton`
+  script — and each one can be enabled separately per game (both at once is allowed). Quark
+  does not try to launch those folders: it keeps your Proton and passes them through
+  `PROTON_BATTLEYE_RUNTIME` / `PROTON_EAC_RUNTIME`, the variables Proton actually reads. The
+  game settings show the folder Quark found and the variable it will use, instead of asking
+  you to install something you already have.
 - **Keyboard navigation**: arrows to move through the library (up/down and left/right in
   the grid), `Enter` to launch, `Ctrl+F` (or `/`) to jump to the search field, `Esc` to
   clear it. Shortcuts stay out of the way while a dialog or a text field has focus.
