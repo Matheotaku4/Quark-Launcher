@@ -2,9 +2,9 @@
 //! confirmation de suppression. Les sélecteurs de fichiers sont ceux du système
 //! (XDG Desktop Portal), ouverts via `QuarkApp::pick_file` / `pick_directory`.
 
-use crate::app::{AddStep, PickerTarget, QuarkApp, SearchState, UpdateState};
+use crate::app::{AddStep, PickerTarget, QuarkApp, SearchState, SettingsTab, UpdateState};
 use crate::config::{self, AssetKind, EnvVar, ProtonMode, ThemeMode, ViewMode};
-use crate::proton::{self, ProtonRuntime};
+use crate::proton::{self, ProtonRuntime, RuntimeKind};
 use crate::theme::{self, Palette};
 use crate::update;
 use crate::widgets::{self, Icon};
@@ -306,6 +306,7 @@ impl QuarkApp {
                         ui.label(RichText::new("Lancement").size(12.0).color(pal.text_dim));
                         runtime_combo(
                             ui,
+                            &pal,
                             "add_runtime",
                             &mut self.add.proton,
                             &self.runtimes,
@@ -491,306 +492,424 @@ impl QuarkApp {
         let mut download_update = false;
         let mut open_url: Option<String> = None;
 
-        let max_height = (ctx.screen_rect().height() * 0.72).max(280.0);
+        let max_height = (ctx.screen_rect().height() * 0.66).max(300.0);
         let modal = egui::Modal::new(egui::Id::new("quark_settings")).show(ctx, |ui| {
-                ui.set_min_width(680.0);
+            ui.set_min_width(720.0);
+            ui.horizontal(|ui| {
                 ui.label(RichText::new("Paramètres").size(17.0).color(pal.text));
-                ui.add_space(10.0);
-                egui::ScrollArea::vertical()
-                    .max_height(max_height)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                section(ui, "APPARENCE", &pal);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Thème").size(12.5).color(pal.text_dim));
-                    ui.add_space(12.0);
-                    for mode in [ThemeMode::Amoled, ThemeMode::Graphite] {
-                        if ui
-                            .radio_value(&mut self.lib.settings.theme, mode, mode.label())
-                            .changed()
-                        {
-                            self.touch();
-                        }
-                    }
-                });
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Vue par défaut").size(12.5).color(pal.text_dim));
-                    ui.add_space(12.0);
-                    for view in [ViewMode::List, ViewMode::Grid] {
-                        if ui
-                            .radio_value(&mut self.lib.settings.view, view, view.label())
-                            .changed()
-                        {
-                            self.touch();
-                        }
-                    }
-                    ui.add_space(8.0);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.label(
-                        RichText::new("(bascule aussi depuis la colonne de gauche)")
-                            .size(11.0)
+                        RichText::new("enregistrés automatiquement")
+                            .size(10.5)
                             .color(pal.text_faint),
                     );
                 });
+            });
+            ui.add_space(12.0);
 
-                section(ui, "À PROPOS", &pal);
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(format!("Quark {}", update::current_version()))
-                            .size(12.5)
-                            .color(pal.text),
-                    );
-                    ui.add_space(14.0);
-                    match self.update.clone() {
-                        UpdateState::Idle => {
-                            if widgets::ghost_button(ui, "Vérifier les mises à jour", &pal, Icon::Refresh)
-                                .clicked()
-                            {
-                                check_updates = true;
-                            }
-                        }
-                        UpdateState::Checking => {
-                            ui.spinner();
-                            ui.label(
-                                RichText::new("vérification\u{2026}")
-                                    .size(12.0)
-                                    .color(pal.text_dim),
-                            );
-                        }
-                        UpdateState::UpToDate => {
-                            ui.label(RichText::new("à jour").size(12.0).color(pal.text_dim));
-                            if widgets::ghost_button(ui, "Revérifier", &pal, Icon::Refresh).clicked() {
-                                check_updates = true;
-                            }
-                        }
-                        UpdateState::Available(release) => {
-                            ui.label(
-                                RichText::new(format!("{} disponible", release.tag_name))
-                                    .size(12.0)
-                                    .color(pal.accent),
-                            );
-                            let size = release
-                                .archive()
-                                .map(|asset| asset.size as f64 / 1_048_576.0)
-                                .unwrap_or(0.0);
-                            let label = if size > 0.0 {
-                                format!("Télécharger ({size:.1} Mo)")
-                            } else {
-                                "Télécharger".to_string()
-                            };
-                            if widgets::ghost_button(ui, &label, &pal, Icon::Plus).clicked() {
-                                download_update = true;
-                            }
-                            if !release.html_url.is_empty()
-                                && widgets::ghost_button(ui, "Page de la release", &pal, Icon::None)
-                                    .clicked()
-                            {
-                                open_url = Some(release.html_url.clone());
-                            }
-                        }
-                        UpdateState::Downloading(release) => {
-                            ui.spinner();
-                            ui.label(
-                                RichText::new(format!("téléchargement de {}", release.tag_name))
-                                    .size(12.0)
-                                    .color(pal.text_dim),
-                            );
-                        }
-                        UpdateState::Downloaded(path) => {
-                            ui.label(
-                                RichText::new(format!("téléchargée : {}", path.display()))
-                                    .size(11.5)
-                                    .color(pal.text_dim),
-                            );
-                        }
-                        UpdateState::Failed(error) => {
-                            ui.label(RichText::new(error).size(11.5).color(pal.danger));
-                            if widgets::ghost_button(ui, "Réessayer", &pal, Icon::Refresh).clicked() {
-                                check_updates = true;
-                            }
-                        }
+            // Une page par famille de réglages.
+            ui.horizontal(|ui| {
+                for (tab, label) in SettingsTab::ALL {
+                    if widgets::tab(ui, label, self.settings_tab == tab, &pal).clicked() {
+                        self.settings_tab = tab;
                     }
-                });
-                ui.label(
-                    RichText::new(
-                        "L'archive est enregistrée dans ~/.local/share/quark/updates/ : \
-                         décompresse-la et remplace le binaire pour installer la nouvelle version.",
-                    )
-                    .size(11.0)
-                    .color(pal.text_faint),
-                );
-                ui.add_space(4.0);
-                ui.label(
-                    RichText::new(
-                        "Clavier : flèches pour changer de jeu, Entrée pour lancer, \
-                         Ctrl+F pour chercher, Échap pour vider la recherche.",
-                    )
-                    .size(11.0)
-                    .color(pal.text_faint),
-                );
-
-                section(ui, "PROTON", &pal);
-                ui.label(
-                    RichText::new("Préfixe Proton par défaut")
-                        .size(12.5)
-                        .color(pal.text_dim),
-                );
-                ui.horizontal(|ui| {
-                    let mut text = self.lib.settings.default_prefix.clone().unwrap_or_default();
-                    let field = (ui.available_width() - 210.0).max(220.0);
-                    let response = ui.add(
-                        egui::TextEdit::singleline(&mut text)
-                            .hint_text(format!("auto : {}", config::prefix_root().display()))
-                            .desired_width(field),
-                    );
-                    if response.changed() {
-                        self.lib.settings.default_prefix = if text.trim().is_empty() {
-                            None
-                        } else {
-                            Some(text.clone())
-                        };
-                        self.touch();
-                    }
-                    if widgets::ghost_button(ui, "Parcourir…", &pal, Icon::Folder).clicked() {
-                        browse_prefix = true;
-                    }
-                    if widgets::ghost_button(ui, "Auto", &pal, Icon::None).clicked() {
-                        self.lib.settings.default_prefix = None;
-                        self.touch();
-                    }
-                });
-                ui.label(
-                    RichText::new(
-                        "Utilisé par tous les jeux qui n'ont pas leur propre préfixe. Le dossier \
-                         est utilisé tel quel : Quark n'y crée aucun sous-dossier.",
-                    )
-                    .size(11.0)
-                    .color(pal.text_faint),
-                );
-
-                ui.add_space(10.0);
-                ui.label(RichText::new("Runtime Proton par défaut").size(12.5).color(pal.text_dim));
-                let mut mode = self
-                    .lib
-                    .settings
-                    .default_proton
-                    .clone()
-                    .map(ProtonMode::Runtime)
-                    .unwrap_or(ProtonMode::Default);
-                if runtime_combo(ui, "default_runtime", &mut mode, &self.runtimes, false) {
-                    self.lib.settings.default_proton = match mode {
-                        ProtonMode::Runtime(key) => Some(key),
-                        _ => None,
-                    };
-                    self.touch();
                 }
-                ui.horizontal(|ui| {
-                    let count = self.runtimes.len();
-                    ui.label(
-                        RichText::new(format!("{count} runtime(s) Proton détecté(s)"))
-                            .size(11.0)
-                            .color(pal.text_faint),
-                    );
-                    if widgets::ghost_button(ui, "Redétecter", &pal, Icon::Refresh).clicked() {
-                        redetect = true;
-                    }
-                });
-                if self.runtimes.is_empty() {
-                    ui.label(
-                        RichText::new(
-                            "Aucun runtime trouvé. Installe Proton (Steam) ou dépose un build \
-                             dans ~/.steam/steam/compatibilitytools.d/.",
-                        )
-                        .size(11.0)
-                        .color(pal.text_faint),
-                    );
-                }
+            });
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(2.0);
 
-                section(ui, "VARIABLES D'ENVIRONNEMENT", &pal);
-                ui.label(
-                    RichText::new(
-                        "Appliquées à tous les lancements. Un jeu qui définit la même variable \
-                         dans ses propres paramètres écrase celle-ci.",
-                    )
-                    .size(11.0)
-                    .color(pal.text_faint),
-                );
-                ui.add_space(6.0);
-                if env_editor(ui, &pal, &mut self.lib.settings.env) {
-                    self.touch();
-                }
-
-                section(ui, "ARTWORKS", &pal);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Clé API SteamGridDB").size(12.5).color(pal.text_dim));
-                    ui.add_space(8.0);
-                    let response = ui.add(
-                        egui::TextEdit::singleline(&mut self.lib.settings.sgdb_api_key)
-                            .password(true)
-                            .hint_text("optionnelle")
-                            .desired_width(300.0),
-                    );
-                    if response.changed() {
-                        self.touch();
-                    }
-                });
-                ui.label(
-                    RichText::new(
-                        "Sans clé, Quark se limite aux artworks officiels du CDN Steam. \
-                         Clé gratuite : steamgriddb.com/profile/preferences/api",
-                    )
-                    .size(11.0)
-                    .color(pal.text_faint),
-                );
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Langue / pays (recherche Steam)").size(12.5).color(pal.text_dim));
-                    ui.add_space(8.0);
-                    let mut language = self.lib.settings.language.clone();
-                    egui::ComboBox::from_id_salt("steam_language")
-                        .selected_text(language.clone())
-                        .width(150.0)
-                        .show_ui(ui, |ui| {
-                            for option in [
-                                "french",
-                                "english",
-                                "german",
-                                "spanish",
-                                "italian",
-                                "portuguese",
-                                "schinese",
-                                "japanese",
-                            ] {
-                                ui.selectable_value(&mut language, option.to_string(), option);
+            egui::ScrollArea::vertical()
+                .id_salt("quark_settings_scroll")
+                .max_height(max_height)
+                .auto_shrink([false, false])
+                .show(ui, |ui| match self.settings_tab {
+                    SettingsTab::Appearance => {
+                        section(ui, "THÈME", &pal);
+                        ui.horizontal(|ui| {
+                            for mode in [ThemeMode::Amoled, ThemeMode::Graphite] {
+                                if ui
+                                    .radio_value(&mut self.lib.settings.theme, mode, mode.label())
+                                    .changed()
+                                {
+                                    self.touch();
+                                }
                             }
                         });
-                    if language != self.lib.settings.language {
-                        self.lib.settings.language = language;
-                        self.touch();
+                        ui.label(
+                            RichText::new(
+                                "AMOLED est noir pur (#000000) ; Graphite adoucit les noirs sur \
+                                 les écrans qui ne sont pas OLED.",
+                            )
+                            .size(11.0)
+                            .color(pal.text_faint),
+                        );
+
+                        section(ui, "BIBLIOTHÈQUE", &pal);
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Vue par défaut").size(12.5).color(pal.text_dim));
+                            ui.add_space(12.0);
+                            for view in [ViewMode::List, ViewMode::Grid] {
+                                if ui
+                                    .radio_value(&mut self.lib.settings.view, view, view.label())
+                                    .changed()
+                                {
+                                    self.touch();
+                                }
+                            }
+                            ui.add_space(8.0);
+                            ui.label(
+                                RichText::new("(bascule aussi depuis la colonne de gauche)")
+                                    .size(11.0)
+                                    .color(pal.text_faint),
+                            );
+                        });
                     }
-                    let mut country = self.lib.settings.country.clone();
-                    let response = ui.add_sized(Vec2::new(70.0, 24.0), egui::TextEdit::singleline(&mut country));
-                    if response.changed() {
-                        self.lib.settings.country = country;
-                        self.touch();
+                    SettingsTab::Proton => {
+                        section(ui, "PRÉFIXE", &pal);
+                        ui.horizontal(|ui| {
+                            let mut text =
+                                self.lib.settings.default_prefix.clone().unwrap_or_default();
+                            let field = (ui.available_width() - 210.0).max(220.0);
+                            let response = ui.add(
+                                egui::TextEdit::singleline(&mut text)
+                                    .hint_text(format!("auto : {}", config::prefix_root().display()))
+                                    .desired_width(field),
+                            );
+                            if response.changed() {
+                                self.lib.settings.default_prefix = if text.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(text.clone())
+                                };
+                                self.touch();
+                            }
+                            if widgets::ghost_button(ui, "Parcourir…", &pal, Icon::Folder).clicked() {
+                                browse_prefix = true;
+                            }
+                            if widgets::ghost_button(ui, "Auto", &pal, Icon::None).clicked() {
+                                self.lib.settings.default_prefix = None;
+                                self.touch();
+                            }
+                        });
+                        ui.label(
+                            RichText::new(
+                                "Utilisé par tous les jeux qui n'ont pas leur propre préfixe. Le \
+                                 dossier est utilisé tel quel : Quark n'y crée aucun sous-dossier.",
+                            )
+                            .size(11.0)
+                            .color(pal.text_faint),
+                        );
+
+                        section(ui, "RUNTIME", &pal);
+                        let mut mode = self
+                            .lib
+                            .settings
+                            .default_proton
+                            .clone()
+                            .map(ProtonMode::Runtime)
+                            .unwrap_or(ProtonMode::Default);
+                        if runtime_combo(
+                            ui,
+                            &pal,
+                            "default_runtime",
+                            &mut mode,
+                            &self.runtimes,
+                            false,
+                        ) {
+                            self.lib.settings.default_proton = match mode {
+                                ProtonMode::Runtime(key) => Some(key),
+                                _ => None,
+                            };
+                            self.touch();
+                        }
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            let protons = self
+                                .runtimes
+                                .iter()
+                                .filter(|runtime| runtime.kind == RuntimeKind::Proton)
+                                .count();
+                            let anticheat = self.runtimes.len() - protons;
+                            ui.label(
+                                RichText::new(format!(
+                                    "{protons} runtime(s) Proton · {anticheat} runtime(s) anti-triche"
+                                ))
+                                .size(11.0)
+                                .color(pal.text_faint),
+                            );
+                            if widgets::ghost_button(ui, "Redétecter", &pal, Icon::Refresh).clicked() {
+                                redetect = true;
+                            }
+                        });
+                        ui.label(
+                            RichText::new(
+                                "BattlEye et EasyAntiCheat sont proposés comme runtimes à part : \
+                                 choisis celui qu'un jeu réclame dans ses propres paramètres.",
+                            )
+                            .size(11.0)
+                            .color(pal.text_faint),
+                        );
+                        if self.runtimes.is_empty() {
+                            ui.add_space(4.0);
+                            ui.label(
+                                RichText::new(
+                                    "Aucun runtime trouvé. Installe Proton (Steam) ou dépose un \
+                                     build dans ~/.steam/steam/compatibilitytools.d/.",
+                                )
+                                .size(11.0)
+                                .color(pal.text_faint),
+                            );
+                        }
+                    }
+                    SettingsTab::Environment => {
+                        section(ui, "VARIABLES GLOBALES", &pal);
+                        ui.label(
+                            RichText::new(
+                                "Appliquées à tous les lancements. Un jeu qui définit la même \
+                                 variable dans ses propres paramètres écrase celle-ci.",
+                            )
+                            .size(11.0)
+                            .color(pal.text_faint),
+                        );
+                        ui.add_space(6.0);
+                        if env_editor(ui, &pal, &mut self.lib.settings.env) {
+                            self.touch();
+                        }
+                    }
+                    SettingsTab::Artworks => {
+                        section(ui, "SOURCES", &pal);
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new("Clé API SteamGridDB").size(12.5).color(pal.text_dim),
+                            );
+                            ui.add_space(8.0);
+                            let response = ui.add(
+                                egui::TextEdit::singleline(&mut self.lib.settings.sgdb_api_key)
+                                    .password(true)
+                                    .hint_text("optionnelle")
+                                    .desired_width(300.0),
+                            );
+                            if response.changed() {
+                                self.touch();
+                            }
+                        });
+                        ui.label(
+                            RichText::new(
+                                "Sans clé, Quark se limite aux artworks officiels du CDN Steam. \
+                                 Clé gratuite : steamgriddb.com/profile/preferences/api",
+                            )
+                            .size(11.0)
+                            .color(pal.text_faint),
+                        );
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new("Langue / pays (recherche Steam)")
+                                    .size(12.5)
+                                    .color(pal.text_dim),
+                            );
+                            ui.add_space(8.0);
+                            let mut language = self.lib.settings.language.clone();
+                            egui::ComboBox::from_id_salt("steam_language")
+                                .selected_text(language.clone())
+                                .width(150.0)
+                                .show_ui(ui, |ui| {
+                                    for option in [
+                                        "french",
+                                        "english",
+                                        "german",
+                                        "spanish",
+                                        "italian",
+                                        "portuguese",
+                                        "schinese",
+                                        "japanese",
+                                    ] {
+                                        ui.selectable_value(
+                                            &mut language,
+                                            option.to_string(),
+                                            option,
+                                        );
+                                    }
+                                });
+                            if language != self.lib.settings.language {
+                                self.lib.settings.language = language;
+                                self.touch();
+                            }
+                            let mut country = self.lib.settings.country.clone();
+                            let response = ui.add_sized(
+                                Vec2::new(70.0, 24.0),
+                                egui::TextEdit::singleline(&mut country),
+                            );
+                            if response.changed() {
+                                self.lib.settings.country = country;
+                                self.touch();
+                            }
+                        });
+                        ui.add_space(10.0);
+                        ui.label(
+                            RichText::new(
+                                "Pour changer les images d'un jeu : bouton « Personnaliser » sur sa \
+                                 fiche, ou clic droit sur sa ligne.",
+                            )
+                            .size(11.0)
+                            .color(pal.text_faint),
+                        );
+                    }
+                    SettingsTab::About => {
+                        section(ui, "VERSION", &pal);
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(format!("Quark {}", update::current_version()))
+                                    .size(12.5)
+                                    .color(pal.text),
+                            );
+                            ui.add_space(14.0);
+                            match self.update.clone() {
+                                UpdateState::Idle => {
+                                    if widgets::ghost_button(
+                                        ui,
+                                        "Vérifier les mises à jour",
+                                        &pal,
+                                        Icon::Refresh,
+                                    )
+                                    .clicked()
+                                    {
+                                        check_updates = true;
+                                    }
+                                }
+                                UpdateState::Checking => {
+                                    ui.spinner();
+                                    ui.label(
+                                        RichText::new("vérification\u{2026}")
+                                            .size(12.0)
+                                            .color(pal.text_dim),
+                                    );
+                                }
+                                UpdateState::UpToDate => {
+                                    ui.label(
+                                        RichText::new("à jour").size(12.0).color(pal.text_dim),
+                                    );
+                                    if widgets::ghost_button(ui, "Revérifier", &pal, Icon::Refresh)
+                                        .clicked()
+                                    {
+                                        check_updates = true;
+                                    }
+                                }
+                                UpdateState::Available(release) => {
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "{} disponible",
+                                            release.tag_name
+                                        ))
+                                        .size(12.0)
+                                        .color(pal.accent),
+                                    );
+                                    let size = release
+                                        .archive()
+                                        .map(|asset| asset.size as f64 / 1_048_576.0)
+                                        .unwrap_or(0.0);
+                                    let label = if size > 0.0 {
+                                        format!("Télécharger ({size:.1} Mo)")
+                                    } else {
+                                        "Télécharger".to_string()
+                                    };
+                                    if widgets::ghost_button(ui, &label, &pal, Icon::Plus).clicked() {
+                                        download_update = true;
+                                    }
+                                    if !release.html_url.is_empty()
+                                        && widgets::ghost_button(
+                                            ui,
+                                            "Page de la release",
+                                            &pal,
+                                            Icon::None,
+                                        )
+                                        .clicked()
+                                    {
+                                        open_url = Some(release.html_url.clone());
+                                    }
+                                }
+                                UpdateState::Downloading(release) => {
+                                    ui.spinner();
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "téléchargement de {}",
+                                            release.tag_name
+                                        ))
+                                        .size(12.0)
+                                        .color(pal.text_dim),
+                                    );
+                                }
+                                UpdateState::Downloaded(path) => {
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "téléchargée : {}",
+                                            path.display()
+                                        ))
+                                        .size(11.5)
+                                        .color(pal.text_dim),
+                                    );
+                                }
+                                UpdateState::Failed(error) => {
+                                    ui.label(RichText::new(error).size(11.5).color(pal.danger));
+                                    if widgets::ghost_button(ui, "Réessayer", &pal, Icon::Refresh)
+                                        .clicked()
+                                    {
+                                        check_updates = true;
+                                    }
+                                }
+                            }
+                        });
+                        ui.label(
+                            RichText::new(
+                                "L'archive est enregistrée dans ~/.local/share/quark/updates/ : \
+                                 décompresse-la et remplace le binaire pour installer la \
+                                 nouvelle version.",
+                            )
+                            .size(11.0)
+                            .color(pal.text_faint),
+                        );
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new(
+                                "Clavier : flèches pour changer de jeu, Entrée pour lancer, \
+                                 Ctrl+F pour chercher, Échap pour vider la recherche.",
+                            )
+                            .size(11.0)
+                            .color(pal.text_faint),
+                        );
+
+                        section(ui, "DOSSIERS", &pal);
+                        info_line(
+                            ui,
+                            "Configuration",
+                            &config::config_path().display().to_string(),
+                            &pal,
+                        );
+                        info_line(
+                            ui,
+                            "Artworks",
+                            &config::artwork_root().display().to_string(),
+                            &pal,
+                        );
+                        info_line(
+                            ui,
+                            "Préfixes",
+                            &config::prefix_root().display().to_string(),
+                            &pal,
+                        );
                     }
                 });
 
-                section(ui, "DOSSIERS", &pal);
-                info_line(ui, "Configuration", &config::config_path().display().to_string(), &pal);
-                info_line(ui, "Artworks", &config::artwork_root().display().to_string(), &pal);
-                info_line(ui, "Préfixes", &config::prefix_root().display().to_string(), &pal);
-
-                ui.add_space(16.0);
-                ui.horizontal(|ui| {
-                    if widgets::accent_button(ui, Vec2::new(140.0, 34.0), "Fermer", &pal, true, Icon::None)
-                        .clicked()
-                    {
-                        close_requested = true;
-                    }
-                });
-                    });
+            ui.add_space(16.0);
+            ui.horizontal(|ui| {
+                if widgets::accent_button(ui, Vec2::new(140.0, 34.0), "Fermer", &pal, true, Icon::None)
+                    .clicked()
+                {
+                    close_requested = true;
+                }
             });
+        });
         if modal.should_close() {
             close_requested = true;
         }
@@ -884,7 +1003,14 @@ impl QuarkApp {
                 );
 
                 section(ui, "PROTON", &pal);
-                runtime_combo(ui, "game_runtime", &mut game.proton, &self.runtimes, true);
+                runtime_combo(
+                    ui,
+                    &pal,
+                    "game_runtime",
+                    &mut game.proton,
+                    &self.runtimes,
+                    true,
+                );
                 ui.add_space(8.0);
                 let default_prefix = self
                     .lib
@@ -1034,6 +1160,215 @@ impl QuarkApp {
         // Toujours ouvert : on remet le brouillon en place pour la frame suivante.
         if !cancel {
             self.editing = Some(game);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Personnaliser un jeu (artworks)
+    // -----------------------------------------------------------------------
+
+    pub(crate) fn customize_dialog(&mut self, ctx: &egui::Context) {
+        let Some((game_id, kind, loading, plan, error)) =
+            self.customize.as_ref().map(|customize| {
+                (
+                    customize.game_id.clone(),
+                    customize.kind,
+                    customize.loading,
+                    customize.plan.clone(),
+                    customize.error.clone(),
+                )
+            })
+        else {
+            return;
+        };
+        let Some(game) = self.lib.get(&game_id).cloned() else {
+            self.customize = None;
+            return;
+        };
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.customize = None;
+            return;
+        }
+        let pal = self.pal;
+        let mut close = false;
+        let mut open_settings = false;
+        let mut propose: Option<AssetKind> = None;
+        let mut browse: Option<AssetKind> = None;
+        let mut clear: Option<AssetKind> = None;
+        let mut pick: Option<(AssetKind, usize)> = None;
+
+        // Miniatures actuelles, décodées une seule fois par image.
+        let handles: Vec<(AssetKind, Option<egui::TextureHandle>)> = AssetKind::ALL
+            .iter()
+            .map(|asset| {
+                let path = game.artwork.get(*asset).filter(|p| p.exists()).cloned();
+                let texture = path.and_then(|path| self.textures.get(ctx, &path)).cloned();
+                (*asset, texture)
+            })
+            .collect();
+
+        let max_height = (ctx.screen_rect().height() * 0.56).max(240.0);
+        let modal = egui::Modal::new(egui::Id::new("quark_customize")).show(ctx, |ui| {
+            ui.set_min_width(700.0);
+            ui.label(
+                RichText::new(format!("Personnaliser · {}", game.name))
+                    .size(17.0)
+                    .color(pal.text),
+            );
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(
+                    "Choisis l'image de chaque emplacement : une proposition en ligne, un fichier \
+                     de ton disque, ou aucune (rendu de secours).",
+                )
+                .size(11.0)
+                .color(pal.text_faint),
+            );
+            ui.add_space(12.0);
+
+            egui::ScrollArea::vertical()
+                .id_salt("quark_customize_scroll")
+                .max_height(max_height)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    for (asset, texture) in &handles {
+                        ui.horizontal(|ui| {
+                            let (rect, _) =
+                                ui.allocate_exact_size(Vec2::new(120.0, 68.0), Sense::hover());
+                            let painter = ui.painter_at(rect);
+                            painter.rect_filled(rect, 4.0, pal.surface);
+                            match texture {
+                                Some(texture) => {
+                                    crate::images::draw_cover(&painter, texture, rect);
+                                }
+                                None => {
+                                    painter.text(
+                                        rect.center(),
+                                        Align2::CENTER_CENTER,
+                                        "aucune image",
+                                        FontId::proportional(10.5),
+                                        pal.text_faint,
+                                    );
+                                }
+                            }
+                            ui.add_space(12.0);
+                            ui.vertical(|ui| {
+                                ui.label(
+                                    RichText::new(asset.label().to_uppercase())
+                                        .size(11.0)
+                                        .color(pal.text_faint),
+                                );
+                                ui.add_space(2.0);
+                                ui.horizontal(|ui| {
+                                    if widgets::ghost_button(
+                                        ui,
+                                        "Proposer d'autres…",
+                                        &pal,
+                                        Icon::Refresh,
+                                    )
+                                    .clicked()
+                                    {
+                                        propose = Some(*asset);
+                                    }
+                                    if widgets::ghost_button(
+                                        ui,
+                                        "Choisir un fichier…",
+                                        &pal,
+                                        Icon::Folder,
+                                    )
+                                    .clicked()
+                                    {
+                                        browse = Some(*asset);
+                                    }
+                                    if texture.is_some()
+                                        && widgets::ghost_button(ui, "Retirer", &pal, Icon::Trash)
+                                            .clicked()
+                                    {
+                                        clear = Some(*asset);
+                                    }
+                                });
+                            });
+                        });
+                        ui.add_space(6.0);
+
+                        // Propositions du type en cours de modification.
+                        if kind == Some(*asset) {
+                            if loading {
+                                ui.horizontal(|ui| {
+                                    ui.spinner();
+                                    ui.label(
+                                        RichText::new("Recherche des propositions\u{2026}")
+                                            .size(12.0)
+                                            .color(pal.text_dim),
+                                    );
+                                });
+                            } else if let Some(plan) = &plan {
+                                let urls = plan.candidates(*asset);
+                                if urls.is_empty() {
+                                    ui.label(
+                                        RichText::new("aucune proposition trouvée")
+                                            .size(11.5)
+                                            .color(pal.text_faint),
+                                    );
+                                } else {
+                                    ui.horizontal_wrapped(|ui| {
+                                        for (index, url) in urls.iter().enumerate() {
+                                            if artwork_choice(ui, &pal, url, false).clicked() {
+                                                pick = Some((*asset, index));
+                                            }
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                        ui.add_space(8.0);
+                    }
+
+                    if let Some(message) = &error {
+                        ui.label(RichText::new(message).size(11.5).color(pal.danger));
+                    }
+                });
+
+            ui.add_space(14.0);
+            ui.horizontal(|ui| {
+                if widgets::accent_button(ui, Vec2::new(140.0, 34.0), "Fermer", &pal, true, Icon::None)
+                    .clicked()
+                {
+                    close = true;
+                }
+                ui.add_space(8.0);
+                if widgets::ghost_button(ui, "Réglages du jeu…", &pal, Icon::Gear).clicked() {
+                    open_settings = true;
+                }
+            });
+        });
+        if modal.should_close() {
+            close = true;
+        }
+
+        if let Some(asset) = propose {
+            self.start_customize_plan(ctx, asset);
+        }
+        if let Some(asset) = browse {
+            let start = game
+                .artwork
+                .get(asset)
+                .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
+                .unwrap_or_else(config::home_dir);
+            self.pick_file_for_artwork(ctx, start, asset);
+        }
+        if let Some(asset) = clear {
+            self.remove_artwork(&game_id, asset);
+        }
+        if let Some((asset, index)) = pick {
+            self.apply_customize_pick(ctx, asset, index);
+        }
+        if open_settings {
+            self.customize = None;
+            self.editing = Some(game.clone());
+        }
+        if close {
+            self.customize = None;
         }
     }
 
@@ -1242,9 +1577,11 @@ fn own_dir(path: &str) -> PathBuf {
     }
 }
 
-/// Sélecteur de runtime Proton. Renvoie `true` si la valeur a changé.
+/// Sélecteur de runtime Proton ; les runtimes anti-triche sont regroupés à part.
+/// Renvoie `true` si la valeur a changé.
 fn runtime_combo(
     ui: &mut egui::Ui,
+    pal: &Palette,
     id: &str,
     mode: &mut ProtonMode,
     runtimes: &[ProtonRuntime],
@@ -1256,28 +1593,52 @@ fn runtime_combo(
         ProtonMode::Native => "Linux (natif)".to_string(),
         ProtonMode::Runtime(key) => runtimes
             .iter()
-            .find(|r| &r.key == key)
-            .map(|r| r.label())
+            .find(|runtime| &runtime.key == key)
+            .map(|runtime| runtime.label())
             .unwrap_or_else(|| key.clone()),
     };
 
+    let protons: Vec<&ProtonRuntime> = runtimes
+        .iter()
+        .filter(|runtime| runtime.kind == RuntimeKind::Proton)
+        .collect();
+    let anticheat: Vec<&ProtonRuntime> = runtimes
+        .iter()
+        .filter(|runtime| runtime.kind == RuntimeKind::AntiCheat)
+        .collect();
+
     egui::ComboBox::from_id_salt(id)
         .selected_text(selected_text)
-        .width(360.0)
+        .width(380.0)
         .show_ui(ui, |ui| {
             ui.selectable_value(mode, ProtonMode::Default, "Automatique (recommandé)");
             if allow_native {
                 ui.selectable_value(mode, ProtonMode::Native, "Linux (natif)");
             }
-            if !runtimes.is_empty() {
+            if !protons.is_empty() {
                 ui.separator();
             }
-            for runtime in runtimes {
+            for runtime in &protons {
                 ui.selectable_value(
                     mode,
                     ProtonMode::Runtime(runtime.key.clone()),
                     runtime.label(),
                 );
+            }
+            if !anticheat.is_empty() {
+                ui.separator();
+                ui.label(
+                    RichText::new("ANTI-TRICHE (BattlEye / EasyAntiCheat)")
+                        .size(10.0)
+                        .color(pal.text_faint),
+                );
+                for runtime in &anticheat {
+                    ui.selectable_value(
+                        mode,
+                        ProtonMode::Runtime(runtime.key.clone()),
+                        runtime.label(),
+                    );
+                }
             }
         });
 

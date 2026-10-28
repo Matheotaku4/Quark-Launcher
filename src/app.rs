@@ -211,6 +211,8 @@ pub enum PickerTarget {
     GamePrefix,
     DefaultPrefix,
     ScanFolder,
+    /// Image choisie sur le disque pour un artwork du jeu personnalisé.
+    CustomArtwork(AssetKind),
 }
 
 /// Sélecteur de fichiers du système, exécuté dans un thread dédié pour ne pas
@@ -218,6 +220,50 @@ pub enum PickerTarget {
 pub struct NativePicker {
     pub rx: Receiver<Option<PathBuf>>,
     pub target: PickerTarget,
+}
+
+/// Onglet de la fenêtre Paramètres : chaque famille de réglages a sa page.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SettingsTab {
+    Appearance,
+    Proton,
+    Environment,
+    Artworks,
+    About,
+}
+
+impl SettingsTab {
+    pub const ALL: [(SettingsTab, &'static str); 5] = [
+        (SettingsTab::Appearance, "Apparence"),
+        (SettingsTab::Proton, "Proton"),
+        (SettingsTab::Environment, "Environnement"),
+        (SettingsTab::Artworks, "Artworks"),
+        (SettingsTab::About, "À propos"),
+    ];
+}
+
+/// Fenêtre « Personnaliser » d'un jeu (images et apparence).
+pub struct Customize {
+    pub game_id: String,
+    /// Type dont les propositions sont affichées.
+    pub kind: Option<AssetKind>,
+    pub loading: bool,
+    pub rx: Option<Receiver<AssetPlan>>,
+    pub plan: Option<AssetPlan>,
+    pub error: Option<String>,
+}
+
+impl Customize {
+    pub fn for_game(game_id: &str) -> Self {
+        Self {
+            game_id: game_id.to_string(),
+            kind: None,
+            loading: false,
+            rx: None,
+            plan: None,
+            error: None,
+        }
+    }
 }
 
 pub struct QuarkApp {
@@ -229,7 +275,10 @@ pub struct QuarkApp {
     pub store_query: String,
     pub add: AddGame,
     pub settings_open: bool,
+    pub settings_tab: SettingsTab,
     pub editing: Option<Game>,
+    /// Fenêtre « Personnaliser » du jeu en cours (artworks).
+    pub customize: Option<Customize>,
     pub picker: Option<NativePicker>,
     /// Jeux dont le retrait attend confirmation (vide = aucune demande).
     pub confirm_remove: Vec<String>,
@@ -282,7 +331,9 @@ impl QuarkApp {
                 ..AddGame::reset()
             },
             settings_open: false,
+            settings_tab: SettingsTab::Appearance,
             editing: None,
+            customize: None,
             picker: None,
             confirm_remove: Vec::new(),
             marked: Vec::new(),
@@ -342,6 +393,7 @@ impl QuarkApp {
         self.poll_asset_job(ctx);
         self.poll_news();
         self.poll_picker(ctx);
+        self.poll_customize_plan(ctx);
         self.poll_search();
         self.poll_scan();
         self.auto_search(ctx);
@@ -555,7 +607,12 @@ impl QuarkApp {
                     "Choisir un exécutable"
                 })
                 .set_directory(&start);
-            if !directory {
+            if matches!(target, PickerTarget::CustomArtwork(_)) {
+                dialog = dialog.add_filter(
+                    "Images",
+                    &["png", "PNG", "jpg", "JPG", "jpeg", "JPEG", "webp", "WEBP"],
+                );
+            } else if !directory {
                 dialog = dialog
                     .add_filter(
                         "Programmes",
@@ -624,6 +681,7 @@ impl QuarkApp {
                 self.lib.settings.default_prefix = Some(text);
                 self.touch();
             }
+            PickerTarget::CustomArtwork(kind) => self.import_artwork(kind, path),
         }
     }
 
@@ -978,6 +1036,132 @@ impl QuarkApp {
     }
 
     // -----------------------------------------------------------------------
+    // Personnalisation (artworks d'un jeu)
+    // -----------------------------------------------------------------------
+
+    pub fn open_customize(&mut self, id: &str) {
+        self.customize = Some(Customize::for_game(id));
+    }
+
+    /// Cherche les propositions d'images d'un type (SteamGridDB, puis Steam).
+    pub fn start_customize_plan(&mut self, ctx: &egui::Context, kind: AssetKind) {
+        let Some(game_id) = self.customize.as_ref().map(|c| c.game_id.clone()) else {
+            return;
+        };
+        let Some(game) = self.lib.get(&game_id).cloned() else {
+            return;
+        };
+        let settings = self.lib.settings.clone();
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let client = artwork::http();
+            let hit = SearchHit::from_game(&game);
+            let plan = artwork::build_plan(&client, &hit, &settings).only(kind);
+            let _ = tx.send(plan);
+            repaint.request_repaint();
+        });
+        if let Some(customize) = self.customize.as_mut() {
+            customize.kind = Some(kind);
+            customize.loading = true;
+            customize.plan = None;
+            customize.error = None;
+            customize.rx = Some(rx);
+        }
+        ctx.request_repaint_after(Duration::from_millis(120));
+    }
+
+    fn poll_customize_plan(&mut self, ctx: &egui::Context) {
+        let received = self
+            .customize
+            .as_ref()
+            .and_then(|customize| customize.rx.as_ref().map(|rx| rx.try_recv()));
+        match received {
+            Some(Ok(plan)) => {
+                if let Some(customize) = self.customize.as_mut() {
+                    customize.rx = None;
+                    customize.loading = false;
+                    customize.plan = Some(plan);
+                }
+            }
+            Some(Err(TryRecvError::Disconnected)) => {
+                if let Some(customize) = self.customize.as_mut() {
+                    customize.rx = None;
+                    customize.loading = false;
+                    customize.error = Some("Recherche des artworks interrompue".to_string());
+                }
+            }
+            Some(Err(TryRecvError::Empty)) | None => {
+                if self.customize.as_ref().is_some_and(|customize| customize.loading) {
+                    ctx.request_repaint_after(Duration::from_millis(120));
+                }
+            }
+        }
+    }
+
+    /// télécharge la proposition cliquée, et elle seule.
+    pub fn apply_customize_pick(&mut self, ctx: &egui::Context, kind: AssetKind, index: usize) {
+        let Some((game_id, plan)) = self.customize.as_ref().and_then(|customize| {
+            customize
+                .plan
+                .clone()
+                .map(|plan| (customize.game_id.clone(), plan))
+        }) else {
+            return;
+        };
+        let label = self
+            .lib
+            .get(&game_id)
+            .map(|game| game.name.clone())
+            .unwrap_or_default();
+        // Plan restreint à ce type : les trois autres images ne bougent pas.
+        let plan = plan.only(kind).with_choices(&[(kind, index)]);
+        self.queue_asset_job(ctx, &game_id, AssetSource::Chosen(plan, label));
+        if let Some(customize) = self.customize.as_mut() {
+            customize.kind = None;
+            customize.plan = None;
+        }
+    }
+
+    /// Importe une image choisie sur le disque (sélecteur natif).
+    pub fn import_artwork(&mut self, kind: AssetKind, source: PathBuf) {
+        let Some(game_id) = self.customize.as_ref().map(|c| c.game_id.clone()) else {
+            return;
+        };
+        let dir = crate::config::artwork_root().join(&game_id);
+        match artwork::import_file(&source, &dir, kind) {
+            Ok(path) => {
+                if let Some(game) = self.lib.get_mut(&game_id) {
+                    game.artwork.set(kind, path);
+                }
+                self.toast_info(format!("{} importée", kind.label()));
+                self.touch();
+            }
+            Err(err) => self.toast_error(format!("Import impossible : {err}")),
+        }
+    }
+
+    /// Retire l'image d'un type : le rendu de secours reprend sa place.
+    pub fn remove_artwork(&mut self, game_id: &str, kind: AssetKind) {
+        let Some(game) = self.lib.get_mut(game_id) else {
+            return;
+        };
+        if let Some(path) = game.artwork.get(kind).cloned() {
+            // Uniquement nos propres fichiers : jamais une image d'ailleurs.
+            if path.starts_with(crate::config::artwork_root()) {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+        game.artwork.clear(kind);
+        self.toast_info(format!("{} retirée", kind.label()));
+        self.touch();
+    }
+
+    pub fn pick_file_for_artwork(&mut self, ctx: &egui::Context, start: PathBuf, kind: AssetKind) {
+        self.spawn_picker(ctx, start, PickerTarget::CustomArtwork(kind), false);
+    }
+
+    // -----------------------------------------------------------------------
     // Lancement
     // -----------------------------------------------------------------------
 
@@ -1234,6 +1418,7 @@ impl QuarkApp {
 
         self.add_dialog(ctx);
         self.settings_dialog(ctx);
+        self.customize_dialog(ctx);
         self.game_settings_dialog(ctx);
         self.confirm_remove_dialog(ctx);
         self.toasts_ui(ctx);
@@ -1247,6 +1432,7 @@ impl QuarkApp {
         if self.add.open
             || self.settings_open
             || self.editing.is_some()
+            || self.customize.is_some()
             || !self.confirm_remove.is_empty()
         {
             return;

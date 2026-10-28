@@ -60,6 +60,7 @@ jobs:
             "dialog-game:--dialog game" \
             "dialog-add:--dialog add" \
             "dialog-artwork:--dialog artwork" \
+            "dialog-customize:--dialog customize" \
             "dialog-scan:--dialog scan" \
             "dialog-remove:--dialog remove" \
             "keyboard:--view list --key down" \

@@ -317,6 +317,7 @@ impl QuarkApp {
                 let mut play_clicked = false;
                 let mut info_clicked = false;
                 let mut gear_clicked = false;
+                let mut customize_clicked = false;
                 ui.scope_builder(
                     egui::UiBuilder::new()
                         .max_rect(hero_rect)
@@ -425,6 +426,22 @@ impl QuarkApp {
                                     .clicked();
                         });
 
+                        // Personnaliser (images du jeu), puis Infos, puis Paramètres.
+                        let custom_rect = Rect::from_min_size(
+                            Pos2::new(hero.right() - 134.0, hero.top() + 14.0),
+                            Vec2::splat(34.0),
+                        );
+                        ui.scope_builder(egui::UiBuilder::new().max_rect(custom_rect), |ui| {
+                            customize_clicked = widgets::icon_button(
+                                ui,
+                                34.0,
+                                Icon::Image,
+                                &pal,
+                                "Personnaliser (artworks)",
+                            )
+                            .clicked();
+                        });
+
                         let gear_rect = Rect::from_min_size(
                             Pos2::new(hero.right() - 50.0, hero.top() + 14.0),
                             Vec2::splat(34.0),
@@ -442,6 +459,9 @@ impl QuarkApp {
                 }
                 if gear_clicked {
                     self.editing = Some(game.clone());
+                }
+                if customize_clicked {
+                    self.open_customize(&id);
                 }
                 if play_clicked {
                     if is_running {
@@ -508,6 +528,9 @@ impl QuarkApp {
                         ui.add_space(32.0);
                         if widgets::ghost_button(ui, "Paramètres du jeu", &pal, Icon::Gear).clicked() {
                             self.editing = Some(game.clone());
+                        }
+                        if widgets::ghost_button(ui, "Personnaliser", &pal, Icon::Image).clicked() {
+                            self.open_customize(&id);
                         }
                         if game.steam_app_id.is_some() || game.sgdb_id.is_some() {
                             if widgets::ghost_button(ui, "Rafraîchir les artworks", &pal, Icon::Refresh)

@@ -329,7 +329,7 @@ pub struct AssetPlan {
 }
 
 impl AssetPlan {
-    fn add(&mut self, kind: AssetKind, url: String) {
+    pub fn add(&mut self, kind: AssetKind, url: String) {
         if url.trim().is_empty() {
             return;
         }
@@ -373,8 +373,21 @@ impl AssetPlan {
         }
         out
     }
-}
 
+    /// Même plan limité à un seul type : remplacer une seule image sans
+    /// toucher aux trois autres.
+    pub fn only(&self, kind: AssetKind) -> AssetPlan {
+        AssetPlan {
+            kinds: self
+                .kinds
+                .iter()
+                .filter(|(asset, _)| *asset == kind)
+                .cloned()
+                .collect(),
+            warnings: Vec::new(),
+        }
+    }
+}
 /// Construit la liste des URL d'artworks à essayer, SteamGridDB d'abord
 /// (couvertures et logos de meilleure qualité), puis les assets officiels Steam.
 pub fn build_plan(client: &Client, hit: &SearchHit, s: &Settings) -> AssetPlan {
@@ -691,6 +704,26 @@ fn download_image(client: &Client, url: &str) -> Result<(Vec<u8>, &'static str),
         return Err("fichier vide".to_string());
     }
     Ok((bytes.to_vec(), ext))
+}
+
+/// Importe une image choisie sur le disque comme artwork du jeu : elle est
+/// décodée (donc validée) puis réécrite en PNG, ce qui évite les fichiers
+/// concurrents et les extensions trompeuses.
+pub fn import_file(source: &Path, dir: &Path, kind: AssetKind) -> Result<PathBuf, String> {
+    let bytes = std::fs::read(source).map_err(|e| format!("lecture impossible : {e}"))?;
+    let decoded = image::load_from_memory(&bytes).map_err(|e| format!("image illisible : {e}"))?;
+    if decoded.width() < 32 || decoded.height() < 32 {
+        return Err(format!(
+            "image trop petite ({}×{})",
+            decoded.width(),
+            decoded.height()
+        ));
+    }
+    let mut buffer = std::io::Cursor::new(Vec::new());
+    decoded
+        .write_to(&mut buffer, image::ImageFormat::Png)
+        .map_err(|e| e.to_string())?;
+    save_image(dir, kind, &buffer.into_inner(), "png")
 }
 
 /// Écrit l'artwork retenu dans le dossier du jeu, en supprimant l'ancienne

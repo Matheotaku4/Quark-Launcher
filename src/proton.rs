@@ -3,6 +3,15 @@
 use crate::config::{Game, ProtonMode, Settings};
 use std::path::{Path, PathBuf};
 
+/// Nature d'un runtime détecté.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeKind {
+    /// Un vrai Proton (compatibilité générale).
+    Proton,
+    /// Runtime fourni par Steam pour BattlEye / EasyAntiCheat.
+    AntiCheat,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProtonRuntime {
     /// Clé stable (nom du dossier), utilisée dans la config.
@@ -13,13 +22,18 @@ pub struct ProtonRuntime {
     pub path: PathBuf,
     /// Racine Steam à passer dans STEAM_COMPAT_CLIENT_INSTALL_PATH.
     pub steam_root: PathBuf,
+    pub kind: RuntimeKind,
 }
 
 impl ProtonRuntime {
     pub fn label(&self) -> String {
-        match self.version.as_ref().filter(|v| !v.is_empty()) {
+        let base = match self.version.as_ref().filter(|v| !v.is_empty()) {
             Some(v) => format!("{} · {}", self.name, v),
             None => self.name.clone(),
+        };
+        match self.kind {
+            RuntimeKind::Proton => base,
+            RuntimeKind::AntiCheat => format!("{base} · anti-triche"),
         }
     }
 }
@@ -42,74 +56,106 @@ pub fn steam_root() -> Option<PathBuf> {
     })
 }
 
-/// Liste les runtimes Proton : `steamapps/common/Proton*` et `compatibilitytools.d/*`.
+/// Runtimes trouvés dans une racine Steam donnée.
+///
+/// Les runtimes anti-triche que Steam installe à côté des Proton
+/// (« Proton BattlEye Runtime », « Proton EasyAntiCheat Runtime ») en font
+/// partie : ils ne remplacent pas Proton, mais un jeu peut les demander.
+pub fn detect_in(root: &Path) -> Vec<ProtonRuntime> {
+    let mut out: Vec<ProtonRuntime> = Vec::new();
+    for base in [root.join("compatibilitytools.d"), root.join("steamapps/common")] {
+        let Ok(entries) = std::fs::read_dir(&base) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let dir = entry.path();
+            if !dir.is_dir() {
+                continue;
+            }
+            // Un vrai runtime expose toujours un script `proton`.
+            let script = dir.join("proton");
+            if !script.is_file() {
+                continue;
+            }
+            let Some(name) = dir.file_name().map(|n| n.to_string_lossy().to_string()) else {
+                continue;
+            };
+            let lower = name.to_lowercase();
+            let anticheat = lower.contains("battleye") || lower.contains("easyanticheat");
+            if !lower.contains("proton") && !anticheat {
+                continue;
+            }
+            let version = std::fs::read_to_string(dir.join("version"))
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            out.push(ProtonRuntime {
+                key: name.clone(),
+                name,
+                version,
+                path: script,
+                steam_root: root.to_path_buf(),
+                kind: if anticheat {
+                    RuntimeKind::AntiCheat
+                } else {
+                    RuntimeKind::Proton
+                },
+            });
+        }
+    }
+    out
+}
+
+/// Liste les runtimes de toutes les installations Steam détectées.
 pub fn detect_runtimes() -> Vec<ProtonRuntime> {
     let mut out: Vec<ProtonRuntime> = Vec::new();
     let mut seen: Vec<PathBuf> = Vec::new();
 
     for root in steam_root_candidates() {
-        for base in [root.join("compatibilitytools.d"), root.join("steamapps/common")] {
-            let Ok(entries) = std::fs::read_dir(&base) else {
+        for runtime in detect_in(&root) {
+            let canon =
+                std::fs::canonicalize(&runtime.path).unwrap_or_else(|_| runtime.path.clone());
+            if seen.contains(&canon) {
                 continue;
-            };
-            for entry in entries.flatten() {
-                let dir = entry.path();
-                if !dir.is_dir() {
-                    continue;
-                }
-                let script = dir.join("proton");
-                if !script.is_file() {
-                    continue;
-                }
-                let Some(name) = dir.file_name().map(|n| n.to_string_lossy().to_string()) else {
-                    continue;
-                };
-                let lower = name.to_lowercase();
-                if !lower.contains("proton") || lower.contains("easyanticheat") || lower.contains("battleye") {
-                    continue;
-                }
-                let canon = std::fs::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
-                if seen.contains(&canon) {
-                    continue;
-                }
-                seen.push(canon);
-                let version = std::fs::read_to_string(dir.join("version"))
-                    .ok()
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty());
-                out.push(ProtonRuntime {
-                    key: name.clone(),
-                    name,
-                    version,
-                    path: script,
-                    steam_root: root.clone(),
-                });
             }
+            seen.push(canon);
+            out.push(runtime);
         }
     }
 
-    out.sort_by_key(|r| r.name.to_lowercase());
+    // Les Proton d'abord, puis les runtimes anti-triche, chacun par ordre
+    // alphabétique.
+    out.sort_by_key(|r| (r.kind == RuntimeKind::AntiCheat, r.name.to_lowercase()));
     out
 }
 
 /// Runtime proposé par défaut quand l'utilisateur n'en a choisi aucun.
 pub fn suggested_default(runtimes: &[ProtonRuntime]) -> Option<&ProtonRuntime> {
-    runtimes
+    // Un runtime anti-triche ne remplace jamais un Proton comme choix par
+    // défaut : il ne sert qu'aux jeux qui le demandent explicitement.
+    let protons: Vec<&ProtonRuntime> = runtimes
         .iter()
+        .filter(|runtime| runtime.kind == RuntimeKind::Proton)
+        .collect();
+    protons
+        .iter()
+        .copied()
         .filter(|r| r.name.to_lowercase().contains("ge-proton"))
         .max_by_key(|r| numeric_weight(&r.name))
         .or_else(|| {
-            runtimes
+            protons
                 .iter()
+                .copied()
                 .find(|r| r.name.to_lowercase().contains("experimental"))
         })
         .or_else(|| {
-            runtimes
+            protons
                 .iter()
+                .copied()
                 .filter(|r| r.name.to_lowercase().starts_with("proton "))
                 .last()
         })
-        .or_else(|| runtimes.last())
+        .or_else(|| protons.last().copied())
 }
 
 fn numeric_weight(name: &str) -> u64 {
@@ -349,6 +395,38 @@ mod tests {
         let mut settings = Settings::default();
         settings.env = vec![EnvVar::new("   ", "x"), EnvVar::new("", "y")];
         assert!(launch_env(&jeu(Vec::new()), &settings).is_empty());
+    }
+
+    fn faux_runtime(root: &Path, name: &str) {
+        let dir = root.join("steamapps/common").join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("proton"), "#!/bin/sh\n").unwrap();
+        std::fs::write(dir.join("version"), "9.0\n").unwrap();
+    }
+
+    #[test]
+    fn detecte_les_runtimes_anti_triche() {
+        let root = std::env::temp_dir().join(format!("quark-runtimes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        faux_runtime(&root, "Proton 9.0");
+        faux_runtime(&root, "Proton BattlEye Runtime");
+        faux_runtime(&root, "Proton EasyAntiCheat Runtime");
+        // Un jeu installé (aucun script `proton`) n'est pas un runtime.
+        std::fs::create_dir_all(root.join("steamapps/common/UnJeu")).unwrap();
+
+        let runtimes = detect_in(&root);
+        assert_eq!(runtimes.len(), 3);
+        let anti: Vec<&ProtonRuntime> = runtimes
+            .iter()
+            .filter(|runtime| runtime.kind == RuntimeKind::AntiCheat)
+            .collect();
+        assert_eq!(anti.len(), 2, "BattlEye et EasyAntiCheat étaient ignorés");
+        assert!(anti.iter().any(|r| r.name.contains("BattlEye")));
+        // Le Proton proposé par défaut n'est jamais un runtime anti-triche.
+        let suggested = suggested_default(&runtimes).unwrap();
+        assert_eq!(suggested.kind, RuntimeKind::Proton);
+        assert_eq!(suggested.name, "Proton 9.0");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

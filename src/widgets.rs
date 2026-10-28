@@ -17,6 +17,8 @@ pub enum Icon {
     List,
     Grid,
     Folder,
+    /// Image (personnalisation des artworks).
+    Image,
 }
 
 /// Identifiant stable d'un contrôle animé : sa place et son libellé. Le bloc de
@@ -194,6 +196,20 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
                 1.0,
                 color,
             );
+        }
+        Icon::Image => {
+            let frame = Rect::from_center_size(c, Vec2::splat(s * 0.80));
+            border_rect(painter, frame, (s * 0.09).max(1.0), color);
+            painter.circle_filled(Pos2::new(c.x - s * 0.17, c.y - s * 0.16), s * 0.07, color);
+            painter.add(Shape::convex_polygon(
+                vec![
+                    Pos2::new(c.x - s * 0.30, c.y + s * 0.22),
+                    Pos2::new(c.x - s * 0.05, c.y - s * 0.06),
+                    Pos2::new(c.x + s * 0.19, c.y + s * 0.22),
+                ],
+                color,
+                Stroke::NONE,
+            ));
         }
         Icon::Refresh => {
             let from = 0.55f32;

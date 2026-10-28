@@ -139,6 +139,16 @@ impl Artwork {
             AssetKind::Icon => self.icon = Some(path),
         }
     }
+
+    /// Retire l'artwork de ce type : le rendu de secours reprend sa place.
+    pub fn clear(&mut self, kind: AssetKind) {
+        match kind {
+            AssetKind::Cover => self.cover = None,
+            AssetKind::Hero => self.hero = None,
+            AssetKind::Logo => self.logo = None,
+            AssetKind::Icon => self.icon = None,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

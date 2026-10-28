@@ -57,6 +57,12 @@ through **Proton**.
   own folder under `~/.local/share/quark/prefixes/<id>`.
 - **Banners are cropped, never stretched**: the hero keeps its proportions at any window
   size, fullscreen included.
+- **Customize** a game from its page (or by right-clicking it): each image — cover,
+  banner, logo, icon — can be replaced by another online proposal or by a file from your
+  disk, or removed to fall back to the built-in rendering.
+- **Settings in tabs**: Appearance, Proton, Environment, Artworks, About.
+- **BattlEye and EasyAntiCheat runtimes** are detected next to Proton and can be picked
+  for a game that needs one; they are never suggested as the default runtime.
 - **Keyboard navigation**: arrows to move through the library (up/down and left/right in
   the grid), `Enter` to launch, `Ctrl+F` (or `/`) to jump to the search field, `Esc` to
   clear it. Shortcuts stay out of the way while a dialog or a text field has focus.
@@ -141,7 +147,7 @@ as the **quark-ui-renders** artifact — so every push can be reviewed without i
 anything.
 
 ```bash
-tar -xzf quark-0.4.1-linux-x86_64.tar.gz
+tar -xzf quark-0.5.0-linux-x86_64.tar.gz
 cd quark && ./quark
 ```
 

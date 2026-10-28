@@ -15,6 +15,7 @@
 use crate::app::{AddStep, NewsState, QuarkApp, ScanCandidate, SearchState, Tab};
 use crate::artwork::{AssetPlan, SearchHit, Source};
 use crate::config::{AssetKind, Artwork, Game, Library, ThemeMode, ViewMode, now_ts};
+use crate::proton::{ProtonRuntime, RuntimeKind};
 use crate::news::NewsItem;
 use eframe::egui::epaint::textures::TexturesDelta;
 use eframe::egui::epaint::{ImageData, Primitive};
@@ -74,7 +75,8 @@ pub const HELP: &str = "\
       [--size 1360x860] [--scale 1.5] [--frames 16]\n\
       [--view list|grid] [--tab library|store] [--theme amoled|graphite]\n\
       [--select <jeu>] [--info] [--running] [--marked]\n\
-      [--dialog none|add|artwork|exe|scan|settings|game|updates|remove]\n\
+      [--dialog none|add|artwork|exe|scan|settings|settings-proton|\n\
+      settings-env|settings-artworks|game|updates|customize|remove]\n\
       [--hover X,Y] [--click X,Y] [--key up|down|left|right|enter|escape] [--demo]\n\
       --demo : bibliothèque de démonstration avec artworks factices (la\n\
       configuration réelle n'est ni lue ni écrite)\n";
@@ -94,6 +96,8 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
         app.lib = demo_library()?;
         app.selected = app.lib.games.first().map(|g| g.id.clone());
         app.filter.clear();
+        // Runtimes factices : la VM n'a ni Steam ni Proton.
+        app.runtimes = demo_runtimes();
     }
     if let Some(view) = opts.view {
         app.lib.settings.view = view;
@@ -263,6 +267,18 @@ fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
     match dialog {
         "none" => {}
         "settings" => app.settings_open = true,
+        "settings-proton" => {
+            app.settings_open = true;
+            app.settings_tab = crate::app::SettingsTab::Proton;
+        }
+        "settings-env" => {
+            app.settings_open = true;
+            app.settings_tab = crate::app::SettingsTab::Environment;
+        }
+        "settings-artworks" => {
+            app.settings_open = true;
+            app.settings_tab = crate::app::SettingsTab::Artworks;
+        }
         "updates" => {
             app.settings_open = true;
             app.update = crate::app::UpdateState::Available(crate::update::Release {
@@ -275,6 +291,27 @@ fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
                     size: 8_600_000,
                 }],
             });
+        }
+        "customize" => {
+            let id = app
+                .selected
+                .clone()
+                .ok_or_else(|| "aucun jeu sélectionné".to_string())?;
+            let mut customize = crate::app::Customize::for_game(&id);
+            customize.kind = Some(AssetKind::Cover);
+            // Propositions de démonstration : les couvertures des autres jeux
+            // (déjà sur le disque, donc affichables sans réseau).
+            let mut plan = AssetPlan::default();
+            for game in &app.lib.games {
+                if let Some(path) = game.artwork.get(AssetKind::Cover) {
+                    // Schéma `file://` : c'est ce que le chargeur d'images egui
+                    // attend pour un fichier local (les vraies propositions
+                    // sont des URL https).
+                    plan.add(AssetKind::Cover, format!("file://{}", path.display()));
+                }
+            }
+            customize.plan = Some(plan);
+            app.customize = Some(customize);
         }
         "game" => {
             let id = app
@@ -691,6 +728,33 @@ fn demo_library() -> Result<Library, String> {
     ];
 
     Ok(Library { games, settings })
+}
+
+/// Runtimes Proton et anti-triche factices, pour les rendus de contrôle.
+fn demo_runtimes() -> Vec<ProtonRuntime> {
+    let root = PathBuf::from("/tmp/steam");
+    let mut out = Vec::new();
+    for (name, version, kind) in [
+        ("GE-Proton9-20", "9-20", RuntimeKind::Proton),
+        ("Proton 9.0", "9.0", RuntimeKind::Proton),
+        ("Proton Experimental", "", RuntimeKind::Proton),
+        ("Proton BattlEye Runtime", "", RuntimeKind::AntiCheat),
+        ("Proton EasyAntiCheat Runtime", "", RuntimeKind::AntiCheat),
+    ] {
+        out.push(ProtonRuntime {
+            key: name.to_string(),
+            name: name.to_string(),
+            version: if version.is_empty() {
+                None
+            } else {
+                Some(version.to_string())
+            },
+            path: root.join(name).join("proton"),
+            steam_root: root.clone(),
+            kind,
+        });
+    }
+    out
 }
 
 fn demo_game(
