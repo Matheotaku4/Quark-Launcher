@@ -231,7 +231,10 @@ pub struct QuarkApp {
     pub settings_open: bool,
     pub editing: Option<Game>,
     pub picker: Option<NativePicker>,
-    pub confirm_remove: Option<String>,
+    /// Jeux dont le retrait attend confirmation (vide = aucune demande).
+    pub confirm_remove: Vec<String>,
+    /// Jeux marqués par Ctrl+clic : ils se retirent en lot.
+    pub marked: Vec<String>,
     pub runtimes: Vec<ProtonRuntime>,
     pub running: HashMap<String, RunningGame>,
     pub job: Option<AssetJob>,
@@ -281,7 +284,8 @@ impl QuarkApp {
             settings_open: false,
             editing: None,
             picker: None,
-            confirm_remove: None,
+            confirm_remove: Vec::new(),
+            marked: Vec::new(),
             running: HashMap::new(),
             job: None,
             toasts: Vec::new(),
@@ -1174,9 +1178,38 @@ impl QuarkApp {
         ids
     }
 
-    /// Sélectionne un jeu ; bascule sur la bibliothèque si besoin.
+    /// Sélectionne un jeu ; bascule sur la bibliothèque si besoin. Un clic
+    /// simple abandonne la sélection multiple (Ctrl+clic la construit).
     pub fn select(&mut self, id: &str) {
         self.selected = Some(id.to_string());
+        self.marked.clear();
+    }
+
+    /// Ctrl+clic : ajoute ou retire un jeu de la sélection multiple. Le panneau
+    /// de droite suit le dernier jeu coché.
+    pub fn toggle_marked(&mut self, id: &str) {
+        let position = self.marked.iter().position(|marked| marked == id);
+        match position {
+            Some(index) => {
+                self.marked.remove(index);
+            }
+            None => {
+                self.marked.push(id.to_string());
+                self.selected = Some(id.to_string());
+            }
+        }
+    }
+
+    pub fn is_marked(&self, id: &str) -> bool {
+        self.marked.iter().any(|marked| marked == id)
+    }
+
+    /// Demande le retrait de toute la sélection multiple (confirmation ensuite).
+    pub fn ask_remove_marked(&mut self) {
+        if self.marked.is_empty() {
+            return;
+        }
+        self.confirm_remove = self.marked.clone();
     }
 }
 
@@ -1214,7 +1247,7 @@ impl QuarkApp {
         if self.add.open
             || self.settings_open
             || self.editing.is_some()
-            || self.confirm_remove.is_some()
+            || !self.confirm_remove.is_empty()
         {
             return;
         }
@@ -1248,6 +1281,8 @@ impl QuarkApp {
                 self.tab = Tab::Library;
             } else if !self.filter.is_empty() {
                 self.filter.clear();
+            } else if !self.marked.is_empty() {
+                self.marked.clear();
             }
             return;
         }

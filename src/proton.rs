@@ -202,6 +202,29 @@ pub fn split_args(s: &str) -> Vec<String> {
     out
 }
 
+/// Variables d'environnement effectives : d'abord celles des réglages
+/// généraux, puis celles du jeu — qui écrasent le réglage global portant le
+/// même nom. L'ordre est conservé (le jeu garde donc l'ordre où il les a été
+/// saisies).
+pub fn launch_env(game: &Game, settings: &Settings) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for var in settings.env.iter().chain(game.env.iter()) {
+        if !var.is_valid() {
+            continue;
+        }
+        let name = var.name.trim();
+        let entry = (name.to_string(), var.value.clone());
+        match out
+            .iter_mut()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+        {
+            Some(slot) => *slot = entry,
+            None => out.push(entry),
+        }
+    }
+    out
+}
+
 /// Détermine le mode de lancement effectif et construit la commande.
 pub fn resolve(
     game: &Game,
@@ -228,7 +251,9 @@ pub fn resolve(
             spec: LaunchSpec {
                 program: exe,
                 args: extra,
-                env: Vec::new(),
+                // Les variables d'environnement s'appliquent aussi aux jeux
+                // natifs : certaines servent hors Wine (MANGOHUD, LD_…).
+                env: launch_env(game, settings),
             },
             runtime: None,
             prefix: None,
@@ -256,23 +281,89 @@ pub fn resolve(
     let mut args = vec!["run".to_string(), exe.display().to_string()];
     args.extend(extra);
 
+    // Les variables de l'utilisateur d'abord, puis celles que Proton exige :
+    // `Command::env` garde la dernière valeur, donc le préfixe résolu gagne
+    // toujours sur une variable homonyme saisie à la main.
+    let mut env = launch_env(game, settings);
+    env.push((
+        "STEAM_COMPAT_DATA_PATH".to_string(),
+        prefix.display().to_string(),
+    ));
+    env.push((
+        "STEAM_COMPAT_CLIENT_INSTALL_PATH".to_string(),
+        runtime.steam_root.display().to_string(),
+    ));
+
     Ok(Resolved {
         spec: LaunchSpec {
             program: runtime.path.clone(),
             args,
-            env: vec![
-                (
-                    "STEAM_COMPAT_DATA_PATH".to_string(),
-                    prefix.display().to_string(),
-                ),
-                (
-                    "STEAM_COMPAT_CLIENT_INSTALL_PATH".to_string(),
-                    runtime.steam_root.display().to_string(),
-                ),
-            ],
+            env,
         },
         kind: LaunchKind::Proton,
         runtime: Some(runtime),
         prefix: Some(prefix),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::EnvVar;
+
+    fn jeu(env: Vec<EnvVar>) -> Game {
+        let mut game = Game::new("Test", "/tmp/jeu.exe");
+        game.env = env;
+        game
+    }
+
+    #[test]
+    fn env_du_jeu_ecrase_le_reglage_global() {
+        let mut settings = Settings::default();
+        settings.env = vec![
+            EnvVar::new("WINEDLLOVERRIDES", "winmm=n"),
+            EnvVar::new("DXVK_HUD", "1"),
+        ];
+        let env = launch_env(
+            &jeu(vec![EnvVar::new(
+                "WINEDLLOVERRIDES",
+                "winmm=n,b;steam_api64",
+            )]),
+            &settings,
+        );
+        // La variable du jeu remplace la globale à sa place (même ordre, pas
+        // de doublon).
+        assert_eq!(env.len(), 2);
+        assert_eq!(
+            env[0],
+            (
+                "WINEDLLOVERRIDES".to_string(),
+                "winmm=n,b;steam_api64".to_string()
+            )
+        );
+        assert_eq!(env[1], ("DXVK_HUD".to_string(), "1".to_string()));
+    }
+
+    #[test]
+    fn env_sans_nom_est_ignoree() {
+        let mut settings = Settings::default();
+        settings.env = vec![EnvVar::new("   ", "x"), EnvVar::new("", "y")];
+        assert!(launch_env(&jeu(Vec::new()), &settings).is_empty());
+    }
+
+    #[test]
+    fn l_ordre_des_variables_est_conserve() {
+        let settings = Settings::default();
+        let env = launch_env(
+            &jeu(vec![
+                EnvVar::new("PROTON_LOG", "1"),
+                EnvVar::new("WINEDEBUG", "-all"),
+            ]),
+            &settings,
+        );
+        assert_eq!(
+            env.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(),
+            ["PROTON_LOG", "WINEDEBUG"]
+        );
+    }
 }

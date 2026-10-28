@@ -135,6 +135,11 @@ fn cli(args: &[String]) -> Option<i32> {
                         index += 1;
                         continue;
                     }
+                    "--marked" => {
+                        opts.marked = true;
+                        index += 1;
+                        continue;
+                    }
                     "--demo" => {
                         opts.demo = true;
                         index += 1;

@@ -47,6 +47,16 @@ through **Proton**.
   `compatibilitytools.d/*`, including Flatpak/Snap), runtime chosen **per game** or
   globally, a **default Proton prefix** in the settings and a **per-game override**.
 - **Playtime tracking**: every session is timed (relaunch, total time, last session).
+- **Environment variables per game**: a `NAME=value` list (for example
+  `WINEDLLOVERRIDES=winmm=n,b;steam_api64`), plus global defaults in the settings — a game
+  value overrides the global one with the same name.
+- **Right-click a game** to open its settings. **Ctrl+click** marks several games and
+  removes them in one go; `Esc` clears the selection.
+- **Proton prefix used as-is**: the folder you pick (per game, or as the global default) *is*
+  the prefix — Quark creates no sub-folder inside it. Only the automatic fallback keeps its
+  own folder under `~/.local/share/quark/prefixes/<id>`.
+- **Banners are cropped, never stretched**: the hero keeps its proportions at any window
+  size, fullscreen included.
 - **Keyboard navigation**: arrows to move through the library (up/down and left/right in
   the grid), `Enter` to launch, `Ctrl+F` (or `/`) to jump to the search field, `Esc` to
   clear it. Shortcuts stay out of the way while a dialog or a text field has focus.
@@ -131,7 +141,7 @@ as the **quark-ui-renders** artifact — so every push can be reviewed without i
 anything.
 
 ```bash
-tar -xzf quark-0.4.0-linux-x86_64.tar.gz
+tar -xzf quark-0.4.1-linux-x86_64.tar.gz
 cd quark && ./quark
 ```
 
@@ -166,7 +176,7 @@ target/release/quark --ui dialog.png --demo --dialog settings
 Options: `--size WxH`, `--scale N`, `--frames N`, `--view list|grid`, `--tab library|store`,
 `--theme amoled|graphite`, `--select <game>`, `--info`, `--running`,
 `--dialog none|add|artwork|exe|scan|settings|game|remove|updates`, `--hover X,Y`,
-`--click X,Y`, `--key up|down|left|right|enter|escape`, `--demo`.
+`--click X,Y`, `--key up|down|left|right|enter|escape`, `--marked`, `--demo`.
 
 `--click` and `--key` send real input events, so a render also checks the interactions:
 `--key down` really moves the selection, `--click X,Y` really presses a button.

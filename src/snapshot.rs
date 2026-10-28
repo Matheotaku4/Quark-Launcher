@@ -42,6 +42,8 @@ pub struct SnapshotOptions {
     pub key: Option<String>,
     pub dialog: Option<String>,
     pub demo: bool,
+    /// Marque quelques jeux comme avec Ctrl+clic (sélection multiple).
+    pub marked: bool,
 }
 
 impl Default for SnapshotOptions {
@@ -62,6 +64,7 @@ impl Default for SnapshotOptions {
             key: None,
             dialog: None,
             demo: false,
+            marked: false,
         }
     }
 }
@@ -70,8 +73,8 @@ pub const HELP: &str = "\
   quark --ui <fichier.png>  Rend l'interface hors écran dans un PNG (sans écran)\n\
       [--size 1360x860] [--scale 1.5] [--frames 16]\n\
       [--view list|grid] [--tab library|store] [--theme amoled|graphite]\n\
-      [--select <jeu>] [--info] [--running]\n\
-      [--dialog none|add|exe|scan|settings|game|remove]\n\
+      [--select <jeu>] [--info] [--running] [--marked]\n\
+      [--dialog none|add|artwork|exe|scan|settings|game|updates|remove]\n\
       [--hover X,Y] [--click X,Y] [--key up|down|left|right|enter|escape] [--demo]\n\
       --demo : bibliothèque de démonstration avec artworks factices (la\n\
       configuration réelle n'est ni lue ni écrite)\n";
@@ -103,6 +106,17 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
     }
     if let Some(needle) = &opts.select {
         app.selected = Some(pick_game(&app, needle)?);
+    }
+    if opts.marked {
+        // Sélection multiple (Ctrl+clic) : deux jeux en plus du courant.
+        app.marked = app
+            .lib
+            .games
+            .iter()
+            .skip(1)
+            .take(2)
+            .map(|game| game.id.clone())
+            .collect();
     }
     app.show_info = opts.info;
     if let Some(dialog) = &opts.dialog {
@@ -270,11 +284,16 @@ fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
             app.editing = app.lib.get(&id).cloned();
         }
         "remove" => {
-            let id = app
-                .selected
-                .clone()
-                .ok_or_else(|| "aucun jeu sélectionné".to_string())?;
-            app.confirm_remove = Some(id);
+            // Avec --marked, la confirmation porte sur toute la sélection.
+            let ids: Vec<String> = if app.marked.is_empty() {
+                app.selected.clone().into_iter().collect()
+            } else {
+                app.marked.clone()
+            };
+            if ids.is_empty() {
+                return Err("aucun jeu sélectionné".to_string());
+            }
+            app.confirm_remove = ids;
         }
         "add" => {
             app.open_add_dialog();
@@ -609,6 +628,10 @@ fn demo_library() -> Result<Library, String> {
     );
     game.playtime_secs = 82 * 3600 + 1_320;
     game.last_played = Some(now - 7_200);
+    game.env = vec![crate::config::EnvVar::new(
+        "WINEDLLOVERRIDES",
+        "winmm=n,b;steam_api64",
+    )];
     games.push(game);
 
     let mut game = demo_game(
@@ -661,10 +684,13 @@ fn demo_library() -> Result<Library, String> {
     ));
     games.push(demo_game("Another World", "/jeux/another/another", &[], &art, None));
 
-    Ok(Library {
-        games,
-        settings: crate::config::Settings::default(),
-    })
+    let mut settings = crate::config::Settings::default();
+    settings.env = vec![
+        crate::config::EnvVar::new("MANGOHUD", "1"),
+        crate::config::EnvVar::new("DXVK_HUD", "fps"),
+    ];
+
+    Ok(Library { games, settings })
 }
 
 fn demo_game(

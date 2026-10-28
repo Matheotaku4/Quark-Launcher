@@ -63,6 +63,9 @@ jobs:
             "dialog-scan:--dialog scan" \
             "dialog-remove:--dialog remove" \
             "keyboard:--view list --key down" \
+            "marked:--view list --marked" \
+            "dialog-remove-many:--marked --dialog remove" \
+            "wide:--size 2560x900 --view list" \
             "small:--size 1024x640 --view list"; do
             name="${spec%%:*}"
             opts="${spec#*:}"

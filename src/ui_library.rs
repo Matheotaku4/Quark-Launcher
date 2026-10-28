@@ -2,7 +2,7 @@
 
 use crate::app::{NewsState, QuarkApp};
 use crate::config::{self, AssetKind, Game, ViewMode};
-use crate::images::{draw_fill, draw_fit};
+use crate::images::{draw_cover, draw_fit};
 use crate::news;
 use crate::proton::{self, LaunchKind};
 use crate::theme::{self, Palette};
@@ -42,6 +42,11 @@ impl QuarkApp {
         let ids = self.display_ids();
         let view = self.lib.settings.view;
         let total = self.lib.games.len();
+        // Sélection multiple (Ctrl+clic) : les actions sont appliquées après la
+        // mise en page, pour ne pas emprunter `self` pendant les clôtures.
+        let marked_count = self.marked.len();
+        let mut remove_marked = false;
+        let mut clear_marked = false;
 
         ui.add_space(14.0);
         ui.horizontal(|ui| {
@@ -63,15 +68,48 @@ impl QuarkApp {
         });
 
         ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.add_space(16.0);
-            let count = if ids.len() == total {
-                format!("{total} jeu{}", if total > 1 { "x" } else { "" })
-            } else {
-                format!("{} / {total} jeux", ids.len())
-            };
-            ui.label(RichText::new(count).size(11.0).color(pal.text_faint));
-        });
+        if marked_count == 0 {
+            ui.horizontal(|ui| {
+                ui.add_space(16.0);
+                let count = if ids.len() == total {
+                    format!("{total} jeu{}", if total > 1 { "x" } else { "" })
+                } else {
+                    format!("{} / {total} jeux", ids.len())
+                };
+                ui.label(RichText::new(count).size(11.0).color(pal.text_faint));
+                ui.add_space(10.0);
+                ui.label(
+                    RichText::new("Ctrl+clic : sélection multiple")
+                        .size(10.5)
+                        .color(pal.text_faint),
+                );
+            });
+        } else {
+            // Barre de sélection : supprimer plusieurs jeux d'un coup.
+            ui.horizontal(|ui| {
+                ui.add_space(16.0);
+                ui.label(
+                    RichText::new(format!(
+                        "{marked_count} sélectionné{}",
+                        if marked_count > 1 { "s" } else { "" }
+                    ))
+                    .size(11.0)
+                    .color(pal.accent),
+                );
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.add_space(12.0);
+                    if widgets::icon_button(ui, 26.0, Icon::Trash, &pal, "Supprimer la sélection")
+                        .clicked()
+                    {
+                        remove_marked = true;
+                    }
+                    ui.add_space(6.0);
+                    if widgets::ghost_button(ui, "Désélectionner", &pal, Icon::None).clicked() {
+                        clear_marked = true;
+                    }
+                });
+            });
+        }
         ui.add_space(8.0);
 
         egui::ScrollArea::vertical()
@@ -115,11 +153,27 @@ impl QuarkApp {
                                 continue;
                             };
                             let selected = self.selected.as_deref() == Some(id.as_str());
+                            let marked = self.is_marked(id);
                             let running = self.is_running(id);
-                            let response =
-                                game_row(ui, &pal, &game, selected, running, &mut self.textures);
-                            if response.clicked() {
+                            let response = game_row(
+                                ui,
+                                &pal,
+                                &game,
+                                selected,
+                                marked,
+                                running,
+                                &mut self.textures,
+                            );
+                            if response.secondary_clicked() {
+                                // Clic droit : les paramètres du jeu, comme Steam.
                                 self.select(id);
+                                self.editing = Some(game.clone());
+                            } else if response.clicked() {
+                                if ui.input(|i| i.modifiers.command) {
+                                    self.toggle_marked(id);
+                                } else {
+                                    self.select(id);
+                                }
                             }
                             if response.double_clicked() {
                                 self.launch(ui.ctx(), id);
@@ -148,6 +202,7 @@ impl QuarkApp {
                                         continue;
                                     };
                                     let selected = self.selected.as_deref() == Some(id.as_str());
+                                    let marked = self.is_marked(id);
                                     let running = self.is_running(id);
                                     let response = game_tile(
                                         ui,
@@ -155,11 +210,19 @@ impl QuarkApp {
                                         &game,
                                         Vec2::new(tile_w, tile_h),
                                         selected,
+                                        marked,
                                         running,
                                         &mut self.textures,
                                     );
-                                    if response.clicked() {
+                                    if response.secondary_clicked() {
                                         self.select(id);
+                                        self.editing = Some(game.clone());
+                                    } else if response.clicked() {
+                                        if ui.input(|i| i.modifiers.command) {
+                                            self.toggle_marked(id);
+                                        } else {
+                                            self.select(id);
+                                        }
                                     }
                                     if response.double_clicked() {
                                         self.launch(ui.ctx(), id);
@@ -174,6 +237,13 @@ impl QuarkApp {
                     }
                 }
             });
+
+        if remove_marked {
+            self.ask_remove_marked();
+        }
+        if clear_marked {
+            self.marked.clear();
+        }
 
         if let Some(job) = self.job.as_ref() {
             let label = job.label.clone();
@@ -264,7 +334,11 @@ impl QuarkApp {
                             .as_ref()
                             .and_then(|path| self.texture(ui.ctx(), path));
                         if let Some(texture) = hero_tex {
-                            draw_fill(ui, &texture, hero);
+                            // Recadrée, jamais étirée : quelle que soit la
+                            // largeur de la fenêtre (plein écran compris), la
+                            // bannière garde ses proportions et les bords qui
+                            // dépassent sont rognés par le painter.
+                            draw_cover(&painter, &texture, hero);
                         } else {
                             painter.rect_filled(hero, 0.0, pal.surface_hover);
                         }
@@ -648,6 +722,7 @@ fn game_row(
     pal: &Palette,
     game: &Game,
     selected: bool,
+    marked: bool,
     running: bool,
     textures: &mut crate::images::TextureCache,
 ) -> egui::Response {
@@ -659,7 +734,7 @@ fn game_row(
         .animate_bool_with_time(id.with("hover"), response.hovered(), 0.12);
     let mark = ui
         .ctx()
-        .animate_bool_with_time(id.with("selected"), selected, 0.16);
+        .animate_bool_with_time(id.with("selected"), selected || marked, 0.16);
 
     if hover > 0.0 {
         painter.rect_filled(
@@ -697,9 +772,10 @@ fn game_row(
         .cloned();
     let texture = thumb.as_ref().and_then(|path| textures.get(ui.ctx(), path));
     match texture {
-        // Le carré est rempli exactement : les icônes 1:1 (SteamGridDB) y
-        // tiennent entièrement, les capsules larges sont recadrées au centre.
-        Some(texture) => draw_fill(ui, texture, thumb_box),
+        // Icônes 1:1 et capsules larges occupent le même carré : l'image est
+        // recadrée au centre (jamais comprimée), grâce au painter limité au
+        // carré de la vignette.
+        Some(texture) => draw_cover(&ui.painter_at(thumb_box), texture, thumb_box),
         None => widgets::monogram(
             &painter,
             thumb_box,
@@ -740,6 +816,7 @@ fn game_tile(
     game: &Game,
     size: Vec2,
     selected: bool,
+    marked: bool,
     running: bool,
     textures: &mut crate::images::TextureCache,
 ) -> egui::Response {
@@ -751,7 +828,7 @@ fn game_tile(
         .animate_bool_with_time(id.with("hover"), response.hovered(), 0.12);
     let mark = ui
         .ctx()
-        .animate_bool_with_time(id.with("selected"), selected, 0.16);
+        .animate_bool_with_time(id.with("selected"), selected || marked, 0.16);
 
     // Le survol « soulève » la tuile : la couverture se resserre d'un ou deux
     // pixels et un liseré s'allume. Tout est peint, la grille ne bouge pas.
@@ -764,7 +841,9 @@ fn game_tile(
         .cloned();
     let texture = cover.as_ref().and_then(|path| textures.get(ui.ctx(), path));
     match texture {
-        Some(texture) => draw_fill(ui, texture, cover_rect),
+        // Couverture recadrée au centre quand le format diffère (jamais
+        // déformée), grâce au painter limité à la tuile.
+        Some(texture) => draw_cover(&ui.painter_at(cover_rect), texture, cover_rect),
         None => widgets::monogram(
             &painter,
             cover_rect,
@@ -798,7 +877,7 @@ fn game_tile(
         );
     }
 
-    response.on_hover_text(game.name.clone())
+    response.on_hover_text(format!("{} · clic droit : paramètres", game.name))
 }
 
 /// Texte sur une seule ligne, coupé par une ellipsis s'il dépasse `max_width`.

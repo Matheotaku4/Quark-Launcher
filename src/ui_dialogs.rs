@@ -3,7 +3,7 @@
 //! (XDG Desktop Portal), ouverts via `QuarkApp::pick_file` / `pick_directory`.
 
 use crate::app::{AddStep, PickerTarget, QuarkApp, SearchState, UpdateState};
-use crate::config::{self, AssetKind, ProtonMode, ThemeMode, ViewMode};
+use crate::config::{self, AssetKind, EnvVar, ProtonMode, ThemeMode, ViewMode};
 use crate::proton::{self, ProtonRuntime};
 use crate::theme::{self, Palette};
 use crate::update;
@@ -661,8 +661,8 @@ impl QuarkApp {
                 });
                 ui.label(
                     RichText::new(
-                        "Utilisé par tous les jeux qui n'ont pas leur propre préfixe \
-                         (un sous-dossier par jeu est créé automatiquement).",
+                        "Utilisé par tous les jeux qui n'ont pas leur propre préfixe. Le dossier \
+                         est utilisé tel quel : Quark n'y crée aucun sous-dossier.",
                     )
                     .size(11.0)
                     .color(pal.text_faint),
@@ -704,6 +704,20 @@ impl QuarkApp {
                         .size(11.0)
                         .color(pal.text_faint),
                     );
+                }
+
+                section(ui, "VARIABLES D'ENVIRONNEMENT", &pal);
+                ui.label(
+                    RichText::new(
+                        "Appliquées à tous les lancements. Un jeu qui définit la même variable \
+                         dans ses propres paramètres écrase celle-ci.",
+                    )
+                    .size(11.0)
+                    .color(pal.text_faint),
+                );
+                ui.add_space(6.0);
+                if env_editor(ui, &pal, &mut self.lib.settings.env) {
+                    self.touch();
                 }
 
                 section(ui, "ARTWORKS", &pal);
@@ -879,9 +893,11 @@ impl QuarkApp {
                     .clone()
                     .unwrap_or_else(|| format!("auto : {}", config::prefix_root().display()));
                 ui.label(
-                    RichText::new(format!("Préfixe par défaut : {default_prefix}"))
-                        .size(11.0)
-                        .color(pal.text_faint),
+                    RichText::new(format!(
+                        "Préfixe par défaut : {default_prefix} (utilisé tel quel, sans sous-dossier)"
+                    ))
+                    .size(11.0)
+                    .color(pal.text_faint),
                 );
                 let mut custom = game.prefix.is_some();
                 if ui
@@ -910,6 +926,18 @@ impl QuarkApp {
                         .size(11.0)
                         .color(pal.text_faint),
                 );
+
+                section(ui, "VARIABLES D'ENVIRONNEMENT", &pal);
+                ui.label(
+                    RichText::new(
+                        "Passées au jeu au lancement, après celles des réglages généraux : une \
+                         variable du même nom ici écrase la variable globale.",
+                    )
+                    .size(11.0)
+                    .color(pal.text_faint),
+                );
+                ui.add_space(6.0);
+                env_editor(ui, &pal, &mut game.env);
 
                 section(ui, "ARTWORKS", &pal);
                 let sources = match (game.steam_app_id, game.sgdb_id) {
@@ -991,7 +1019,7 @@ impl QuarkApp {
             self.pick_directory(ctx, start, PickerTarget::GamePrefix);
         }
         if remove {
-            self.confirm_remove = Some(game.id.clone());
+            self.confirm_remove = vec![game.id.clone()];
             return;
         }
         if save {
@@ -1014,21 +1042,34 @@ impl QuarkApp {
     // -----------------------------------------------------------------------
 
     pub(crate) fn confirm_remove_dialog(&mut self, ctx: &egui::Context) {
-        let Some(id) = self.confirm_remove.clone() else {
+        if self.confirm_remove.is_empty() {
             return;
-        };
+        }
         let pal = self.pal;
-        let name = self
-            .lib
-            .get(&id)
-            .map(|g| g.name.clone())
-            .unwrap_or_default();
+        let ids = self.confirm_remove.clone();
+        let names: Vec<String> = ids
+            .iter()
+            .filter_map(|id| self.lib.get(id).map(|g| g.name.clone()))
+            .collect();
+        let title = match names.len() {
+            0 => "Retirer ce jeu de la bibliothèque ?".to_string(),
+            1 => format!("Retirer « {} » de la bibliothèque ?", names[0]),
+            count => format!("Retirer {count} jeux de la bibliothèque ?"),
+        };
         let mut cancel = false;
         let mut confirm = false;
 
         let modal = egui::Modal::new(egui::Id::new("quark_confirm_remove")).show(ctx, |ui| {
                 ui.set_min_width(520.0);
-                ui.label(RichText::new(format!("Retirer « {name} » de la bibliothèque ?")).size(14.0));
+                ui.label(RichText::new(title).size(14.0));
+                if names.len() > 1 {
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(names.join("  \u{b7}  "))
+                            .size(12.0)
+                            .color(pal.text_dim),
+                    );
+                }
                 ui.add_space(6.0);
                 ui.label(
                     RichText::new(
@@ -1056,19 +1097,32 @@ impl QuarkApp {
         }
 
         if confirm {
-            self.lib.remove(&id);
-            self.news.remove(&id);
-            let _ = std::fs::remove_dir_all(config::artwork_root().join(&id));
-            // Plus rien à télécharger pour ce jeu, et le job en cours est ignoré.
-            self.job_queue.retain(|(queued, _)| queued != &id);
-            if self.selected.as_deref() == Some(id.as_str()) {
+            for id in &ids {
+                self.lib.remove(id);
+                self.news.remove(id);
+                let _ = std::fs::remove_dir_all(config::artwork_root().join(id));
+                // Plus rien à télécharger pour ce jeu, et le job en cours est ignoré.
+                self.job_queue.retain(|(queued, _)| queued != id);
+            }
+            self.marked.clear();
+            let selected_gone = self
+                .selected
+                .as_ref()
+                .map(|selected| ids.iter().any(|id| id == selected))
+                .unwrap_or(false);
+            if selected_gone {
                 self.selected = self.lib.games.first().map(|g| g.id.clone());
             }
-            self.confirm_remove = None;
+            let count = ids.len();
+            self.confirm_remove.clear();
             self.touch();
-            self.toast_info("Jeu retiré de la bibliothèque");
+            self.toast_info(if count > 1 {
+                format!("{count} jeux retirés de la bibliothèque")
+            } else {
+                "Jeu retiré de la bibliothèque".to_string()
+            });
         } else if cancel {
-            self.confirm_remove = None;
+            self.confirm_remove.clear();
         }
     }
 }
@@ -1076,6 +1130,81 @@ impl QuarkApp {
 // ---------------------------------------------------------------------------
 // Aides
 // ---------------------------------------------------------------------------
+
+/// Éditeur de variables d'environnement : une ligne « NOM=valeur » par
+/// variable, avec ajout et retrait en place. Renvoie `true` si quelque chose a
+/// changé (pour déclencher la sauvegarde).
+fn env_editor(ui: &mut egui::Ui, pal: &Palette, vars: &mut Vec<EnvVar>) -> bool {
+    let mut changed = false;
+    let mut remove: Option<usize> = None;
+    let mut add = false;
+
+    if vars.is_empty() {
+        ui.label(
+            RichText::new("aucune variable")
+                .size(11.5)
+                .color(pal.text_faint),
+        );
+        ui.add_space(4.0);
+    }
+
+    for index in 0..vars.len() {
+        ui.horizontal(|ui| {
+            let width = ui.available_width();
+            let name_width = ((width - 70.0) * 0.40).max(110.0);
+            let name = ui.add_sized(
+                Vec2::new(name_width, 24.0),
+                egui::TextEdit::singleline(&mut vars[index].name).hint_text("NOM"),
+            );
+            if name.changed() {
+                changed = true;
+            }
+            // « NOM=valeur » collé d'un bloc : la séparation se fait quand le
+            // champ est validé, jamais pendant la frappe.
+            if name.lost_focus() && vars[index].value.trim().is_empty() {
+                if let Some(var) = EnvVar::parse(&vars[index].name.clone()) {
+                    vars[index] = var;
+                    changed = true;
+                }
+            }
+            ui.label(RichText::new("=").size(12.0).color(pal.text_faint));
+            let value_width = (width - name_width - 70.0).max(90.0);
+            let value = ui.add_sized(
+                Vec2::new(value_width, 24.0),
+                egui::TextEdit::singleline(&mut vars[index].value).hint_text("valeur"),
+            );
+            if value.changed() {
+                changed = true;
+            }
+            if widgets::icon_button(ui, 24.0, Icon::Trash, pal, "Retirer cette variable").clicked() {
+                remove = Some(index);
+            }
+        });
+        ui.add_space(2.0);
+    }
+
+    ui.horizontal(|ui| {
+        if widgets::ghost_button(ui, "Ajouter une variable", pal, Icon::Plus).clicked() {
+            add = true;
+        }
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new("format NOM=valeur, ex. WINEDLLOVERRIDES=winmm=n,b;steam_api64")
+                .size(11.0)
+                .color(pal.text_faint),
+        );
+    });
+
+    if let Some(index) = remove {
+        vars.remove(index);
+        changed = true;
+    }
+    if add {
+        vars.push(EnvVar::default());
+        changed = true;
+    }
+    changed
+}
 
 fn section(ui: &mut egui::Ui, title: &str, pal: &Palette) {
     ui.add_space(12.0);

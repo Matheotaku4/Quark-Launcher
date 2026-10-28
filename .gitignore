@@ -2,3 +2,6 @@
 
 # Rendus de controle de l'interface (quark --ui)
 artifacts/
+
+# Outils de travail locaux
+__pycache__/

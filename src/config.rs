@@ -142,6 +142,49 @@ impl Artwork {
 }
 
 // ---------------------------------------------------------------------------
+// Variables d'environnement
+// ---------------------------------------------------------------------------
+
+/// Variable d'environnement passée au jeu (ou à tous les jeux, depuis les
+/// réglages généraux).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct EnvVar {
+    pub name: String,
+    pub value: String,
+}
+
+impl EnvVar {
+    pub fn new(name: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            value: value.into(),
+        }
+    }
+
+    /// « WINEDLLOVERRIDES=winmm=n,b;steam_api64 » -> nom + valeur (premier `=`).
+    /// Renvoie `None` si la ligne ne contient pas de nom exploitable.
+    pub fn parse(line: &str) -> Option<Self> {
+        let (name, value) = line.split_once('=')?;
+        let name = name.trim();
+        if name.is_empty() || name.contains(char::is_whitespace) {
+            return None;
+        }
+        Some(Self {
+            name: name.to_string(),
+            value: value.trim().to_string(),
+        })
+    }
+
+    /// Nom utilisable par `Command::env` (sinon la variable est ignorée).
+    pub fn is_valid(&self) -> bool {
+        let name = self.name.trim();
+        !name.is_empty() && !name.contains(char::is_whitespace)
+    }
+
+}
+
+// ---------------------------------------------------------------------------
 // Réglages
 // ---------------------------------------------------------------------------
 
@@ -215,7 +258,11 @@ pub struct Settings {
     /// Clé du runtime Proton utilisé par défaut (None = meilleur détecté).
     pub default_proton: Option<String>,
     /// Préfixe Proton par défaut pour les jeux qui n'en ont pas d'autre.
+    /// Le dossier est utilisé tel quel : Quark n'y crée aucun sous-dossier.
     pub default_prefix: Option<String>,
+    /// Variables d'environnement appliquées à tous les lancements (le jeu peut
+    /// écraser une variable du même nom).
+    pub env: Vec<EnvVar>,
 }
 
 impl Default for Settings {
@@ -228,6 +275,7 @@ impl Default for Settings {
             country: "FR".to_string(),
             default_proton: None,
             default_prefix: None,
+            env: Vec::new(),
         }
     }
 }
@@ -255,6 +303,9 @@ pub struct Game {
     pub proton: ProtonMode,
     /// Préfixe Proton propre à ce jeu (écrase le préfixe par défaut).
     pub prefix: Option<String>,
+    /// Variables d'environnement propres au jeu (prioritaires sur celles des
+    /// réglages généraux).
+    pub env: Vec<EnvVar>,
 }
 
 impl Default for Game {
@@ -272,6 +323,7 @@ impl Default for Game {
             added_at: now_ts(),
             proton: ProtonMode::Default,
             prefix: None,
+            env: Vec::new(),
         }
     }
 }
@@ -289,17 +341,19 @@ impl Game {
         PathBuf::from(expand_tilde(&self.exe))
     }
 
-    /// Préfixe Proton effectif : jeu > réglages > dossier généré par Quark.
+    /// Préfixe Proton effectif : jeu > réglages > dossier géré par Quark.
     ///
-    /// Le préfixe par défaut des réglages sert de *racine* : chaque jeu y a son
-    /// propre sous-dossier (`<racine>/<id>`), sinon tous les jeux partageraient
-    /// la même installation Wine et se marcheraient dessus.
+    /// Le dossier choisi (par le jeu ou par les réglages) est utilisé **tel
+    /// quel** : Quark n'y crée aucun sous-dossier, donc le préfixe est
+    /// exactement celui que tu as sélectionné. Seul le repli automatique
+    /// (aucun préfixe indiqué) range les préfixes sous
+    /// `~/.local/share/quark/prefixes/`.
     pub fn prefix_path(&self, s: &Settings) -> PathBuf {
         if let Some(p) = self.prefix.as_ref().filter(|p| !p.trim().is_empty()) {
             return PathBuf::from(expand_tilde(p));
         }
         if let Some(p) = s.default_prefix.as_ref().filter(|p| !p.trim().is_empty()) {
-            return PathBuf::from(expand_tilde(p)).join(&self.id);
+            return PathBuf::from(expand_tilde(p));
         }
         prefix_root().join(&self.id)
     }
@@ -497,13 +551,37 @@ mod tests {
     }
 
     #[test]
-    fn prefix_par_defaut_ajoute_un_sous_dossier_par_jeu() {
+    fn variables_d_un_jeu_absent_se_chargent_vide() {
+        // Config d'une version précédente : « env » n'existe pas encore.
+        let json = r#"{ "name": "Vieux jeu", "exe": "/tmp/vieux.exe" }"#;
+        let game: Game = serde_json::from_str(json).unwrap();
+        assert!(game.env.is_empty());
+        let settings: Settings = serde_json::from_str(r#"{ "language": "english" }"#).unwrap();
+        assert!(settings.env.is_empty());
+    }
+
+    #[test]
+    fn prefix_par_defaut_utilise_le_dossier_choisi() {
         let mut settings = Settings::default();
         settings.default_prefix = Some("/tmp/quark-tests/prefixes".to_string());
-        let path = game("abc").prefix_path(&settings);
-        assert_eq!(path, PathBuf::from("/tmp/quark-tests/prefixes/abc"));
-        // Deux jeux ne doivent jamais partager le même préfixe.
-        assert_ne!(path, game("xyz").prefix_path(&settings));
+        // Aucun sous-dossier : le dossier indiqué est le préfixe, tel quel.
+        assert_eq!(
+            game("abc").prefix_path(&settings),
+            PathBuf::from("/tmp/quark-tests/prefixes")
+        );
+    }
+
+    #[test]
+    fn variables_d_environnement_analysees() {
+        let var = EnvVar::parse("WINEDLLOVERRIDES=winmm=n,b;steam_api64").unwrap();
+        assert_eq!(var.name, "WINEDLLOVERRIDES");
+        assert_eq!(var.value, "winmm=n,b;steam_api64");
+        // Valeur vide : acceptée, c'est « NOM= » qui compte.
+        assert_eq!(EnvVar::parse("DXVK_HUD=").unwrap().value, "");
+        // Rien d'exploitable : pas de nom.
+        assert!(EnvVar::parse("WINEDLLOVERRIDES").is_none());
+        assert!(EnvVar::parse("=valeur").is_none());
+        assert!(!EnvVar::new("  ", "x").is_valid());
     }
 
     #[test]

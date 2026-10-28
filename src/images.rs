@@ -63,16 +63,24 @@ pub fn draw_fit(ui: &mut egui::Ui, texture: &TextureHandle, rect: egui::Rect) {
     );
 }
 
-/// Dessine la texture en remplissant exactement `rect` (ratio déjà vérifié au
-/// téléchargement pour les bannières et les couvertures).
-pub fn draw_fill(ui: &mut egui::Ui, texture: &TextureHandle, rect: egui::Rect) {
-    let target = rect.size();
-    if target.x <= 0.0 || target.y <= 0.0 {
+/// Dessine la texture dans `rect` en conservant ses proportions.
+
+/// Dessine la texture en remplissant `rect` sans jamais la déformer : l'image
+/// est mise à l'échelle pour couvrir la zone, puis rognée (centrée) sur les
+/// bords qui dépassent. C'est le comportement d'une bannière en plein écran :
+/// `rect` doit être le rectangle de découpe du painter appelant.
+pub fn draw_cover(painter: &egui::Painter, texture: &TextureHandle, rect: egui::Rect) {
+    let size = texture.size_vec2();
+    if size.x <= 0.0 || size.y <= 0.0 || rect.width() <= 0.0 || rect.height() <= 0.0 {
         return;
     }
-    ui.put(
-        rect,
-        egui::Image::new(egui::load::SizedTexture::new(texture.id(), target)),
+    let scale = (rect.width() / size.x).max(rect.height() / size.y);
+    let fitted = egui::Rect::from_center_size(rect.center(), size * scale);
+    painter.image(
+        texture.id(),
+        fitted,
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+        egui::Color32::WHITE,
     );
 }
 
@@ -93,5 +101,18 @@ mod tests {
         let texture = cache.get(&ctx, &path).expect("texture décodée");
         assert_eq!(texture.size(), [8, 12]);
         assert!(cache.get(&ctx, &path).is_some(), "le cache doit resservir");
+    }
+
+    #[test]
+    fn recadrage_conserve_les_proportions() {
+        // Une image 2:1 dans une zone 1:1 : elle couvre la zone et déborde en
+        // largeur (jamais étirée).
+        let source = egui::Vec2::new(400.0, 200.0);
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::Vec2::new(100.0, 100.0));
+        let scale = (rect.width() / source.x).max(rect.height() / source.y);
+        let fitted = source * scale;
+        assert_eq!(fitted, egui::Vec2::new(200.0, 100.0));
+        assert_eq!(fitted.x / fitted.y, source.x / source.y);
+        assert!(fitted.x > rect.width() && fitted.y >= rect.height());
     }
 }
