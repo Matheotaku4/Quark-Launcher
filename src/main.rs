@@ -274,6 +274,7 @@ fn cli(args: &[String]) -> Option<i32> {
             if let Some(suggested) = proton::suggested_default(&runtimes) {
                 println!("proposé       : {}", suggested.label());
             }
+            println!("anti-triche   : {}", proton::anticheat_summary(&runtimes));
             println!("jeux          : {}", lib.games.len());
             for game in &lib.games {
                 let state = match proton::resolve(game, &lib.settings, &runtimes) {

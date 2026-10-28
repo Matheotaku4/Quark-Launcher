@@ -23,6 +23,11 @@ pub struct ProtonRuntime {
     /// Racine Steam à passer dans STEAM_COMPAT_CLIENT_INSTALL_PATH.
     pub steam_root: PathBuf,
     pub kind: RuntimeKind,
+    /// Vrai si le dossier contient le script `proton`. Les runtimes
+    /// anti-triche installés par Steam n'en ont pas toujours : ils restent
+    /// détectés (et signalés), mais ne peuvent pas servir d'outil de
+    /// compatibilité tant que le script manque.
+    pub has_proton_script: bool,
 }
 
 impl ProtonRuntime {
@@ -56,6 +61,38 @@ pub fn steam_root() -> Option<PathBuf> {
     })
 }
 
+/// Vrai pour un dossier de runtime anti-triche installé par Steam
+/// (« BattlEye_Runtime », « BattlEye AntiCheat Runtime »,
+/// « Proton EasyAntiCheat Runtime », « EasyAntiCheat_Runtime »…).
+fn is_anticheat_name(lower: &str) -> bool {
+    lower.contains("battleye") || lower.contains("easyanticheat") || lower.contains("eac_runt")
+}
+
+/// Runtime anti-triche correspondant à un motif (`battleye`, `easyanticheat`…).
+pub fn anticheat_runtime<'a>(
+    runtimes: &'a [ProtonRuntime],
+    keyword: &str,
+) -> Option<&'a ProtonRuntime> {
+    runtimes
+        .iter()
+        .find(|runtime| runtime.kind == RuntimeKind::AntiCheat && runtime.name.to_lowercase().contains(keyword))
+}
+
+/// Résumé lisible des runtimes anti-triche détectés (chemins compris), pour
+/// les messages et l'interface : « aucun » quand il n'y en a pas.
+pub fn anticheat_summary(runtimes: &[ProtonRuntime]) -> String {
+    let list: Vec<String> = runtimes
+        .iter()
+        .filter(|runtime| runtime.kind == RuntimeKind::AntiCheat)
+        .map(|runtime| format!("{} ({})", runtime.name, runtime.path.display()))
+        .collect();
+    if list.is_empty() {
+        "aucun".to_string()
+    } else {
+        list.join(" · ")
+    }
+}
+
 /// Runtimes trouvés dans une racine Steam donnée.
 ///
 /// Les runtimes anti-triche que Steam installe à côté des Proton
@@ -72,16 +109,19 @@ pub fn detect_in(root: &Path) -> Vec<ProtonRuntime> {
             if !dir.is_dir() {
                 continue;
             }
-            // Un vrai runtime expose toujours un script `proton`.
-            let script = dir.join("proton");
-            if !script.is_file() {
-                continue;
-            }
             let Some(name) = dir.file_name().map(|n| n.to_string_lossy().to_string()) else {
                 continue;
             };
             let lower = name.to_lowercase();
-            let anticheat = lower.contains("battleye") || lower.contains("easyanticheat");
+            let anticheat = is_anticheat_name(&lower);
+            // Un Proton expose un script `proton` ; un runtime anti-triche est
+            // reconnu à son nom, même sans script (c'est le cas des dossiers
+            // « BattlEye_Runtime » / « EasyAntiCheat_Runtime » de Steam).
+            let script = dir.join("proton");
+            let has_proton_script = script.is_file();
+            if !has_proton_script && !anticheat {
+                continue;
+            }
             if !lower.contains("proton") && !anticheat {
                 continue;
             }
@@ -93,13 +133,14 @@ pub fn detect_in(root: &Path) -> Vec<ProtonRuntime> {
                 key: name.clone(),
                 name,
                 version,
-                path: script,
+                path: if has_proton_script { script } else { dir.clone() },
                 steam_root: root.to_path_buf(),
                 kind: if anticheat {
                     RuntimeKind::AntiCheat
                 } else {
                     RuntimeKind::Proton
                 },
+                has_proton_script,
             });
         }
     }
@@ -329,18 +370,36 @@ pub fn resolve(
     let runtime = match game.anticheat {
         AnticheatMode::None => runtime,
         mode => {
-            let keyword = mode.keyword().unwrap_or_default();
-            runtimes
-                .iter()
-                .find(|r| r.kind == RuntimeKind::AntiCheat && r.name.to_lowercase().contains(keyword))
-                .cloned()
-                .ok_or_else(|| {
-                    format!(
-                        "Runtime {} introuvable : installe-le depuis Steam, ou décoche \
-                         l'option anti-triche.",
-                        mode.label()
-                    )
-                })?
+            let mut chosen: Option<ProtonRuntime> = None;
+            let mut unusable: Vec<String> = Vec::new();
+            for keyword in mode.keywords() {
+                match anticheat_runtime(runtimes, keyword).cloned() {
+                    Some(runtime) if runtime.has_proton_script => {
+                        chosen.get_or_insert(runtime);
+                    }
+                    Some(runtime) => {
+                        unusable.push(format!("{} ({})", runtime.name, runtime.path.display()))
+                    }
+                    None => {}
+                }
+            }
+            match chosen {
+                Some(runtime) => runtime,
+                None if !unusable.is_empty() => {
+                    return Err(format!(
+                        "Runtime anti-triche trouvé mais inutilisable comme outil de \
+                         compatibilité (aucun script `proton` dedans) : {}.",
+                        unusable.join(" · ")
+                    ));
+                }
+                None => {
+                    return Err(format!(
+                        "Runtime {} introuvable. Dossiers anti-triche détectés : {}.",
+                        mode.label(),
+                        anticheat_summary(runtimes)
+                    ));
+                }
+            }
         }
     };
 
@@ -467,6 +526,7 @@ mod tests {
             path: root.join(name).join("proton"),
             steam_root: root.clone(),
             kind,
+            has_proton_script: true,
         };
         let runtimes = vec![
             runtime("Proton 9.0", RuntimeKind::Proton),
@@ -493,6 +553,37 @@ mod tests {
         game.anticheat = AnticheatMode::EasyAntiCheat;
         assert!(resolve(&game, &Settings::default(), &runtimes).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn detecte_les_dossiers_anti_triche_sans_script_proton() {
+        // Cas réel de Steam : « BattlEye_Runtime » et « EasyAntiCheat_Runtime »
+        // n'ont pas forcément de script `proton` dans le dossier.
+        let root = std::env::temp_dir().join(format!("quark-anti-nu-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for name in ["BattlEye_Runtime", "EasyAntiCheat_Runtime"] {
+            std::fs::create_dir_all(root.join("steamapps/common").join(name)).unwrap();
+        }
+
+        let runtimes = detect_in(&root);
+        assert_eq!(runtimes.len(), 2, "{runtimes:?}");
+        assert!(runtimes.iter().all(|r| r.kind == RuntimeKind::AntiCheat));
+        assert!(runtimes.iter().all(|r| !r.has_proton_script));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn les_deux_runtimes_anti_triche_sont_independants() {
+        let mut mode = AnticheatMode::None;
+        mode = mode.with_battleye(true);
+        assert!(mode.battleye() && !mode.eac());
+        mode = mode.with_eac(true);
+        assert!(mode.battleye() && mode.eac());
+        assert_eq!(mode, AnticheatMode::Both);
+        mode = mode.with_battleye(false);
+        assert!(!mode.battleye() && mode.eac());
+        mode = mode.with_eac(false);
+        assert_eq!(mode, AnticheatMode::None);
     }
 
     #[test]

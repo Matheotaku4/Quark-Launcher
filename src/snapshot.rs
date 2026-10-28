@@ -736,13 +736,15 @@ fn demo_library() -> Result<Library, String> {
 fn demo_runtimes() -> Vec<ProtonRuntime> {
     let root = PathBuf::from("/tmp/steam");
     let mut out = Vec::new();
+    // Noms tels qu'on les trouve dans une installation Steam réelle.
     for (name, version, kind) in [
         ("GE-Proton9-20", "9-20", RuntimeKind::Proton),
         ("Proton 9.0", "9.0", RuntimeKind::Proton),
         ("Proton Experimental", "", RuntimeKind::Proton),
-        ("Proton BattlEye Runtime", "", RuntimeKind::AntiCheat),
-        ("Proton EasyAntiCheat Runtime", "", RuntimeKind::AntiCheat),
+        ("BattlEye AntiCheat Runtime", "", RuntimeKind::AntiCheat),
+        ("EasyAntiCheat Runtime", "", RuntimeKind::AntiCheat),
     ] {
+        let has_proton_script = kind == RuntimeKind::Proton;
         out.push(ProtonRuntime {
             key: name.to_string(),
             name: name.to_string(),
@@ -751,9 +753,14 @@ fn demo_runtimes() -> Vec<ProtonRuntime> {
             } else {
                 Some(version.to_string())
             },
-            path: root.join(name).join("proton"),
+            path: if has_proton_script {
+                root.join(name).join("proton")
+            } else {
+                root.join("steamapps/common").join(name)
+            },
             steam_root: root.clone(),
             kind,
+            has_proton_script,
         });
     }
     out

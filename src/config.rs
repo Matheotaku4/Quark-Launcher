@@ -250,29 +250,56 @@ pub enum AnticheatMode {
     None,
     BattlEye,
     EasyAntiCheat,
+    /// Les deux runtimes : Heroic permet aussi de cocher les deux cases.
+    Both,
 }
 
 impl AnticheatMode {
-    pub const ALL: [AnticheatMode; 3] = [
-        AnticheatMode::None,
-        AnticheatMode::BattlEye,
-        AnticheatMode::EasyAntiCheat,
-    ];
+    pub fn battleye(self) -> bool {
+        matches!(self, AnticheatMode::BattlEye | AnticheatMode::Both)
+    }
 
-    pub fn label(self) -> &'static str {
-        match self {
-            AnticheatMode::None => "Aucun",
-            AnticheatMode::BattlEye => "BattlEye",
-            AnticheatMode::EasyAntiCheat => "EasyAntiCheat",
+    pub fn eac(self) -> bool {
+        matches!(self, AnticheatMode::EasyAntiCheat | AnticheatMode::Both)
+    }
+
+    /// Même mode avec BattlEye coché ou non (les deux options sont
+    /// indépendantes, comme dans Heroic).
+    pub fn with_battleye(self, on: bool) -> Self {
+        match (on, self.eac()) {
+            (true, true) => AnticheatMode::Both,
+            (true, false) => AnticheatMode::BattlEye,
+            (false, true) => AnticheatMode::EasyAntiCheat,
+            (false, false) => AnticheatMode::None,
         }
     }
 
-    /// Motif recherché dans le nom du runtime installé par Steam.
-    pub fn keyword(self) -> Option<&'static str> {
+    /// Même mode avec EasyAntiCheat coché ou non.
+    pub fn with_eac(self, on: bool) -> Self {
+        match (self.battleye(), on) {
+            (true, true) => AnticheatMode::Both,
+            (true, false) => AnticheatMode::BattlEye,
+            (false, true) => AnticheatMode::EasyAntiCheat,
+            (false, false) => AnticheatMode::None,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
         match self {
-            AnticheatMode::None => None,
-            AnticheatMode::BattlEye => Some("battleye"),
-            AnticheatMode::EasyAntiCheat => Some("easyanticheat"),
+            AnticheatMode::None => "aucun",
+            AnticheatMode::BattlEye => "BattlEye",
+            AnticheatMode::EasyAntiCheat => "EasyAntiCheat",
+            AnticheatMode::Both => "BattlEye + EasyAntiCheat",
+        }
+    }
+
+    /// Motifs cherchés dans les noms de dossiers installés par Steam.
+    pub fn keywords(self) -> &'static [&'static str] {
+        match self {
+            AnticheatMode::None => &[],
+            AnticheatMode::BattlEye => &["battleye"],
+            AnticheatMode::EasyAntiCheat => &["easyanticheat", "eac_runt"],
+            AnticheatMode::Both => &["battleye", "easyanticheat"],
         }
     }
 }

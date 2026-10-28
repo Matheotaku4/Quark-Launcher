@@ -3,9 +3,7 @@
 //! (XDG Desktop Portal), ouverts via `QuarkApp::pick_file` / `pick_directory`.
 
 use crate::app::{AddStep, PickerTarget, QuarkApp, SearchState, SettingsTab, UpdateState};
-use crate::config::{
-    self, AnticheatMode, AssetKind, EnvVar, ProtonMode, ThemeMode, ViewMode,
-};
+use crate::config::{self, AssetKind, EnvVar, ProtonMode, ThemeMode, ViewMode};
 use crate::proton::{self, ProtonRuntime, RuntimeKind};
 use crate::theme::{self, Palette};
 use crate::update;
@@ -645,9 +643,17 @@ impl QuarkApp {
                             }
                         });
                         ui.label(
+                            RichText::new(format!(
+                                "Anti-triche : {}",
+                                proton::anticheat_summary(&self.runtimes)
+                            ))
+                            .size(11.0)
+                            .color(pal.text_faint),
+                        );
+                        ui.label(
                             RichText::new(
-                                "BattlEye et EasyAntiCheat sont proposés comme runtimes à part : \
-                                 choisis celui qu'un jeu réclame dans ses propres paramètres.",
+                                "BattlEye et EasyAntiCheat sont deux options indépendantes, cochables \
+                                 ensemble dans les paramètres du jeu.",
                             )
                             .size(11.0)
                             .color(pal.text_faint),
@@ -1056,26 +1062,68 @@ impl QuarkApp {
                 );
 
                 section(ui, "ANTI-TRICHE", &pal);
+                // Deux cases indépendantes, comme dans Heroic : un jeu peut avoir
+                // besoin des deux runtimes.
+                let mut battleye = game.anticheat.battleye();
+                let mut eac = game.anticheat.eac();
+                let mut changed = false;
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Runtime").size(12.5).color(pal.text_dim));
-                    ui.add_space(8.0);
-                    for mode in AnticheatMode::ALL {
-                        if ui
-                            .selectable_value(&mut game.anticheat, mode, mode.label())
-                            .clicked()
-                        {
-                            // Le runtime est choisi au lancement : rien d'autre
-                            // n'est modifié, aucune variable n'est ajoutée.
-                        }
+                    if ui
+                        .checkbox(&mut battleye, "BattlEye AntiCheat Runtime")
+                        .changed()
+                    {
+                        changed = true;
+                    }
+                    ui.add_space(10.0);
+                    if ui.checkbox(&mut eac, "EasyAntiCheat Runtime").changed() {
+                        changed = true;
                     }
                 });
+                if changed {
+                    game.anticheat = game.anticheat.with_battleye(battleye).with_eac(eac);
+                }
+                // Disponibilité réelle : on montre ce que Quark a trouvé (chemin
+                // compris) au lieu d'inviter à installer ce qui l'est déjà.
+                for (keyword, label, enabled) in [
+                    ("battleye", "BattlEye", game.anticheat.battleye()),
+                    ("easyanticheat", "EasyAntiCheat", game.anticheat.eac()),
+                ] {
+                    if !enabled {
+                        continue;
+                    }
+                    match proton::anticheat_runtime(&self.runtimes, keyword) {
+                        Some(runtime) if runtime.has_proton_script => ui.label(
+                            RichText::new(format!(
+                                "{label} : trouvé — {}",
+                                runtime.path.display()
+                            ))
+                            .size(11.0)
+                            .color(pal.text_dim),
+                        ),
+                        Some(runtime) => ui.label(
+                            RichText::new(format!(
+                                "{label} : trouvé mais sans script `proton` — {}",
+                                runtime.path.display()
+                            ))
+                            .size(11.0)
+                            .color(pal.danger),
+                        ),
+                        None => ui.label(
+                            RichText::new(format!(
+                                "{label} : non détecté (dossiers vus : {})",
+                                proton::anticheat_summary(&self.runtimes)
+                            ))
+                            .size(11.0)
+                            .color(pal.danger),
+                        ),
+                    };
+                }
                 ui.label(
-                    RichText::new(format!(
-                        "Coché, Quark lance le jeu avec le runtime {} installé par Steam, à la \
-                         place de Proton. Rien n'est installé ni deviné : si le runtime est \
-                         absent, le lancement le dit clairement.",
-                        game.anticheat.label(),
-                    ))
+                    RichText::new(
+                        "Coché, Quark lance le jeu avec le runtime Steam correspondant à la place \
+                         de Proton. Si le dossier trouvé n'a pas de script `proton`, le message \
+                         de lancement le dit précisément.",
+                    )
                     .size(11.0)
                     .color(pal.text_faint),
                 );
