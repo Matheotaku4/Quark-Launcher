@@ -395,7 +395,7 @@ fn finalize(
                 wrapped.push("fsr".to_string());
             }
             if opts.gamescope_fps > 0 {
-                wrapped.push("--fps-limit".to_string());
+                wrapped.push("--framerate-limit".to_string());
                 wrapped.push(opts.gamescope_fps.min(1000).to_string());
             }
             wrapped.push("--".to_string());
@@ -835,7 +835,7 @@ mod tests {
                 "-f",
                 "-F",
                 "fsr",
-                "--fps-limit",
+                "--framerate-limit",
                 "60",
                 "--",
                 "gamemoderun",

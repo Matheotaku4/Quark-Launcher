@@ -506,7 +506,10 @@ impl QuarkApp {
                 && self.tray.as_ref().is_some_and(|tray| tray.alive())
             {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                // Fenêtre réellement cachée, pas réduite : une fenêtre réduite
+                // laisserait une entrée dans la barre des tâches, alors que
+                // seule l'icône de notification doit rester.
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
             }
         }
 
@@ -1137,6 +1140,9 @@ impl QuarkApp {
                 .clone()
                 .filter(|p| !p.trim().is_empty());
             game.anticheat = settings.default_anticheat;
+            game.launch = settings.default_launch.clone();
+            game.proton_log = settings.default_proton_log;
+            game.umu = settings.default_umu;
             game.env = settings.default_env.clone();
             if let Some(hit) = &hit {
                 game.steam_app_id = hit.steam_app_id;
@@ -1491,7 +1497,7 @@ impl QuarkApp {
         if show {
             // Un clic sur l'icône ramène la fenêtre telle qu'elle était.
             self.allow_close = false;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
         if quit {

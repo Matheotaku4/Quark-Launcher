@@ -59,6 +59,11 @@ pub fn session_log(game_id: &str) -> PathBuf {
     log_dir(game_id).join("session.log")
 }
 
+/// Images des actualités, téléchargées une fois par billet.
+pub fn news_dir() -> PathBuf {
+    data_dir().join("news")
+}
+
 /// Identifiant unique (suffisant pour une bibliothèque locale).
 pub fn new_id() -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -351,6 +356,13 @@ pub struct Settings {
     pub default_args: String,
     /// Anti-triche prérempli dans chaque jeu ajouté.
     pub default_anticheat: AnticheatMode,
+    /// Options de lancement (GameMode, MangoHud, gamescope, PRIME, wrapper)
+    /// recopiées dans chaque jeu ajouté.
+    pub default_launch: LaunchOptions,
+    /// `PROTON_LOG=1` recopié dans chaque jeu ajouté.
+    pub default_proton_log: bool,
+    /// Lancement par umu-launcher recopié dans chaque jeu ajouté.
+    pub default_umu: bool,
     /// Variables d'environnement recopiées dans chaque jeu ajouté.
     ///
     /// Ce ne sont **pas** des variables globales : chaque jeu en reçoit une
@@ -378,6 +390,9 @@ impl Default for Settings {
             default_prefix: None,
             default_args: String::new(),
             default_anticheat: AnticheatMode::None,
+            default_launch: LaunchOptions::default(),
+            default_proton_log: false,
+            default_umu: false,
             default_env: Vec::new(),
             defaults_migrated: false,
             tray_icon: true,

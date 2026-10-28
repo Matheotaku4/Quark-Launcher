@@ -27,14 +27,17 @@ through **Proton** — or through **umu-launcher**.
   marker), game pane on the right; banner on top, **Play** button with **playtime** right
   next to it, then the **Journal**, **ⓘ**, **Customize** and **settings** buttons in the top
   right. `Play` becomes `Stop` while the game is running.
-- **Thumbnails that never move**: the list shows the game capsule, as Steam does. When a
+- **Thumbnails that never move**: the list shows the game icon (1:1), as Steam does. When a
   game has no icon, the tile is filled with the first letter of its title — leading
   articles ignored, so `The Witcher 3` → `W` and `Les Chevaliers de Baphomet` → `C`, while
   `7 Days to Die` keeps its `7` — over a colour assigned to that game, so every row keeps
-  exactly the same geometry.
+  exactly the same geometry. Icons come from SteamGridDB's `icons` route, then from Steam's
+  `header.jpg`; small (16×16) and WebP icons are accepted, measured by real decoding rather
+  than by the file header alone.
 - **News under the banner**: the latest official announcements of the selected game
-  (public Steam `ISteamNews` feed) — source, author, date, plain-text excerpt; clicking one
-  opens the article in your desktop browser.
+  (public Steam `ISteamNews` feed) — source, author, date, image and text. Clicking a card
+  expands the post **inside Quark** (image included, cached under
+  `~/.local/share/quark/news/`); *Lire sur Steam* opens the full post in your browser.
 - **ProtonDB rating**: the compatibility tier (Platinum, Gold, Silver, Bronze, Borked) is
   read from ProtonDB's public API for the game's Steam AppID and shown as a coloured pill
   next to the playtime, plus a row in the information block. Clicking it opens
@@ -46,7 +49,7 @@ through **Proton** — or through **umu-launcher**.
   - **gamemoderun** (CPU governor from GameMode);
   - **MangoHud** (`MANGOHUD=1`, no wrapper binary needed);
   - **gamescope** with resolution, **FSR** upscaling (`-F fsr`) and frame limit
-    (`--fps-limit`), built as `gamescope -W … -H … -f … -- gamemoderun … `;
+    (`--framerate-limit`), built as `gamescope -W … -H … -f … -- gamemoderun … `;
   - **PRIME offload** for hybrid laptops (`__NV_PRIME_RENDER_OFFLOAD`,
     `__GLX_VENDOR_LIBRARY_NAME`, `__VK_LAYER_NV_optimus`, `DRI_PRIME`);
   - a free **wrapper command** where `%command%` is replaced by the game command, exactly
@@ -75,7 +78,8 @@ through **Proton** — or through **umu-launcher**.
   `WINEDLLOVERRIDES=winmm=n,b;steam_api64`) with a wide value field, plus default variables in
   the settings that are **copied into each game when you add it** — each game then owns its
   own copy, so editing one never touches the others.
-- **"Defaults" settings page**: prefix, arguments, Proton runtime, anti-cheat and environment
+- **"Defaults" settings page**: prefix, arguments, Proton runtime, anti-cheat, **launch
+  options** (GameMode, MangoHud, gamescope, PRIME, wrapper, `PROTON_LOG`, umu) and environment
   variables that are **pre-filled** in every new game. These are defaults, not global
   settings: changing one does not modify games already in the library.
 - **Icons that follow their background**: icons drawn over a banner use a translucent panel
@@ -181,6 +185,7 @@ configuration file.
 | --- | --- |
 | `~/.config/quark/config.json` | settings + games (readable, hand-editable JSON) |
 | `~/.local/share/quark/artwork/<id>/` | downloaded artwork (no network request while displaying) |
+| `~/.local/share/quark/news/<appid>/` | cached news images (one file per post) |
 | `~/.local/share/quark/prefixes/<id>/` | automatically created Proton prefixes |
 | `~/.local/share/quark/logs/<id>/session.log` | last session: command, environment, game and Wine output |
 | `~/.local/share/quark/updates/` | downloaded release archives (never installed automatically) |
@@ -199,7 +204,7 @@ as the **quark-ui-renders** artifact — so every push can be reviewed without i
 anything.
 
 ```bash
-tar -xzf quark-0.7.0-linux-x86_64.tar.gz
+tar -xzf quark-0.8.0-linux-x86_64.tar.gz
 cd quark && ./quark
 ```
 
@@ -235,8 +240,8 @@ the launch and says so instead of failing silently.
 
 ## Notification icon
 
-When **Settings → Appearance → Zone de notification** is enabled, closing the window no
-longer exits: Quark keeps running with a tray icon
+When **Settings → Appearance → Zone de notification** is enabled, closing the window hides
+it completely (no window, no taskbar entry): Quark keeps running with a tray icon
 ([StatusNotifierItem](https://www.freedesktop.org/wiki/Specifications/StatusNotifierItem/)).
 
 - left click / *Ouvrir Quark* → the window comes back (it was minimised, playtime counting

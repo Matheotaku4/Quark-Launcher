@@ -703,6 +703,10 @@ impl QuarkApp {
     }
 
     /// Actualités du jeu (flux public Steam), affichées sous la bannière.
+    ///
+    /// Un clic déplie le billet sur place : le texte et son image sont déjà
+    /// téléchargés, l'article se lit donc dans Quark au lieu d'ouvrir un
+    /// navigateur. Le lien Steam reste disponible en un bouton.
     fn news_section(&mut self, ui: &mut egui::Ui, game: &Game, pal: &Palette, width: f32) {
         let (loading, failure, items) = match self.news.get(&game.id) {
             Some(NewsState::Loading) => (true, None, Vec::new()),
@@ -713,11 +717,12 @@ impl QuarkApp {
         let linked = game.steam_app_id.is_some();
         let mut reload = false;
         let mut open: Option<String> = None;
+        let mut expanded_change: Option<(egui::Id, bool)> = None;
 
         ui.add_space(26.0);
         ui.horizontal(|ui| {
             ui.add_space(32.0);
-            ui.label(RichText::new("ACTUALIT\u{c9}S").size(11.0).color(pal.text_faint));
+            ui.label(RichText::new("ACTUALITÉS").size(11.0).color(pal.text_faint));
             if linked {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.add_space(32.0);
@@ -782,6 +787,17 @@ impl QuarkApp {
             return;
         }
 
+        // Textures résolues avant la boucle : les closures de mise en page ne
+        // peuvent pas emprunter `self` pour les charger.
+        let textures: Vec<Option<egui::TextureHandle>> = items
+            .iter()
+            .map(|item| {
+                item.image
+                    .as_deref()
+                    .and_then(|path| self.texture(ui.ctx(), path))
+            })
+            .collect();
+
         let card_width = (width - 64.0).max(220.0);
         for (index, item) in items.iter().enumerate() {
             let id = ui.make_persistent_id(("quark_news", index, item.url.as_str()));
@@ -789,6 +805,7 @@ impl QuarkApp {
             // qu'après sa mise en page), mais c'est l'animation qui lisse le
             // changement : le décalage d'une image reste invisible.
             let was_hovered = ui.data(|data| data.get_temp::<bool>(id).unwrap_or(false));
+            let expanded = ui.data(|data| data.get_temp::<bool>(id.with("open")).unwrap_or(false));
             let anim = ui
                 .ctx()
                 .animate_bool_with_time(id.with("hover"), was_hovered, 0.14);
@@ -804,22 +821,64 @@ impl QuarkApp {
                     .corner_radius(6.0)
                     .inner_margin(egui::Margin::symmetric(12, 10));
                 // Le `Frame` hérite du layout horizontal de la rangée : sans ce
-                // `vertical`, les trois lignes se retrouvaient côte à côte et
-                // débordaient de la fenêtre.
+                // `vertical`, les lignes se retrouvaient côte à côte.
                 let inner = frame.show(ui, |ui| {
                     ui.vertical(|ui| {
                         ui.set_width(card_width);
-                        let mut meta = vec![item.feed.clone()];
-                        if !item.author.is_empty() {
-                            meta.push(item.author.clone());
-                        }
-                        meta.push(config::human_ago(item.date));
-                        ui.label(RichText::new(meta.join("  \u{b7}  ")).size(11.0).color(pal.text_faint));
-                        ui.add_space(4.0);
-                        ui.label(single_line(&item.title, 14.5, pal.text, card_width));
-                        if !item.excerpt.is_empty() {
-                            ui.add_space(4.0);
-                            ui.label(paragraph(&item.excerpt, 12.0, pal.text_dim, 3));
+                        ui.horizontal_top(|ui| {
+                            // Image du billet, recadrée (jamais déformée).
+                            if let Some(texture) = &textures[index] {
+                                let (rect, _) =
+                                    ui.allocate_exact_size(Vec2::new(164.0, 92.0), Sense::hover());
+                                draw_cover(&ui.painter_at(rect), texture, rect);
+                                ui.add_space(10.0);
+                            }
+                            let text_width = if textures[index].is_some() {
+                                (card_width - 182.0).max(180.0)
+                            } else {
+                                card_width
+                            };
+                            ui.vertical(|ui| {
+                                ui.set_width(text_width);
+                                let mut meta = vec![item.feed.clone()];
+                                if !item.author.is_empty() {
+                                    meta.push(item.author.clone());
+                                }
+                                meta.push(config::human_ago(item.date));
+                                ui.label(
+                                    RichText::new(meta.join("  \u{b7}  "))
+                                        .size(11.0)
+                                        .color(pal.text_faint),
+                                );
+                                ui.add_space(4.0);
+                                ui.label(single_line(&item.title, 14.5, pal.text, text_width));
+                                if !expanded && !item.excerpt.is_empty() {
+                                    ui.add_space(4.0);
+                                    ui.label(paragraph(&item.excerpt, 12.0, pal.text_dim, 2));
+                                }
+                            });
+                        });
+                        if expanded {
+                            if !item.body.is_empty() {
+                                ui.add_space(8.0);
+                                // `usize::MAX` = aucune limite de lignes : le
+                                // texte entier, dans l'application. (`0`
+                                // tronquerait à zéro ligne, donc à rien.)
+                                ui
+                                    .label(paragraph(&item.body, 12.5, pal.text_dim, usize::MAX));
+                            }
+                            ui.add_space(8.0);
+                            ui.horizontal(|ui| {
+                                if widgets::ghost_button(ui, "Réduire", pal, Icon::None).clicked() {
+                                    expanded_change = Some((id.with("open"), false));
+                                }
+                                ui.add_space(6.0);
+                                if widgets::ghost_button(ui, "Lire sur Steam", pal, Icon::None)
+                                    .clicked()
+                                {
+                                    open = Some(item.url.clone());
+                                }
+                            });
                         }
                     });
                 });
@@ -834,20 +893,30 @@ impl QuarkApp {
                     );
                 }
 
-                let response = ui
-                    .interact(inner.response.rect, id, Sense::click())
-                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                // Déplié, la carte ne se referme plus au clic : le texte et les
+                // boutons restent utilisables.
+                let response = if expanded {
+                    ui.interact(inner.response.rect, id, Sense::click())
+                } else {
+                    ui.interact(inner.response.rect, id, Sense::click())
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                };
                 let hovered = response.hovered();
                 if hovered != was_hovered {
                     ui.data_mut(|data| data.insert_temp(id, hovered));
                     // Une seule image de plus : l'animation prend le relais.
                     ui.ctx().request_repaint();
                 }
-                if response.clicked() {
-                    open = Some(item.url.clone());
+                if !expanded && response.clicked() {
+                    expanded_change = Some((id.with("open"), true));
                 }
             });
             ui.add_space(4.0);
+        }
+
+        if let Some((id, value)) = expanded_change {
+            ui.data_mut(|data| data.insert_temp(id, value));
+            ui.ctx().request_repaint();
         }
 
         if reload {

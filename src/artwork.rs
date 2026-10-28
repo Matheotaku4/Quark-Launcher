@@ -66,12 +66,30 @@ pub fn image_size(bytes: &[u8]) -> Option<(u32, u32)> {
     None
 }
 
+/// Dimensions réelles d'une image : lecture de l'en-tête, puis décodage complet
+/// quand le format n'y est pas reconnu.
+///
+/// SteamGridDB sert parfois des WebP : sans ce repli, l'en-tête est illisible et
+/// l'artwork est rejeté comme « image illisible » alors qu'il est valide. Les
+/// icônes (les plus concernées) étaient ainsi les seules à ne jamais arriver.
+pub fn dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    if let Some(size) = image_size(bytes) {
+        return Some(size);
+    }
+    image::load_from_memory(bytes)
+        .ok()
+        .map(|image| (image.width(), image.height()))
+}
+
 /// Vérifie qu'une image a la forme attendue pour ce type d'artwork.
 fn fits(kind: AssetKind, size: Option<(u32, u32)>) -> bool {
     let Some((w, h)) = size else {
         return false;
     };
-    if w < 32 || h < 32 {
+    // Une icône SteamGridDB peut être fournie en 16×16 : le seuil des autres
+    // types la rejetterait.
+    let minimum = if kind == AssetKind::Icon { 16 } else { 32 };
+    if w < minimum || h < minimum {
         return false;
     }
     let ratio = h as f32 / w as f32;
@@ -82,7 +100,9 @@ fn fits(kind: AssetKind, size: Option<(u32, u32)>) -> bool {
         AssetKind::Hero => ratio < 0.8,
         // Logos et icônes : pas de contrainte de forme, seulement une taille.
         AssetKind::Logo => w * h > 10_000,
-        AssetKind::Icon => w * h > 1_000,
+        // Le seuil minimum (16×16) suffit : une icône carrée de 256 pixels
+        // restait sous l'ancien produit minimal et se faisait rejeter.
+        AssetKind::Icon => true,
     }
 }
 
@@ -437,7 +457,9 @@ pub fn build_plan(client: &Client, hit: &SearchHit, s: &Settings) -> AssetPlan {
                 &["header.jpg", "capsule_231x87.jpg", "capsule_sm_120.jpg"][..],
             ),
         ] {
-            if plan.candidates(kind).is_empty() {
+            // Les icônes gardent les assets Steam en secours même quand
+            // SteamGridDB a répondu : une icône absente laisse un monogramme.
+            if plan.candidates(kind).is_empty() || kind == AssetKind::Icon {
                 for file in files {
                     for url in steam_cdn(appid, file) {
                         plan.add(kind, url);
@@ -643,7 +665,7 @@ pub fn apply_plan(client: &Client, dir: &Path, plan: &AssetPlan) -> (Artwork, Ve
                     continue;
                 }
             };
-            let size = image_size(&bytes);
+            let size = dimensions(&bytes);
             if !fits(kind, size) {
                 last_error = match size {
                     Some((w, h)) => format!("format inattendu ({w}×{h})"),
@@ -700,7 +722,9 @@ fn download_image(client: &Client, url: &str) -> Result<(Vec<u8>, &'static str),
     };
 
     let bytes = resp.bytes().map_err(|e| e.to_string())?;
-    if bytes.len() < 512 {
+    // Une icône 16×16 pèse quelques dizaines d'octets : un seuil plus haut la
+    // ferait passer pour un fichier vide.
+    if bytes.len() < 64 {
         return Err("fichier vide".to_string());
     }
     Ok((bytes.to_vec(), ext))
@@ -738,4 +762,37 @@ fn save_image(dir: &Path, kind: AssetKind, bytes: &[u8], ext: &str) -> Result<Pa
     let path = dir.join(format!("{}.{ext}", kind.stem()));
     std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
     Ok(path)
+}
+
+#[cfg(test)]
+mod icon_tests {
+    use super::*;
+
+    /// WebP 8×8 minimal (VP8L) : l'en-tête PNG/JPEG ne le reconnaît pas, seul le
+    /// décodage donne sa taille. C'est exactement le cas qui faisait rejeter
+    /// les icônes comme « image illisible ».
+    const WEBP_8X8: [u8; 38] = [
+        0x52, 0x49, 0x46, 0x46, 0x1E, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38,
+        0x4C, 0x11, 0x00, 0x00, 0x00, 0x2F, 0x07, 0xC0, 0x01, 0x00, 0x07, 0x50, 0x94, 0x22, 0x17,
+        0xA5, 0xFF, 0x81, 0x88, 0xE8, 0x7F, 0x00, 0x00,
+    ];
+
+    #[test]
+    fn une_icone_webp_est_mesuree_par_decodage() {
+        assert_eq!(image_size(&WEBP_8X8), None, "en-tête non reconnu");
+        assert_eq!(dimensions(&WEBP_8X8), Some((8, 8)), "décodage de secours");
+    }
+
+    #[test]
+    fn les_petites_icones_sont_acceptees() {
+        assert!(fits(AssetKind::Icon, Some((16, 16))));
+        assert!(fits(AssetKind::Icon, Some((32, 32))));
+        assert!(!fits(AssetKind::Icon, Some((8, 8))));
+        // Les autres types gardent leur seuil et leur forme.
+        assert!(!fits(AssetKind::Logo, Some((16, 16))));
+        assert!(fits(AssetKind::Logo, Some((256, 128))));
+        assert!(fits(AssetKind::Cover, Some((600, 900))));
+        assert!(!fits(AssetKind::Cover, Some((900, 600))));
+        assert!(fits(AssetKind::Hero, Some((1920, 620))));
+    }
 }

@@ -368,7 +368,7 @@ fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
             }
             let demo = "\u{5b}quark] session du 2026-10-28 21:04 UTC\n\
 \u{5b}quark] GE-Proton9-20 · gamescope 2560×1440 FSR · GameMode · MangoHud\n\
-\u{5b}quark] gamescope -W 2560 -H 1440 -f -F fsr --fps-limit 60 -- gamemoderun \"\
+\u{5b}quark] gamescope -W 2560 -H 1440 -f -F fsr --framerate-limit 60 -- gamemoderun \"\
 /home/matheo/.steam/steam/compatibilitytools.d/GE-Proton9-20/proton\" run \"\
 /jeux/witcher3/bin/x64_dx12/witcher3.exe\"\n\
 \u{5b}quark] préfixe /home/matheo/Games/prefixes/witcher3\n\
@@ -555,6 +555,7 @@ fn seed_news(app: &mut QuarkApp) {
                       complet du mode difficile et une trentaine de corrections signalées par la \
                       communauté."
                 .to_string(),
+            ..Default::default()
         },
         NewsItem {
             title: "Concours de captures d'écran : les gagnants".to_string(),
@@ -565,6 +566,7 @@ fn seed_news(app: &mut QuarkApp) {
             excerpt: "Plus de deux mille participations cette année : merci ! Voici la sélection \
                       finale, ainsi que les coulisses du jury."
                 .to_string(),
+            ..Default::default()
         },
         NewsItem {
             title: "Journal des développeurs : l'audio du jeu".to_string(),
@@ -575,8 +577,39 @@ fn seed_news(app: &mut QuarkApp) {
             excerpt: "Retour sur la conception de la bande-son, des premières maquettes aux \
                       enregistrements avec l'orchestre."
                 .to_string(),
+            ..Default::default()
         },
     ];
+    // Une image locale pour les deux premiers billets : le rendu montre la
+    // carte avec image et la carte sans.
+    let image = crate::config::data_dir().join("demo-news.png");
+    if !image.exists() {
+        let _ = save_demo_png(&image, 320, 180, |x, y| {
+            let t = x as f32 / 320.0;
+            let s = y as f32 / 180.0;
+            [
+                (26.0 + 54.0 * t) as u8,
+                (58.0 + 40.0 * s) as u8,
+                (110.0 + 60.0 * (1.0 - t)) as u8,
+                255,
+            ]
+        });
+    }
+    let mut items = items;
+    for (index, item) in items.iter_mut().take(2).enumerate() {
+        item.image = Some(image.clone());
+        if index == 0 {
+            // Texte déplié : le rendu vérifie la mise en page de l'article
+            // intégré, pas seulement la carte repliée.
+            item.body = "La mise à jour 1.6 ajoute trois nouvelles quêtes secondaires en Velen et \
+                         à Skellige, un rééquilibrage complet du mode difficile, la prise en charge \
+                         de la manette sur Steam Deck et une trentaine de corrections signalées par \
+                         la communauté : sauvegardes corrompues, quêtes bloquées au chapitre III, \
+                         ombres manquantes sur les cartes Ampere, et le retour du mode photo en \
+                         fenêtré."
+                .to_string();
+        }
+    }
     app.news.insert(id, NewsState::Loaded(items));
 }
 
@@ -804,6 +837,16 @@ fn demo_library() -> Result<Library, String> {
     settings.default_args = "-windowed -novid".to_string();
     settings.default_prefix = Some("~/Games/prefixes".to_string());
     settings.default_anticheat = crate::config::AnticheatMode::EasyAntiCheat;
+    settings.default_launch = crate::config::LaunchOptions {
+        gamemode: true,
+        mangohud: true,
+        gamescope: true,
+        gamescope_width: 2560,
+        gamescope_height: 1440,
+        gamescope_fsr: true,
+        gamescope_fps: 60,
+        ..Default::default()
+    };
     settings.default_env = vec![
         crate::config::EnvVar::new("MANGOHUD", "1"),
         crate::config::EnvVar::new("WINEDLLOVERRIDES", "winmm=n,b;steam_api64"),

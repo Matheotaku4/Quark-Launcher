@@ -426,6 +426,9 @@ impl QuarkApp {
             game.proton = self.add.proton.clone();
             // Réglages « par défaut » : recopiés dans chaque nouveau jeu.
             game.anticheat = self.lib.settings.default_anticheat;
+            game.launch = self.lib.settings.default_launch.clone();
+            game.proton_log = self.lib.settings.default_proton_log;
+            game.umu = self.lib.settings.default_umu;
             game.env = self.lib.settings.default_env.clone();
             if self.add.custom_prefix && !self.add.prefix.trim().is_empty() {
                 game.prefix = Some(self.add.prefix.trim().to_string());
@@ -830,7 +833,27 @@ impl QuarkApp {
                         if env_editor(ui, &pal, &mut self.lib.settings.default_env) {
                             self.touch();
                         }
+                        section_hint(
+                            ui,
+                            "OPTIONS DE LANCEMENT",
+                            &pal,
+                            "Recopiées dans chaque jeu ajouté, puis chaque jeu garde les siennes. \
+                             Un outil absent est ignoré au lancement (le jeu démarre quand même) \
+                             et signalé dans les paramètres du jeu.",
+                        );
+                        if launch_options_editor(
+                            ui,
+                            &pal,
+                            &mut self.lib.settings.default_launch,
+                            &mut self.lib.settings.default_proton_log,
+                            &mut self.lib.settings.default_umu,
+                            None,
+                            &self.tools,
+                        ) {
+                            self.touch();
+                        }
                     }
+
                     SettingsTab::Artworks => {
                         section(ui, "SOURCES", &pal);
                         ui.horizontal(|ui| {
@@ -1200,127 +1223,15 @@ impl QuarkApp {
                      jeu, de l'extérieur vers l'intérieur : gamescope, puis gamemoderun, puis le \
                      jeu. Un outil absent est ignoré — le jeu démarre quand même — et signalé ici.",
                 );
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut game.launch.gamemode, "gamemoderun");
-                    if !self.tools.gamemoderun {
-                        ui.label(RichText::new("(absent)").size(10.5).color(pal.danger));
-                    }
-                    ui.add_space(16.0);
-                    ui.checkbox(&mut game.launch.mangohud, "MangoHud");
-                    ui.add_space(16.0);
-                    ui.checkbox(&mut game.launch.prime, "PRIME (NVIDIA)");
-                    widgets::info_button(
-                        ui,
-                        &pal,
-                        "MangoHud passe par MANGOHUD=1, rien à taper. PRIME force le rendu sur la \
-                         carte NVIDIA dédiée des portables hybrides (DRI_PRIME pour les autres).",
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut game.launch.gamescope, "gamescope");
-                    if !self.tools.gamescope {
-                        ui.label(RichText::new("(absent)").size(10.5).color(pal.danger));
-                    }
-                    if game.launch.gamescope {
-                        ui.add_space(10.0);
-                        ui.add(
-                            egui::DragValue::new(&mut game.launch.gamescope_width)
-                                .range(320..=7680)
-                                .speed(4.0)
-                                .suffix(" px"),
-                        );
-                        ui.label(RichText::new("×").size(11.0).color(pal.text_dim));
-                        ui.add(
-                            egui::DragValue::new(&mut game.launch.gamescope_height)
-                                .range(200..=4320)
-                                .speed(4.0)
-                                .suffix(" px"),
-                        );
-                        ui.add_space(10.0);
-                        ui.checkbox(&mut game.launch.gamescope_fsr, "FSR");
-                        ui.add_space(10.0);
-                        ui.label(RichText::new("max").size(11.5).color(pal.text_dim));
-                        ui.add(
-                            egui::DragValue::new(&mut game.launch.gamescope_fps)
-                                .range(0..=1000)
-                                .speed(1.0)
-                                .suffix(" fps"),
-                        );
-                        widgets::info_button(
-                            ui,
-                            &pal,
-                            "gamescope affiche le jeu dans son propre compositeur, à cette \
-                             résolution. FSR agrandit une image plus petite (gain de performance) ; \
-                             « max » limite les images par seconde (0 = aucune limite).",
-                        );
-                    }
-                });
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Commande wrapper").size(12.5).color(pal.text_dim));
-                    widgets::info_button(
-                        ui,
-                        &pal,
-                        "Comme les options de lancement Steam : %command% est remplacé par la \
-                         commande du jeu. Exemple : env FOO=1 %command%. Sans %command%, la \
-                         commande est placée devant. La ligne passe par un shell, donc env, pipes \
-                         et redirections fonctionnent.",
-                    );
-                });
-                ui.add(
-                    egui::TextEdit::singleline(&mut game.launch.wrapper)
-                        .hint_text("%command%")
-                        .desired_width(f32::INFINITY),
+                launch_options_editor(
+                    ui,
+                    &pal,
+                    &mut game.launch,
+                    &mut game.proton_log,
+                    &mut game.umu,
+                    Some(&mut game.umu_game_id),
+                    &self.tools,
                 );
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut game.proton_log, "Journal Proton détaillé (PROTON_LOG=1)");
-                    widgets::info_button(
-                        ui,
-                        &pal,
-                        "Proton écrit un journal détaillé dans le dossier de logs du jeu, à côté de \
-                         la sortie standard capturée par Quark. Utile quand un jeu refuse de \
-                         démarrer.",
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut game.umu, "Lancer via umu-launcher");
-                    if !self.tools.umu_run {
-                        ui.label(RichText::new("(umu-run absent)").size(10.5).color(pal.danger));
-                    }
-                    widgets::info_button(
-                        ui,
-                        &pal,
-                        "umu-launcher lance un jeu Windows avec Proton sans Steam : il gère le \
-                         préfixe et transmet GAMEID à Proton. Sans umu-run installé, Quark refuse \
-                         le lancement avec un message clair plutôt que d'échouer en silence.",
-                    );
-                });
-                if game.launch.any() || game.proton_log || game.umu {
-                    ui.add_space(4.0);
-                    if widgets::ghost_button(ui, "Tout réinitialiser", &pal, Icon::None).clicked() {
-                        game.launch = config::LaunchOptions::default();
-                        game.proton_log = false;
-                        game.umu = false;
-                        game.umu_game_id.clear();
-                    }
-                }
-                if game.umu {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("GAMEID").size(11.5).color(pal.text_dim));
-                        ui.add(
-                            egui::TextEdit::singleline(&mut game.umu_game_id)
-                                .hint_text("0")
-                                .desired_width(120.0),
-                        );
-                        widgets::info_button(
-                            ui,
-                            &pal,
-                            "Identifiant ProtonDB du jeu (son AppID Steam). « 0 » suffit pour un \
-                             jeu inconnu.",
-                        );
-                    });
-                }
-
                 section_hint(
                     ui,
                     "ANTI-TRICHE",
@@ -2411,4 +2322,154 @@ impl QuarkApp {
             self.logs = None;
         }
     }
+}
+
+/// Éditeur des options de lancement, partagé par les paramètres du jeu et
+/// l'onglet « Par défaut » : mêmes cases et mêmes explications des deux côtés.
+/// Renvoie vrai si un réglage a changé.
+fn launch_options_editor(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    launch: &mut config::LaunchOptions,
+    proton_log: &mut bool,
+    umu: &mut bool,
+    mut umu_game_id: Option<&mut String>,
+    tools: &proton::Tools,
+) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        changed |= ui.checkbox(&mut launch.gamemode, "gamemoderun").changed();
+        if !tools.gamemoderun {
+            ui.label(RichText::new("(absent)").size(10.5).color(pal.danger));
+        }
+        ui.add_space(16.0);
+        changed |= ui.checkbox(&mut launch.mangohud, "MangoHud").changed();
+        ui.add_space(16.0);
+        changed |= ui.checkbox(&mut launch.prime, "PRIME (NVIDIA)").changed();
+        widgets::info_button(
+            ui,
+            pal,
+            "MangoHud passe par MANGOHUD=1, rien à taper. PRIME force le rendu sur la \
+             carte NVIDIA dédiée des portables hybrides (DRI_PRIME pour les autres).",
+        );
+    });
+    ui.horizontal(|ui| {
+        changed |= ui.checkbox(&mut launch.gamescope, "gamescope").changed();
+        if !tools.gamescope {
+            ui.label(RichText::new("(absent)").size(10.5).color(pal.danger));
+        }
+        if launch.gamescope {
+            ui.add_space(10.0);
+            changed |= ui
+                .add(
+                    egui::DragValue::new(&mut launch.gamescope_width)
+                        .range(320..=7680)
+                        .speed(4.0)
+                        .suffix(" px"),
+                )
+                .changed();
+            ui.label(RichText::new("×").size(11.0).color(pal.text_dim));
+            changed |= ui
+                .add(
+                    egui::DragValue::new(&mut launch.gamescope_height)
+                        .range(200..=4320)
+                        .speed(4.0)
+                        .suffix(" px"),
+                )
+                .changed();
+            ui.add_space(10.0);
+            changed |= ui.checkbox(&mut launch.gamescope_fsr, "FSR").changed();
+            ui.add_space(10.0);
+            ui.label(RichText::new("max").size(11.5).color(pal.text_dim));
+            changed |= ui
+                .add(
+                    egui::DragValue::new(&mut launch.gamescope_fps)
+                        .range(0..=1000)
+                        .speed(1.0)
+                        .suffix(" fps"),
+                )
+                .changed();
+            widgets::info_button(
+                ui,
+                pal,
+                "gamescope affiche le jeu dans son propre compositeur, à cette \
+                 résolution. FSR agrandit une image plus petite (gain de performance) ; \
+                 « max » limite les images par seconde (--framerate-limit, 0 = aucune limite).",
+            );
+        }
+    });
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Commande wrapper").size(12.5).color(pal.text_dim));
+        widgets::info_button(
+            ui,
+            pal,
+            "Comme les options de lancement Steam : %command% est remplacé par la \
+             commande du jeu. Exemple : env FOO=1 %command%. Sans %command%, la \
+             commande est placée devant. La ligne passe par un shell, donc env, pipes \
+             et redirections fonctionnent.",
+        );
+    });
+    changed |= ui
+        .add(
+            egui::TextEdit::singleline(&mut launch.wrapper)
+                .hint_text("%command%")
+                .desired_width(f32::INFINITY),
+        )
+        .changed();
+    ui.horizontal(|ui| {
+        changed |= ui
+            .checkbox(proton_log, "Journal Proton détaillé (PROTON_LOG=1)")
+            .changed();
+        widgets::info_button(
+            ui,
+            pal,
+            "Proton écrit un journal détaillé dans le dossier de logs du jeu, à côté de \
+             la sortie standard capturée par Quark. Utile quand un jeu refuse de démarrer.",
+        );
+    });
+    ui.horizontal(|ui| {
+        changed |= ui.checkbox(umu, "Lancer via umu-launcher").changed();
+        if !tools.umu_run {
+            ui.label(RichText::new("(umu-run absent)").size(10.5).color(pal.danger));
+        }
+        widgets::info_button(
+            ui,
+            pal,
+            "umu-launcher lance un jeu Windows avec Proton sans Steam : il gère le \
+             préfixe et transmet GAMEID à Proton. Sans umu-run installé, Quark refuse le \
+             lancement avec un message clair plutôt que d'échouer en silence.",
+        );
+    });
+    if launch.any() || *proton_log || *umu {
+        ui.add_space(4.0);
+        if widgets::ghost_button(ui, "Tout réinitialiser", pal, Icon::None).clicked() {
+            *launch = config::LaunchOptions::default();
+            *proton_log = false;
+            *umu = false;
+            if let Some(id) = umu_game_id.as_deref_mut() {
+                id.clear();
+            }
+            changed = true;
+        }
+    }
+    if *umu {
+        if let Some(id) = umu_game_id.as_deref_mut() {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("GAMEID").size(11.5).color(pal.text_dim));
+                ui.add(
+                    egui::TextEdit::singleline(id)
+                        .hint_text("0")
+                        .desired_width(120.0),
+                );
+                widgets::info_button(
+                    ui,
+                    pal,
+                    "Identifiant ProtonDB du jeu (son AppID Steam). « 0 » suffit pour un \
+                     jeu inconnu.",
+                );
+            });
+        }
+    }
+    changed
 }

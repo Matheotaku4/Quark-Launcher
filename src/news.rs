@@ -5,6 +5,7 @@
 //! lire les actualités : l'API Steam est publique.
 
 use serde::Deserialize;
+use std::path::PathBuf;
 
 /// Nombre d'actualités demandées à Steam.
 pub const COUNT: usize = 6;
@@ -12,7 +13,13 @@ pub const COUNT: usize = 6;
 /// Longueur maximale de l'aperçu affiché sous le titre.
 const EXCERPT_CHARS: usize = 260;
 
-#[derive(Debug, Clone, PartialEq)]
+/// Longueur du texte intégré : le billet se lit dans Quark, sans navigateur.
+const BODY_CHARS: usize = 900;
+
+/// Hôte des images de la communauté Steam (`{STEAM_CLAN_IMAGE}`).
+const CLAN_IMAGES: &str = "https://clan.cloudflare.steamstatic.com/images";
+
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct NewsItem {
     pub title: String,
     /// Lien vers la page d'actualité Steam (redirige vers l'article externe).
@@ -24,6 +31,12 @@ pub struct NewsItem {
     pub date: i64,
     /// Aperçu en texte brut (balisage HTML et Steam retiré).
     pub excerpt: String,
+    /// Texte plus long, affiché quand le billet est déplié dans Quark.
+    pub body: String,
+    /// URL de la première image du billet.
+    pub image_url: Option<String>,
+    /// Image téléchargée une fois dans `~/.local/share/quark/news/`.
+    pub image: Option<PathBuf>,
 }
 
 /// Récupère les dernières actualités d'un appid Steam.
@@ -53,13 +66,22 @@ pub fn fetch(
         .newsitems
         .into_iter()
         .filter(|raw| !raw.title.trim().is_empty() && !raw.gid.trim().is_empty())
-        .map(|raw| NewsItem {
-            title: clean(&raw.title),
-            url: item_url(app_id, &raw.gid, &raw.url),
-            feed: clean(&raw.feedlabel),
-            author: clean(&raw.author),
-            date: raw.date,
-            excerpt: excerpt(&raw.contents, EXCERPT_CHARS),
+        .map(|raw| {
+            let image_url = first_image(&raw.contents);
+            let image = image_url
+                .as_deref()
+                .and_then(|url| cache_image(client, app_id, &raw.gid, url));
+            NewsItem {
+                title: clean(&raw.title),
+                url: item_url(app_id, &raw.gid, &raw.url),
+                feed: clean(&raw.feedlabel),
+                author: clean(&raw.author),
+                date: raw.date,
+                excerpt: excerpt(&raw.contents, EXCERPT_CHARS),
+                body: excerpt(&raw.contents, BODY_CHARS),
+                image_url,
+                image,
+            }
         })
         .collect();
     items.sort_by(|a, b| b.date.cmp(&a.date));
@@ -101,6 +123,144 @@ pub fn open_in_browser(url: &str) -> Result<(), String> {
         }
     }
     Err("aucun navigateur trouvé (xdg-open, gio, sensible-browser)".to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Images des billets
+// ---------------------------------------------------------------------------
+
+/// Première image d'un billet : balise `<img>` ou marqueur `{STEAM_CLAN_IMAGE}`.
+pub fn first_image(raw: &str) -> Option<String> {
+    // La recherche insensible à la casse se fait sur une copie ASCII : les
+    // index restent ceux du texte d'origine.
+    let lower = raw.to_ascii_lowercase();
+    let mut from = 0usize;
+    while let Some(offset) = lower[from..].find("<img") {
+        let start = from + offset;
+        let end = lower[start..]
+            .find('>')
+            .map(|index| start + index)
+            .unwrap_or(raw.len());
+        let tag = &raw[start..end.min(raw.len())];
+        if let Some(url) = attribute(tag, "src").or_else(|| attribute(tag, "data-src")) {
+            if let Some(url) = expand_image(&url) {
+                return Some(url);
+            }
+        }
+        from = end.max(start + 4);
+        if from >= lower.len() {
+            break;
+        }
+    }
+    for marker in ["{STEAM_CLAN_IMAGE}", "{STEAM_CLAN_LOC_IMAGE}"] {
+        if let Some(offset) = raw.find(marker) {
+            let path: String = raw[offset + marker.len()..]
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || "/-._".contains(*c))
+                .collect();
+            if !path.is_empty() {
+                return Some(format!("{CLAN_IMAGES}{path}"));
+            }
+        }
+    }
+    None
+}
+
+/// Valeur d'un attribut dans une balise déjà isolée (`src="…"`).
+fn attribute(tag: &str, name: &str) -> Option<String> {
+    let lower = tag.to_ascii_lowercase();
+    let mut from = 0usize;
+    while let Some(offset) = lower[from..].find(name) {
+        let start = from + offset;
+        let before_ok = start == 0
+            || lower.as_bytes()[start - 1].is_ascii_whitespace()
+            || lower.as_bytes()[start - 1] == b'<';
+        let rest = &tag[start + name.len()..];
+        let after_name = rest.trim_start();
+        if before_ok && after_name.starts_with('=') {
+            let value = after_name[1..].trim_start();
+            let quote = value.chars().next()?;
+            if quote == '"' || quote == '\'' {
+                let body = &value[1..];
+                let end = body.find(quote)?;
+                return Some(body[..end].to_string());
+            }
+            let end = value
+                .find(|c: char| c.is_whitespace() || c == '>')
+                .unwrap_or(value.len());
+            return Some(value[..end].to_string());
+        }
+        from = start + name.len();
+    }
+    None
+}
+
+/// Complète une URL d'image : marqueurs Steam développés, adresses absolues
+/// acceptées telles quelles.
+fn expand_image(url: &str) -> Option<String> {
+    let url = url.trim();
+    for marker in ["{STEAM_CLAN_IMAGE}", "{STEAM_CLAN_LOC_IMAGE}"] {
+        if let Some(path) = url.strip_prefix(marker) {
+            return Some(format!("{CLAN_IMAGES}{path}"));
+        }
+    }
+    if url.starts_with("https://") || url.starts_with("http://") {
+        Some(url.to_string())
+    } else {
+        None
+    }
+}
+
+/// Télécharge l'image d'un billet dans le cache local (une seule fois par
+/// billet) : l'article s'affiche alors sans aucune requête réseau.
+fn cache_image(
+    client: &reqwest::blocking::Client,
+    app_id: u32,
+    gid: &str,
+    url: &str,
+) -> Option<PathBuf> {
+    let dir = crate::config::news_dir().join(app_id.to_string());
+    std::fs::create_dir_all(&dir).ok()?;
+    let mut stem: String = gid
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(40)
+        .collect();
+    if stem.is_empty() {
+        stem = format!("news{}", crate::config::now_ts());
+    }
+    for ext in ["jpg", "png", "webp"] {
+        let candidate = dir.join(format!("{stem}.{ext}"));
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    let response = client.get(url).send().ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let ext = if content_type.contains("png") {
+        "png"
+    } else if content_type.contains("webp") {
+        "webp"
+    } else if content_type.starts_with("image/") {
+        "jpg"
+    } else {
+        return None;
+    };
+    let bytes = response.bytes().ok()?;
+    if bytes.len() < 1024 {
+        return None;
+    }
+    let path = dir.join(format!("{stem}.{ext}"));
+    std::fs::write(&path, &bytes).ok()?;
+    Some(path)
 }
 
 // ---------------------------------------------------------------------------
@@ -382,5 +542,40 @@ mod tests {
             .filter(|raw| !raw.title.trim().is_empty())
             .count();
         assert_eq!(kept, 1);
+    }
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::*;
+
+    #[test]
+    fn trouve_l_image_d_un_billet() {
+        let raw = "<p>Salut</p><img src=\"{STEAM_CLAN_IMAGE}/12345/abc.png\"><p>suite</p>";
+        assert_eq!(
+            first_image(raw).as_deref(),
+            Some("https://clan.cloudflare.steamstatic.com/images/12345/abc.png")
+        );
+        // Marqueur nu, sans balise autour.
+        let bare = "images {STEAM_CLAN_IMAGE}/9/photo.jpg ici";
+        assert_eq!(
+            first_image(bare).as_deref(),
+            Some("https://clan.cloudflare.steamstatic.com/images/9/photo.jpg")
+        );
+        // Adresse absolue classique.
+        assert_eq!(
+            first_image("<img class=\"x\" src=\"https://exemple.test/a.png\">").as_deref(),
+            Some("https://exemple.test/a.png")
+        );
+        // Rien d'exploitable : pas d'image plutôt qu'une URL inventée.
+        assert_eq!(first_image("aucune image ici"), None);
+        assert_eq!(first_image("<img src=\"relative.png\">"), None);
+    }
+
+    #[test]
+    fn le_texte_integre_est_plus_long_que_l_apercu() {
+        let body = excerpt(&"mot ".repeat(400), BODY_CHARS);
+        assert!(body.chars().count() > EXCERPT_CHARS);
+        assert!(body.ends_with('…'));
     }
 }
