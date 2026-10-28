@@ -575,32 +575,42 @@ impl QuarkApp {
                         });
 
                         section(ui, "ZONE DE NOTIFICATION", &pal);
+                        let mut start_tray: Option<bool> = None;
                         ui.horizontal(|ui| {
+                            let mut tray_icon = self.lib.settings.tray_icon;
                             if ui
                                 .checkbox(
-                                    &mut self.lib.settings.tray_icon,
+                                    &mut tray_icon,
                                     "Garder Quark dans la zone de notification",
                                 )
                                 .changed()
                             {
-                                self.touch();
+                                start_tray = Some(tray_icon);
                             }
                             widgets::info_button(
                                 ui,
                                 &pal,
-                                "Coché, la croix de la fenêtre range Quark dans l'icône au lieu de \
-                                 quitter : un clic sur l'icône ramène la fenêtre, et « Quitter \
-                                 Quark » dans son menu termine le processus. Décoché, la croix \
-                                 quitte normalement.",
+                                "Coché, fermer la fenêtre quitte Quark mais laisse son icône dans \
+                                 la zone de notification : un clic dessus relance le launcher, et \
+                                 « Quitter Quark » dans son menu ferme tout. Décoché, la croix \
+                                 quitte complètement. L'icône vit dans un petit processus dédié, \
+                                 donc la fenêtre disparaît vraiment (rien dans la barre des \
+                                 tâches), même sous Wayland.",
                             );
                         });
+                        if let Some(enabled) = start_tray {
+                            self.set_tray_icon(enabled);
+                        }
                         if self.lib.settings.tray_icon {
-                            match (&self.tray, &self.tray_error) {
+                            match (&crate::tray::helper_pid(), &self.tray_error) {
                                 (Some(_), _) => {
                                     ui.label(
-                                        RichText::new("Icône active sur le bureau.")
-                                            .size(11.0)
-                                            .color(pal.text_faint),
+                                        RichText::new(
+                                            "Icône active : la croix ferme Quark, l'icône reste \
+                                             et un clic la relance.",
+                                        )
+                                        .size(11.0)
+                                        .color(pal.text_faint),
                                     );
                                 }
                                 (None, Some(err)) => {
@@ -824,17 +834,6 @@ impl QuarkApp {
 
                         section_hint(
                             ui,
-                            "VARIABLES D'ENVIRONNEMENT",
-                            &pal,
-                            "Format NOM=valeur, par exemple \
-                             WINEDLLOVERRIDES=winmm=n,b;steam_api64. Chaque jeu ajouté en reçoit \
-                             une copie qu'il peut modifier sans toucher aux autres.",
-                        );
-                        if env_editor(ui, &pal, &mut self.lib.settings.default_env) {
-                            self.touch();
-                        }
-                        section_hint(
-                            ui,
                             "OPTIONS DE LANCEMENT",
                             &pal,
                             "Recopiées dans chaque jeu ajouté, puis chaque jeu garde les siennes. \
@@ -850,6 +849,17 @@ impl QuarkApp {
                             None,
                             &self.tools,
                         ) {
+                            self.touch();
+                        }
+                        section_hint(
+                            ui,
+                            "VARIABLES D'ENVIRONNEMENT",
+                            &pal,
+                            "Format NOM=valeur, par exemple \
+                             WINEDLLOVERRIDES=winmm=n,b;steam_api64. Chaque jeu ajouté en reçoit \
+                             une copie qu'il peut modifier sans toucher aux autres.",
+                        );
+                        if env_editor(ui, &pal, &mut self.lib.settings.default_env) {
                             self.touch();
                         }
                     }

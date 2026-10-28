@@ -21,6 +21,10 @@ pub enum Icon {
     Folder,
     /// Image (personnalisation des artworks).
     Image,
+    /// Maison de la page d'accueil.
+    Home,
+    ArrowLeft,
+    ArrowRight,
 }
 
 /// Identifiant stable d'un contrôle animé : sa place et son libellé. Le bloc de
@@ -223,6 +227,38 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
                     Pos2::new(c.x - s * 0.30, c.y + s * 0.22),
                     Pos2::new(c.x - s * 0.05, c.y - s * 0.06),
                     Pos2::new(c.x + s * 0.19, c.y + s * 0.22),
+                ],
+                color,
+                Stroke::NONE,
+            ));
+        }
+        Icon::Home => {
+            // Toit (triangle) puis corps (rectangle plein).
+            painter.add(Shape::convex_polygon(
+                vec![
+                    Pos2::new(c.x - s * 0.44, c.y - s * 0.02),
+                    Pos2::new(c.x, c.y - s * 0.42),
+                    Pos2::new(c.x + s * 0.44, c.y - s * 0.02),
+                ],
+                color,
+                Stroke::NONE,
+            ));
+            painter.rect_filled(
+                Rect::from_min_size(
+                    Pos2::new(c.x - s * 0.30, c.y - s * 0.06),
+                    Vec2::new(s * 0.60, s * 0.46),
+                ),
+                1.0,
+                color,
+            );
+        }
+        Icon::ArrowLeft | Icon::ArrowRight => {
+            let direction = if icon == Icon::ArrowLeft { -1.0 } else { 1.0 };
+            painter.add(Shape::convex_polygon(
+                vec![
+                    Pos2::new(c.x - direction * s * 0.26, c.y - s * 0.34),
+                    Pos2::new(c.x + direction * s * 0.30, c.y),
+                    Pos2::new(c.x - direction * s * 0.26, c.y + s * 0.34),
                 ],
                 color,
                 Stroke::NONE,
@@ -466,9 +502,10 @@ pub fn tab(ui: &mut egui::Ui, label: &str, selected: bool, pal: &Palette) -> Res
 /// Vignette de secours d'un jeu sans artwork : la première lettre du titre sur
 /// la couleur assignée au jeu. Le rectangle reçu est exactement celui de
 /// l'artwork, donc la vignette occupe toujours la même place.
-pub fn monogram(painter: &egui::Painter, rect: Rect, text: &str, fill: Color32, pal: &Palette) {
-    painter.rect_filled(rect, 5.0, fill);
-    border_rect(painter, rect, 1.0, theme::lerp_color(fill, pal.text, 0.25));
+pub fn monogram(painter: &egui::Painter, rect: Rect, text: &str, fill: Color32, _pal: &Palette) {
+    // Coins arrondis comme les vignettes d'images : la pastille de secours ne
+    // se distingue plus du reste de la liste.
+    painter.rect_filled(rect, 7.0, fill);
     painter.text(
         rect.center(),
         Align2::CENTER_CENTER,
@@ -477,6 +514,57 @@ pub fn monogram(painter: &egui::Painter, rect: Rect, text: &str, fill: Color32, 
         // Sur une couleur claire, une lettre blanche serait illisible.
         theme::on_surface(fill),
     );
+}
+
+/// Bouton « Accueil » posé au-dessus de la liste des jeux : icône maison,
+/// libellé, et un trait d'accent quand la page est affichée.
+pub fn home_button(ui: &mut egui::Ui, selected: bool, pal: &Palette) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(112.0, 30.0), Sense::click());
+    let painter = ui.painter_at(rect);
+    let hover = ui.ctx().animate_bool_with_time(
+        ui.id().with("quark-home-hover"),
+        resp.hovered(),
+        0.12,
+    );
+    let mark = ui
+        .ctx()
+        .animate_bool_with_time(ui.id().with("quark-home-mark"), selected, 0.16);
+    let lift = hover.max(mark);
+    if lift > 0.0 {
+        painter.rect_filled(rect, 5.0, pal.surface_hover.gamma_multiply(lift * 0.8));
+    }
+    let color = if selected {
+        pal.text
+    } else {
+        theme::lerp_color(pal.text_dim, pal.text, hover)
+    };
+    paint_icon(
+        &painter,
+        Rect::from_center_size(
+            Pos2::new(rect.left() + 16.0, rect.center().y),
+            Vec2::splat(15.0),
+        ),
+        Icon::Home,
+        color,
+    );
+    painter.text(
+        Pos2::new(rect.left() + 29.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        "Accueil",
+        FontId::proportional(12.5),
+        color,
+    );
+    if mark > 0.0 {
+        painter.rect_filled(
+            Rect::from_min_size(
+                Pos2::new(rect.left() + 8.0, rect.bottom() - 2.0),
+                Vec2::new((rect.width() - 16.0) * mark, 2.0),
+            ),
+            1.0,
+            pal.accent,
+        );
+    }
+    resp
 }
 
 /// Bouton icône posé **sur une image** (bannière) : un fond translucide rend le

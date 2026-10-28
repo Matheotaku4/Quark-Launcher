@@ -45,6 +45,8 @@ pub struct SnapshotOptions {
     pub demo: bool,
     /// Marque quelques jeux comme avec Ctrl+clic (sélection multiple).
     pub marked: bool,
+    /// Page d'accueil au lieu de la fiche du jeu.
+    pub home: bool,
 }
 
 impl Default for SnapshotOptions {
@@ -66,6 +68,7 @@ impl Default for SnapshotOptions {
             dialog: None,
             demo: false,
             marked: false,
+            home: false,
         }
     }
 }
@@ -74,7 +77,7 @@ pub const HELP: &str = "\
   quark --ui <fichier.png>  Rend l'interface hors écran dans un PNG (sans écran)\n\
       [--size 1360x860] [--scale 1.5] [--frames 16]\n\
       [--view list|grid] [--tab library|store] [--theme amoled|graphite]\n\
-      [--select <jeu>] [--info] [--running] [--marked]\n\
+      [--select <jeu>] [--info] [--running] [--marked] [--home]\n\
       [--dialog none|add|artwork|exe|scan|settings|settings-proton|\n\
       settings-env|settings-artworks|game|logs|updates|customize|remove]\n\
       [--hover X,Y] [--click X,Y] [--key up|down|left|right|enter|escape] [--demo]\n\
@@ -146,6 +149,11 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
     seed_news(&mut app);
     if opts.running {
         mark_running(&mut app);
+    }
+    if opts.home {
+        app.home = true;
+        // Animation du carrousel terminée : le rendu montre l'état stable.
+        app.carousel_at = std::time::Instant::now() - std::time::Duration::from_secs(5);
     }
 
     let width = (size.x * scale).round() as usize;
@@ -580,24 +588,8 @@ fn seed_news(app: &mut QuarkApp) {
             ..Default::default()
         },
     ];
-    // Une image locale pour les deux premiers billets : le rendu montre la
-    // carte avec image et la carte sans.
-    let image = crate::config::data_dir().join("demo-news.png");
-    if !image.exists() {
-        let _ = save_demo_png(&image, 320, 180, |x, y| {
-            let t = x as f32 / 320.0;
-            let s = y as f32 / 180.0;
-            [
-                (26.0 + 54.0 * t) as u8,
-                (58.0 + 40.0 * s) as u8,
-                (110.0 + 60.0 * (1.0 - t)) as u8,
-                255,
-            ]
-        });
-    }
     let mut items = items;
     for (index, item) in items.iter_mut().take(2).enumerate() {
-        item.image = Some(image.clone());
         if index == 0 {
             // Texte déplié : le rendu vérifie la mise en page de l'article
             // intégré, pas seulement la carte repliée.
@@ -853,6 +845,10 @@ fn demo_library() -> Result<Library, String> {
         crate::config::EnvVar::new("DXVK_HUD", "fps"),
     ];
 
+    // Dates d'ajout distinctes : le tri « ajoutés récemment » a un sens.
+    for (index, game) in games.iter_mut().enumerate() {
+        game.added_at = now - index as i64 * 86_400;
+    }
     Ok(Library { games, settings })
 }
 

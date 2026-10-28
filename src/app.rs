@@ -8,7 +8,7 @@ use crate::news::{self, NewsItem};
 use crate::protondb::{self, Report};
 use crate::proton::{self, ProtonRuntime};
 use crate::session::Session;
-use crate::tray::TrayHandle;
+use crate::tray;
 use crate::theme::{self, Palette};
 use crate::update::{self, Release};
 use crate::widgets::{self, Icon};
@@ -340,12 +340,15 @@ pub struct QuarkApp {
     pub protondb_job: Option<ProtonDbJob>,
     /// Journal de session ouvert (bouton « Journal »).
     pub logs: Option<LogView>,
-    /// Icône de la zone de notification.
-    pub tray: Option<TrayHandle>,
-    pub tray_attempted: bool,
+    /// Pourquoi l'icône de notification n'a pas pu démarrer (dit dans les
+    /// paramètres, jamais avalé).
     pub tray_error: Option<String>,
-    /// Fermeture autorisée malgré l'icône (menu « Quitter »).
-    pub allow_close: bool,
+    /// Page d'accueil (carrousel des jeux récents) au lieu de la fiche du jeu.
+    pub home: bool,
+    /// Vignette affichée par le carrousel de l'accueil.
+    pub carousel: usize,
+    /// Début du glissement du carrousel (animation).
+    pub carousel_at: Instant,
 }
 
 impl QuarkApp {
@@ -396,10 +399,10 @@ impl QuarkApp {
             protondb: HashMap::new(),
             protondb_job: None,
             logs: None,
-            tray: None,
-            tray_attempted: false,
             tray_error: None,
-            allow_close: false,
+            home: false,
+            carousel: 0,
+            carousel_at: Instant::now(),
         }
     }
 
@@ -457,8 +460,6 @@ impl QuarkApp {
     // -----------------------------------------------------------------------
 
     fn tick(&mut self, ctx: &egui::Context) {
-        self.poll_tray(ctx);
-        self.sync_tray(ctx);
         self.poll_running_games();
         self.poll_update(ctx);
         self.poll_artwork_plan(ctx);
@@ -498,18 +499,15 @@ impl QuarkApp {
 
         if ctx.input(|i| i.viewport().close_requested()) {
             let _ = self.lib.save();
-            // Icône de notification : la croix range Quark dans la zone de
-            // notification, seul « Quitter » (menu de l'icône) termine le
-            // processus.
-            if self.lib.settings.tray_icon
-                && !self.allow_close
-                && self.tray.as_ref().is_some_and(|tray| tray.alive())
-            {
-                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-                // Fenêtre réellement cachée, pas réduite : une fenêtre réduite
-                // laisserait une entrée dans la barre des tâches, alors que
-                // seule l'icône de notification doit rester.
-                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            // Icône de notification : la croix ferme vraiment Quark, donc la
+            // fenêtre disparaît aussi de la barre des tâches, et l'icône reste,
+            // tenue par le processus dédié (`quark --tray`), prête à relancer le
+            // launcher. Cacher la fenêtre n'était pas une option : `set_visible`
+            // n'existe pas sur Wayland, où la fenêtre restait ouverte.
+            if self.lib.settings.tray_icon {
+                if let Err(err) = tray::ensure_helper() {
+                    eprintln!("[quark] {err}");
+                }
             }
         }
 
@@ -1461,49 +1459,27 @@ impl QuarkApp {
     // Icône de la zone de notification
     // -----------------------------------------------------------------------
 
-    /// Crée (ou retire) l'icône selon le réglage, sans réessayer en boucle
-    /// quand le bureau n'a pas de zone de notification.
-    fn sync_tray(&mut self, ctx: &egui::Context) {
-        if !self.lib.settings.tray_icon {
-            if self.tray.is_some() || self.tray_error.is_some() || self.tray_attempted {
-                self.tray = None;
-                self.tray_error = None;
-                self.tray_attempted = false;
-            }
-            return;
-        }
-        if self.tray_attempted {
-            return;
-        }
-        self.tray_attempted = true;
-        match TrayHandle::spawn(ctx) {
-            Ok(handle) => {
-                self.tray = Some(handle);
-                self.tray_error = None;
-            }
-            Err(err) => {
-                self.tray = None;
-                self.tray_error = Some(err);
-            }
+    /// Démarrage de la fenêtre : inscrit son PID et lance l'icône si elle est
+    /// activée. Appelé une seule fois par `main`, jamais par les rendus hors
+    /// écran (`quark --ui`), qui ne doivent démarrer aucun processus.
+    pub fn startup(&mut self) {
+        tray::write_gui_pid();
+        if self.lib.settings.tray_icon {
+            self.tray_error = tray::ensure_helper().err();
         }
     }
 
-    fn poll_tray(&mut self, ctx: &egui::Context) {
-        let Some(tray) = self.tray.as_ref() else {
-            return;
-        };
-        let show = tray.take_show();
-        let quit = tray.take_quit();
-        if show {
-            // Un clic sur l'icône ramène la fenêtre telle qu'elle était.
-            self.allow_close = false;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+    /// Applique le réglage « zone de notification » : l'icône est tenue par un
+    /// processus dédié, on la démarre ou on l'arrête donc ici.
+    pub fn set_tray_icon(&mut self, enabled: bool) {
+        self.lib.settings.tray_icon = enabled;
+        if enabled {
+            self.tray_error = tray::ensure_helper().err();
+        } else {
+            tray::stop_helper();
+            self.tray_error = None;
         }
-        if quit {
-            self.allow_close = true;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        }
+        self.touch();
     }
 
     // -----------------------------------------------------------------------
@@ -1638,6 +1614,8 @@ impl QuarkApp {
     pub fn select(&mut self, id: &str) {
         self.selected = Some(id.to_string());
         self.marked.clear();
+        // Choisir un jeu quitte l'accueil : la fiche prend sa place.
+        self.home = false;
     }
 
     /// Ctrl+clic : ajoute ou retire un jeu de la sélection multiple. Le panneau
@@ -1781,6 +1759,8 @@ impl QuarkApp {
         if escape {
             if self.tab != Tab::Library {
                 self.tab = Tab::Library;
+            } else if self.home {
+                self.home = false;
             } else if !self.filter.is_empty() {
                 self.filter.clear();
             } else if !self.marked.is_empty() {
@@ -1852,6 +1832,8 @@ impl eframe::App for QuarkApp {
             }
         }
         let _ = self.lib.save();
+        // La fenêtre n'existe plus : l'icône ne doit pas la croire ouverte.
+        tray::clear_gui_pid();
     }
 }
 
@@ -1961,6 +1943,11 @@ impl QuarkApp {
         self.gradient
             .clone()
             .expect("la rampe de dégradé vient d'être créée")
+    }
+
+    /// Jeux du carrousel de l'accueil (les dernières sessions).
+    pub fn recent_ids(&self) -> Vec<String> {
+        self.lib.recent_ids(crate::config::HomeSort::CAROUSEL)
     }
 
     /// Vue par défaut = réglage ; la vue courante est stockée dans les réglages.

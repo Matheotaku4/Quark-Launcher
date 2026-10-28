@@ -1,19 +1,29 @@
 //! Icône de la zone de notification (StatusNotifierItem, via `ksni`).
 //!
-//! Elle sert à garder Quark ouvert quand on ferme sa fenêtre : la croix range
-//! l'application dans l'icône, un clic la ramène, et « Quitter » dans le menu
-//! termine vraiment le processus. Aucun GTK n'est nécessaire : `ksni` parle
-//! D-Bus directement, ce qui fonctionne sur KDE, XFCE, Cinnamon… et sur GNOME
-//! avec l'extension AppIndicator.
+//! La fenêtre n'essaie plus de se cacher : sur Wayland, cacher une fenêtre
+//! n'existe pas (`set_visible` y est sans effet), elle restait donc ouverte et
+//! dans la barre des tâches. L'icône vit désormais dans un petit processus
+//! dédié (`quark --tray`) : fermer Quark ferme vraiment la fenêtre, l'icône
+//! reste, et un clic dessus relance Quark.
+//!
+//! Aucun GTK n'est nécessaire : `ksni` parle D-Bus directement, ce qui
+//! fonctionne sur KDE, XFCE, Cinnamon… et sur GNOME avec l'extension
+//! AppIndicator.
 
-use eframe::egui;
+use crate::config;
 use ksni::blocking::TrayMethods;
+use std::os::unix::io::AsRawFd;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
-/// Demandes de l'icône, lues par l'application au tick suivant.
+/// Argument qui démarre le processus « icône seule ».
+pub const HELPER_ARG: &str = "--tray";
+
+/// Demandes de l'icône, lues par la boucle du processus dédié.
 #[derive(Default)]
-pub struct TrayShared {
+struct TrayShared {
     show: AtomicBool,
     quit: AtomicBool,
 }
@@ -25,29 +35,26 @@ pub struct TrayHandle {
 }
 
 impl TrayHandle {
-    /// Enregistre l'icône sur le bus de session. L'erreur est renvoyée telle
-    /// quelle (pas de D-Bus, pas de watcher…) pour être affichée dans les
-    /// paramètres plutôt que de faire croire à une icône présente.
-    pub fn spawn(ctx: &egui::Context) -> Result<Self, String> {
+    fn spawn() -> Result<Self, String> {
         let shared = Arc::new(TrayShared::default());
         let tray = QuarkTray {
             shared: shared.clone(),
-            ctx: ctx.clone(),
+            ctx: eframe::egui::Context::default(),
         };
         let handle = tray.spawn().map_err(|err| err.to_string())?;
         Ok(Self { shared, handle })
     }
 
     /// Vrai tant que le service n'a pas été arrêté (watcher disparu, etc.).
-    pub fn alive(&self) -> bool {
+    fn alive(&self) -> bool {
         !self.handle.is_closed()
     }
 
-    pub fn take_show(&self) -> bool {
+    fn take_show(&self) -> bool {
         self.shared.show.swap(false, Ordering::Relaxed)
     }
 
-    pub fn take_quit(&self) -> bool {
+    fn take_quit(&self) -> bool {
         self.shared.quit.swap(false, Ordering::Relaxed)
     }
 }
@@ -60,9 +67,9 @@ impl Drop for TrayHandle {
 
 struct QuarkTray {
     shared: Arc<TrayShared>,
-    /// Réveille egui : sans cela, une fenêtre réduite ne redessine jamais et
-    /// le clic sur l'icône resterait sans effet.
-    ctx: egui::Context,
+    /// Réveille le launcher : sans cela, une fenêtre réduite ne redessine
+    /// jamais et un clic sur l'icône resterait sans effet.
+    ctx: eframe::egui::Context,
 }
 
 impl QuarkTray {
@@ -119,6 +126,166 @@ impl ksni::Tray for QuarkTray {
             }
             .into(),
         ]
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Fichiers de coordination entre les deux processus
+// ---------------------------------------------------------------------------
+
+fn tray_pid_path() -> PathBuf {
+    config::data_dir().join("tray.pid")
+}
+
+fn gui_pid_path() -> PathBuf {
+    config::data_dir().join("gui.pid")
+}
+
+/// Verrou exclusif non bloquant sur un fichier : il disparaît avec le
+/// processus, donc il ne peut pas rester « pris » après un plantage.
+fn lock(name: &str) -> Option<std::fs::File> {
+    let _ = std::fs::create_dir_all(config::data_dir());
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(config::data_dir().join(name))
+        .ok()?;
+    let taken = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0;
+    taken.then_some(file)
+}
+
+/// Une seule fenêtre Quark à la fois : une seconde instance se retire, sinon
+/// deux processus écriraient `config.json` en même temps.
+pub fn lock_gui() -> Option<std::fs::File> {
+    lock("gui.lock")
+}
+
+fn alive_pid(path: &Path) -> Option<u32> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let pid: i32 = text.trim().parse().ok()?;
+    if pid <= 0 {
+        return None;
+    }
+    // `kill(pid, 0)` n'envoie aucun signal : il demande seulement si le
+    // processus existe encore.
+    (unsafe { libc::kill(pid, 0) } == 0).then_some(pid as u32)
+}
+
+/// PID du processus « icône seule », s'il tourne encore.
+pub fn helper_pid() -> Option<u32> {
+    alive_pid(&tray_pid_path())
+}
+
+/// PID de la fenêtre Quark ouverte, s'il y en a une.
+pub fn gui_pid() -> Option<u32> {
+    alive_pid(&gui_pid_path())
+}
+
+/// Inscrit la fenêtre courante : l'icône saura qu'elle n'a rien à relancer.
+pub fn write_gui_pid() {
+    let _ = std::fs::create_dir_all(config::data_dir());
+    let _ = std::fs::write(gui_pid_path(), std::process::id().to_string());
+}
+
+pub fn clear_gui_pid() {
+    let _ = std::fs::remove_file(gui_pid_path());
+}
+
+/// Démarre l'icône si elle ne tourne pas déjà. Renvoie son PID dès qu'elle a
+/// pris la parole sur le bus ; sinon l'erreur explique que le bureau n'a pas de
+/// zone de notification.
+pub fn ensure_helper() -> Result<u32, String> {
+    if let Some(pid) = helper_pid() {
+        return Ok(pid);
+    }
+    let exe = std::env::current_exe().map_err(|err| format!("chemin du binaire : {err}"))?;
+    let _ = std::fs::create_dir_all(config::data_dir());
+    // Un pidfile périmé ferait croire à une icône vivante.
+    let _ = std::fs::remove_file(tray_pid_path());
+    std::process::Command::new(exe)
+        .arg(HELPER_ARG)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|err| format!("démarrage de l'icône : {err}"))?;
+    // Le processus doit s'enregistrer sur D-Bus avant que l'on ferme la
+    // fenêtre : sans cela, une icône qui échoue laisserait Quark fermé sans
+    // aucun moyen de le rouvrir.
+    let deadline = Instant::now() + Duration::from_millis(900);
+    while Instant::now() < deadline {
+        if let Some(pid) = helper_pid() {
+            return Ok(pid);
+        }
+        std::thread::sleep(Duration::from_millis(40));
+    }
+    Err("aucune zone de notification : ce bureau n'expose pas de watcher \
+         StatusNotifierItem (extension AppIndicator sous GNOME)"
+        .to_string())
+}
+
+/// Retire l'icône (réglage décoché).
+pub fn stop_helper() {
+    if let Some(pid) = helper_pid() {
+        unsafe {
+            libc::kill(pid as i32, libc::SIGTERM);
+        }
+    }
+    let _ = std::fs::remove_file(tray_pid_path());
+}
+
+fn spawn_gui() {
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let _ = std::process::Command::new(exe)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
+
+// ---------------------------------------------------------------------------
+// Processus « icône seule » : `quark --tray`
+// ---------------------------------------------------------------------------
+
+/// Boucle du processus dédié à l'icône. Renvoie le code de sortie.
+pub fn run_helper() -> i32 {
+    // Deux icônes dans la zone de notification seraient déroutantes.
+    let Some(_lock) = lock("tray.lock") else {
+        return 0;
+    };
+    let tray = match TrayHandle::spawn() {
+        Ok(tray) => tray,
+        Err(err) => {
+            eprintln!("[quark] icône indisponible : {err}");
+            return 1;
+        }
+    };
+    let pid_path = tray_pid_path();
+    let _ = std::fs::write(&pid_path, std::process::id().to_string());
+
+    loop {
+        if tray.take_show() && gui_pid().is_none() {
+            spawn_gui();
+        }
+        if tray.take_quit() {
+            if let Some(pid) = gui_pid() {
+                unsafe {
+                    libc::kill(pid as i32, libc::SIGTERM);
+                }
+            }
+            let _ = std::fs::remove_file(&pid_path);
+            return 0;
+        }
+        if !tray.alive() {
+            // Le bureau a retiré la zone de notification : plus rien à tenir.
+            let _ = std::fs::remove_file(&pid_path);
+            return 0;
+        }
+        std::thread::sleep(Duration::from_millis(80));
     }
 }
 

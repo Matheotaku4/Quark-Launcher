@@ -2,10 +2,11 @@
 
 use crate::app::{NewsState, QuarkApp};
 use crate::config::{self, AssetKind, Game, ViewMode};
-use crate::images::{draw_cover, draw_fit};
+use crate::images::{draw_cover, draw_fit_left, hero_placeholder, rounded_cover};
 use crate::news;
 use crate::proton::{self, LaunchKind};
 use crate::theme::{self, Palette};
+use crate::ui_home::linux_chip;
 use crate::widgets::{self, Icon};
 use eframe::egui::{self, Align, Align2, Color32, FontId, Layout, Pos2, Rect, RichText, Sense, Vec2};
 
@@ -30,7 +31,13 @@ impl QuarkApp {
 
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(pal.bg))
-            .show(ctx, |ui| self.detail_pane(ui));
+            .show(ctx, |ui| {
+                if self.home {
+                    self.home_pane(ui);
+                } else {
+                    self.detail_pane(ui);
+                }
+            });
     }
 
     // -----------------------------------------------------------------------
@@ -48,10 +55,12 @@ impl QuarkApp {
         let mut remove_marked = false;
         let mut clear_marked = false;
 
-        ui.add_space(14.0);
+        ui.add_space(12.0);
         ui.horizontal(|ui| {
-            ui.add_space(16.0);
-            ui.label(RichText::new("BIBLIOTHÈQUE").size(11.0).color(pal.text_dim));
+            ui.add_space(10.0);
+            if widgets::home_button(ui, self.home, &pal).clicked() {
+                self.home = true;
+            }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add_space(12.0);
                 if widgets::icon_button(ui, 26.0, Icon::Plus, &pal, "Ajouter un jeu").clicked() {
@@ -67,6 +76,11 @@ impl QuarkApp {
             });
         });
 
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.add_space(16.0);
+            ui.label(RichText::new("BIBLIOTHÈQUE").size(11.0).color(pal.text_dim));
+        });
         ui.add_space(6.0);
         if marked_count == 0 {
             ui.horizontal(|ui| {
@@ -329,6 +343,11 @@ impl QuarkApp {
             .as_ref()
             .map(|r| matches!(r.kind, LaunchKind::Proton | LaunchKind::Umu))
             .unwrap_or(false);
+        // Binaire Linux : le jeu démarre sans Proton (mention sur la bannière).
+        let native = resolved
+            .as_ref()
+            .map(|r| matches!(r.kind, LaunchKind::Native))
+            .unwrap_or_else(|_| game.is_native());
         let launch_label = match &resolved {
             Ok(r) => r.label(),
             Err(err) => format!("\u{26a0} {err}"),
@@ -407,10 +426,44 @@ impl QuarkApp {
                             // dépassent sont rognés par le painter.
                             draw_cover(&painter, &texture, hero);
                         } else {
-                            painter.rect_filled(hero, 0.0, pal.surface_hover);
+                            // Sans bannière, un aplat teinté et la lettre du
+                            // jeu : l'espace reste habité au lieu de ressembler
+                            // à une image qui n'a pas chargé.
+                            painter.rect_filled(hero, 0.0, pal.surface);
+                            hero_placeholder(
+                                &painter,
+                                hero,
+                                &game.monogram_letter(),
+                                pal.accent,
+                                0.0,
+                            );
                         }
                         let gradient = self.gradient_texture(ui.ctx());
                         theme::bottom_gradient(ui, &gradient, hero, 0.62);
+
+                        // Note ProtonDB et mention « Linux natif », en haut à
+                        // gauche de la bannière.
+                        let badge_rect = Rect::from_min_size(
+                            Pos2::new(hero.left() + 32.0, hero.top() + 14.0),
+                            Vec2::new((hero.width() - 240.0).max(120.0), 24.0),
+                        );
+                        ui.scope_builder(
+                            egui::UiBuilder::new()
+                                .max_rect(badge_rect)
+                                .layout(Layout::left_to_right(Align::Center)),
+                            |ui| {
+                                if native {
+                                    linux_chip(ui, &pal);
+                                    ui.add_space(6.0);
+                                }
+                                let state = game
+                                    .steam_app_id
+                                    .and_then(|app_id| self.protondb.get(&app_id));
+                                if protondb_badge(ui, &pal, state) {
+                                    open_protondb = true;
+                                }
+                            },
+                        );
 
                         // Logo (ou titre) au-dessus du bouton Jouer.
                         let row_height = 44.0;
@@ -430,7 +483,7 @@ impl QuarkApp {
                         match logo_path {
                             Some(logo) => {
                                 if let Some(texture) = self.texture(ui.ctx(), &logo) {
-                                    draw_fit(ui, &texture, logo_rect);
+                                    draw_fit_left(ui, &texture, logo_rect);
                                 }
                             }
                             None => {
@@ -478,12 +531,16 @@ impl QuarkApp {
                                     format!("{} de jeu", game.playtime_label())
                                 };
                                 ui.label(RichText::new(text).size(13.0).color(pal.text_dim));
-                                ui.add_space(18.0);
-                                let state = game
-                                    .steam_app_id
-                                    .and_then(|app_id| self.protondb.get(&app_id));
-                                if protondb_badge(ui, &pal, state) {
-                                    open_protondb = true;
+                                if game.last_played.is_some() {
+                                    ui.add_space(16.0);
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "\u{b7}  jou\u{e9} {}",
+                                            game.last_played_label()
+                                        ))
+                                        .size(12.5)
+                                        .color(pal.text_faint),
+                                    );
                                 }
                             },
                         );
@@ -787,17 +844,6 @@ impl QuarkApp {
             return;
         }
 
-        // Textures résolues avant la boucle : les closures de mise en page ne
-        // peuvent pas emprunter `self` pour les charger.
-        let textures: Vec<Option<egui::TextureHandle>> = items
-            .iter()
-            .map(|item| {
-                item.image
-                    .as_deref()
-                    .and_then(|path| self.texture(ui.ctx(), path))
-            })
-            .collect();
-
         let card_width = (width - 64.0).max(220.0);
         for (index, item) in items.iter().enumerate() {
             let id = ui.make_persistent_id(("quark_news", index, item.url.as_str()));
@@ -826,18 +872,7 @@ impl QuarkApp {
                     ui.vertical(|ui| {
                         ui.set_width(card_width);
                         ui.horizontal_top(|ui| {
-                            // Image du billet, recadrée (jamais déformée).
-                            if let Some(texture) = &textures[index] {
-                                let (rect, _) =
-                                    ui.allocate_exact_size(Vec2::new(164.0, 92.0), Sense::hover());
-                                draw_cover(&ui.painter_at(rect), texture, rect);
-                                ui.add_space(10.0);
-                            }
-                            let text_width = if textures[index].is_some() {
-                                (card_width - 182.0).max(180.0)
-                            } else {
-                                card_width
-                            };
+                            let text_width = card_width;
                             ui.vertical(|ui| {
                                 ui.set_width(text_width);
                                 let mut meta = vec![item.feed.clone()];
@@ -1036,7 +1071,7 @@ fn game_row(
         // Icônes 1:1 et capsules larges occupent le même carré : l'image est
         // recadrée au centre (jamais comprimée), grâce au painter limité au
         // carré de la vignette.
-        Some(texture) => draw_cover(&ui.painter_at(thumb_box), texture, thumb_box),
+        Some(texture) => rounded_cover(ui, thumb_box, texture, 7.0),
         None => widgets::monogram(
             &painter,
             thumb_box,
@@ -1104,7 +1139,7 @@ fn game_tile(
     match texture {
         // Couverture recadrée au centre quand le format diffère (jamais
         // déformée), grâce au painter limité à la tuile.
-        Some(texture) => draw_cover(&ui.painter_at(cover_rect), texture, cover_rect),
+        Some(texture) => rounded_cover(ui, cover_rect, texture, 8.0),
         None => widgets::monogram(
             &painter,
             cover_rect,
@@ -1116,11 +1151,11 @@ fn game_tile(
 
     let accent = mark.max(hover);
     if accent > 0.0 {
-        widgets::border_rect(
-            &painter,
+        painter.rect_stroke(
             rect,
-            (2.0 + mark).min(3.0),
-            pal.accent.gamma_multiply(accent),
+            8.0,
+            egui::Stroke::new((2.0 + mark).min(3.0), pal.accent.gamma_multiply(accent)),
+            egui::StrokeKind::Inside,
         );
     }
     if running {
@@ -1142,7 +1177,7 @@ fn game_tile(
 }
 
 /// Texte sur une seule ligne, coupé par une ellipsis s'il dépasse `max_width`.
-fn single_line(text: &str, size: f32, color: Color32, max_width: f32) -> egui::text::LayoutJob {
+pub(crate) fn single_line(text: &str, size: f32, color: Color32, max_width: f32) -> egui::text::LayoutJob {
     let mut job = paragraph(text, size, color, 1);
     job.wrap.max_width = max_width;
     job
@@ -1167,7 +1202,7 @@ fn paragraph(text: &str, size: f32, color: Color32, max_rows: usize) -> egui::te
 
 
 /// Pastille de la note ProtonDB : couleur officielle, texte qui la contraste.
-fn protondb_badge(
+pub(crate) fn protondb_badge(
     ui: &mut egui::Ui,
     pal: &Palette,
     state: Option<&crate::app::ProtonDbState>,

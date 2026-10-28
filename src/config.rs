@@ -59,11 +59,6 @@ pub fn session_log(game_id: &str) -> PathBuf {
     log_dir(game_id).join("session.log")
 }
 
-/// Images des actualités, téléchargées une fois par billet.
-pub fn news_dir() -> PathBuf {
-    data_dir().join("news")
-}
-
 /// Identifiant unique (suffisant pour une bibliothèque locale).
 pub fn new_id() -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -255,6 +250,34 @@ impl ThemeMode {
     }
 }
 
+/// Tri des jeux sur la page d'accueil.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum HomeSort {
+    /// Dernière session la plus récente d'abord.
+    #[default]
+    Recent,
+    /// Date d'ajout à la bibliothèque, la plus récente d'abord.
+    Added,
+    /// Nombre d'heures jouées, le plus élevé d'abord.
+    Playtime,
+}
+
+impl HomeSort {
+    pub const ALL: [HomeSort; 3] = [HomeSort::Recent, HomeSort::Added, HomeSort::Playtime];
+
+    /// Nombre de jeux montrés dans le carrousel de l'accueil.
+    pub const CAROUSEL: usize = 5;
+
+    pub fn label(self) -> &'static str {
+        match self {
+            HomeSort::Recent => "Joués récemment",
+            HomeSort::Added => "Ajoutés récemment",
+            HomeSort::Playtime => "Plus joués",
+        }
+    }
+}
+
 /// Runtime anti-triche fourni par Steam (BattlEye / EasyAntiCheat).
 ///
 /// C'est une option cochable par jeu, comme dans Heroic : elle ne change rien
@@ -339,6 +362,8 @@ impl ProtonMode {}
 #[serde(default)]
 pub struct Settings {
     pub view: ViewMode,
+    /// Tri des jeux sur la page d'accueil.
+    pub home_sort: HomeSort,
     pub theme: ThemeMode,
     /// Clé API SteamGridDB (https://www.steamgriddb.com/profile/preferences/api).
     pub sgdb_api_key: String,
@@ -382,6 +407,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             view: ViewMode::List,
+            home_sort: HomeSort::Recent,
             theme: ThemeMode::Amoled,
             sgdb_api_key: String::new(),
             language: "french".to_string(),
@@ -536,6 +562,11 @@ impl Game {
 
     pub fn exe_path(&self) -> PathBuf {
         PathBuf::from(expand_tilde(&self.exe))
+    }
+
+    /// Vrai si l'exécutable est un binaire Linux : il démarre sans Proton.
+    pub fn is_native(&self) -> bool {
+        !crate::proton::looks_windows(&self.exe_path())
     }
 
     /// Préfixe Proton effectif : jeu > réglages > dossier géré par Quark.
@@ -730,6 +761,41 @@ impl Library {
         games.sort_by_key(|g| g.name.to_lowercase());
         games.into_iter().map(|g| g.id.clone()).collect()
     }
+
+    /// Jeux du carrousel : les dernières sessions, de la plus récente à la
+    /// plus ancienne. Un jeu jamais lancé n'y a pas sa place.
+    pub fn recent_ids(&self, limit: usize) -> Vec<String> {
+        let mut games: Vec<&Game> = self
+            .games
+            .iter()
+            .filter(|game| game.last_played.is_some())
+            .collect();
+        games.sort_by(|a, b| {
+            let (Some(a_time), Some(b_time)) = (a.last_played, b.last_played) else {
+                return std::cmp::Ordering::Equal;
+            };
+            b_time
+                .cmp(&a_time)
+                .then_with(|| b.playtime_secs.cmp(&a.playtime_secs))
+        });
+        games.into_iter().take(limit).map(|g| g.id.clone()).collect()
+    }
+
+    /// Toute la bibliothèque, triée selon le choix de la page d'accueil.
+    pub fn home_ids(&self, sort: HomeSort) -> Vec<String> {
+        let mut games: Vec<&Game> = self.games.iter().collect();
+        match sort {
+            HomeSort::Recent => games.sort_by(|a, b| {
+                b.last_played
+                    .unwrap_or(0)
+                    .cmp(&a.last_played.unwrap_or(0))
+                    .then_with(|| b.added_at.cmp(&a.added_at))
+            }),
+            HomeSort::Added => games.sort_by(|a, b| b.added_at.cmp(&a.added_at)),
+            HomeSort::Playtime => games.sort_by(|a, b| b.playtime_secs.cmp(&a.playtime_secs)),
+        }
+        games.into_iter().map(|g| g.id.clone()).collect()
+    }
 }
 
 #[cfg(test)]
@@ -853,6 +919,33 @@ mod tests {
         assert_ne!(a, b);
         assert_eq!(a.file_name().unwrap(), "session.log");
         assert!(a.starts_with(log_dir("jeu-a")));
+    }
+
+    #[test]
+    fn l_accueil_trie_par_recence_d_ajout_et_d_heures() {
+        let mut lib = Library::default();
+        let mut a = game("a");
+        a.name = "A".to_string();
+        a.added_at = 300;
+        a.last_played = Some(10);
+        a.playtime_secs = 60;
+        let mut b = game("b");
+        b.name = "B".to_string();
+        b.added_at = 100;
+        b.last_played = Some(90);
+        b.playtime_secs = 9_000;
+        let mut c = game("c");
+        c.name = "C".to_string();
+        c.added_at = 200;
+        lib.games = vec![a, b, c];
+
+        // Carrousel : la session la plus récente d'abord, jamais joué exclu.
+        assert_eq!(lib.recent_ids(5), vec!["b".to_string(), "a".to_string()]);
+
+        assert_eq!(lib.home_ids(HomeSort::Added), vec!["a", "c", "b"]);
+        assert_eq!(lib.home_ids(HomeSort::Playtime), vec!["b", "a", "c"]);
+        // Jamais joué en dernier quand on trie par session.
+        assert_eq!(lib.home_ids(HomeSort::Recent), vec!["b", "a", "c"]);
     }
 
     #[test]

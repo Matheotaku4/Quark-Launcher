@@ -17,6 +17,7 @@ mod theme;
 mod tray;
 mod update;
 mod ui_dialogs;
+mod ui_home;
 mod ui_library;
 mod ui_store;
 mod widgets;
@@ -25,9 +26,20 @@ use app::QuarkApp;
 
 fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // Icône seule : ce processus n'affiche aucune fenêtre, il tient la zone de
+    // notification et relance Quark au clic.
+    if args.first().map(String::as_str) == Some(tray::HELPER_ARG) {
+        std::process::exit(tray::run_helper());
+    }
     if let Some(code) = cli(&args) {
         std::process::exit(code);
     }
+    // Une seule fenêtre à la fois : l'icône peut relancer Quark alors qu'il est
+    // déjà ouvert, la seconde instance se retire au lieu d'écrire les réglages
+    // en même temps.
+    let Some(_window_lock) = tray::lock_gui() else {
+        return Ok(());
+    };
 
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
@@ -43,7 +55,9 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(|cc| {
             egui_extras::install_image_loaders(&cc.egui_ctx);
-            Ok(Box::new(QuarkApp::new(&cc.egui_ctx)))
+            let mut app = QuarkApp::new(&cc.egui_ctx);
+            app.startup();
+            Ok(Box::new(app))
         }),
     )
 }
@@ -233,6 +247,11 @@ fn cli(args: &[String]) -> Option<i32> {
                             return Some(2);
                         }
                     },
+                    "--home" => {
+                        opts.home = true;
+                        index += 1;
+                        continue;
+                    }
                     "--dialog" => match value {
                         Some(dialog) => opts.dialog = Some(dialog),
                         None => {

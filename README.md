@@ -7,7 +7,14 @@ through **Proton** — or through **umu-launcher**.
 
 ## Features
 
-- **Two tabs**: `Store` (deliberately empty for now) and `Library`.
+- **Two tabs**: `Store` (deliberately empty for now) and `Library`, plus a **Home** page
+  reachable from the button above the game list.
+- **Home page**: a carousel of the games you played last — the banner as background with
+  rounded corners, the game's logo (or title), a **Continue** button (it becomes
+  **Stop** while the game runs), playtime and last session next to it, the ProtonDB score
+  and a *Linux native* pill in the top-left corner, arrows and dots to move between the five
+  most recent games. Below it, the whole library as rounded covers, sorted by **last
+  session**, **date added** or **hours played** — the choice is remembered.
 - **Adding a game in two steps**:
   1. type the game name — Quark searches **Steam** (public `storesearch` API) then
      **SteamGridDB** and fetches the **original artwork** (banner `library_hero`,
@@ -24,9 +31,11 @@ through **Proton** — or through **umu-launcher**.
   shaped thumbnail is rejected, with a fallback to Steam's `appdetails` page;
   `library_600x900_2x` cover, `library_hero` banner, transparent logo and small capsule.
 - **Steam-like layout**: list on the left (thumbnail + title, the selected row has a blue
-  marker), game pane on the right; banner on top, **Play** button with **playtime** right
+  marker), game pane on the right; a taller banner on top, **ProtonDB** and *Linux native*
+  badges in its top-left corner, **Play** button with **playtime and last session** right
   next to it, then the **Journal**, **ⓘ**, **Customize** and **settings** buttons in the top
-  right. `Play` becomes `Stop` while the game is running.
+  right. `Play` becomes `Stop` while the game is running. Thumbnails, covers and the
+  carousel use rounded corners.
 - **Thumbnails that never move**: the list shows the game icon (1:1), as Steam does. When a
   game has no icon, the tile is filled with the first letter of its title — leading
   articles ignored, so `The Witcher 3` → `W` and `Les Chevaliers de Baphomet` → `C`, while
@@ -35,13 +44,14 @@ through **Proton** — or through **umu-launcher**.
   `header.jpg`; small (16×16) and WebP icons are accepted, measured by real decoding rather
   than by the file header alone.
 - **News under the banner**: the latest official announcements of the selected game
-  (public Steam `ISteamNews` feed) — source, author, date, image and text. Clicking a card
-  expands the post **inside Quark** (image included, cached under
-  `~/.local/share/quark/news/`); *Lire sur Steam* opens the full post in your browser.
+  (public Steam `ISteamNews` feed) — source, author, date, headline and a two-line excerpt,
+  in plain text. Clicking a card expands the post **inside Quark** (up to 900 characters);
+  *Lire sur Steam* opens the full post in your browser.
 - **ProtonDB rating**: the compatibility tier (Platinum, Gold, Silver, Bronze, Borked) is
-  read from ProtonDB's public API for the game's Steam AppID and shown as a coloured pill
-  next to the playtime, plus a row in the information block. Clicking it opens
-  `protondb.com/app/<id>`. Cached per AppID; games without an AppID or without a report
+  read from ProtonDB's public API for the game's Steam AppID and shown as a coloured pill in
+  the **top-left corner of the banner**, next to a *Linux native* pill when the executable is
+  a Linux binary that runs without Proton, plus a row in the information block. Clicking it
+  opens `protondb.com/app/<id>`. Cached per AppID; games without an AppID or without a report
   simply show no rating.
 - **List / Grid switch** from the left column (the grid widens the column and shows the
   2:3 covers).
@@ -69,10 +79,13 @@ through **Proton** — or through **umu-launcher**.
 - **umu-launcher support**: a per-game switch launches through `umu-run` instead of the
   Proton script, with `WINEPREFIX`, `GAMEID` (editable, `0` by default) and `PROTONPATH`
   when a runtime is selected. A missing `umu-run` is reported before launching.
-- **Stays in the notification area**: with the setting enabled, closing the window keeps
-  Quark alive in a tray icon (StatusNotifierItem, no GTK dependency): clicking it brings the
-  window back, and *Quit Quark* in its menu really exits. Disabled by default only if your
-  desktop has no watcher — the settings page then says why, and the close button quits.
+- **Stays in the notification area**: with the setting enabled, closing the window really
+  closes Quark — nothing is left in the task bar — while the icon stays in the notification
+  area, held by a small dedicated process (`quark --tray`, StatusNotifierItem over D-Bus, no
+  GTK dependency). One click on it starts Quark again; *Quit Quark* in its menu closes
+  everything. This is deliberately not "hide the window": `set_visible` does not exist on
+  Wayland, where the window would have stayed open. If your desktop has no watcher, the
+  settings page says why and the close button quits.
 - **Playtime tracking**: every session is timed (relaunch, total time, last session).
 - **Environment variables per game**: a `NAME=value` list (for example
   `WINEDLLOVERRIDES=winmm=n,b;steam_api64`) with a wide value field, plus default variables in
@@ -95,9 +108,10 @@ through **Proton** — or through **umu-launcher**.
 - **Customize** a game from its page (or by right-clicking it): each image — cover,
   banner, logo, icon — can be replaced by another online proposal or by a file from your
   disk, or removed to fall back to the built-in rendering.
-- **Short, cheap transitions**: hover, selection, banner entrance, news cards, tabs and
-  messages are animated. They all go through egui's animation manager, which only asks for
-  a repaint while a value is actually moving, so an idle window stays idle and the launcher
+- **Short, cheap transitions**: hover, selection, banner entrance, news cards, tabs, the home
+  carousel (a 0.34 s slide-and-fade) and messages are animated. They all go through egui's
+  animation manager, or a timestamped progression for the carousel, which only asks for a
+  repaint while a value is actually moving, so an idle window stays idle and the launcher
   keeps its responsiveness.
 - **AMOLED theme** (`#000000`) by default, plus a "Graphite" variant (softer black) in the
   settings.
@@ -119,7 +133,8 @@ through **Proton** — or through **umu-launcher**.
   release; the archive is downloaded to `~/.local/share/quark/updates/` and never installed
   behind your back. `quark --update` does the same without opening a window.
 - **Command-line diagnostics**: `--doctor`, `--search`, `--fetch`, `--news`, `--scan`,
-  `--update` and `--ui` (no screen required).
+  `--update` and `--ui` (no screen required, `--home` renders the home page). `--tray` runs
+  the notification-icon process and is started by Quark itself.
 
 ## Build
 
@@ -204,7 +219,7 @@ as the **quark-ui-renders** artifact — so every push can be reviewed without i
 anything.
 
 ```bash
-tar -xzf quark-0.8.0-linux-x86_64.tar.gz
+tar -xzf quark-0.9.0-linux-x86_64.tar.gz
 cd quark && ./quark
 ```
 
@@ -240,18 +255,27 @@ the launch and says so instead of failing silently.
 
 ## Notification icon
 
-When **Settings → Appearance → Zone de notification** is enabled, closing the window hides
-it completely (no window, no taskbar entry): Quark keeps running with a tray icon
-([StatusNotifierItem](https://www.freedesktop.org/wiki/Specifications/StatusNotifierItem/)).
+When **Settings → Appearance → Zone de notification** is enabled, closing the window really
+closes Quark: the window and its task-bar entry disappear, playtime is saved, and the icon
+keeps living in the notification area (a
+[StatusNotifierItem](https://www.freedesktop.org/wiki/Specifications/StatusNotifierItem/)).
 
-- left click / *Ouvrir Quark* → the window comes back (it was minimised, playtime counting
-  continues);
-- *Quitter Quark* → the process really exits (running sessions are still credited).
+The icon is held by a separate process, `quark --tray`, which Quark starts by itself and
+which stays behind after the window is gone:
+
+- one click on the icon / *Ouvrir Quark* → a new Quark window starts;
+- *Quitter Quark* → the icon process exits (and stops a running window).
+
+Why a second process instead of a hidden window: hiding is impossible to do reliably —
+`Window::set_visible` is *unsupported on Wayland*, so the window would have stayed open and
+kept its task-bar entry, which is exactly the bug this replaces. With a separate process the
+behaviour is the same on X11 and Wayland, and a single-instance lock stops a second window
+from writing `config.json` at the same time.
 
 The icon is drawn by Quark itself (no icon theme needed). If your desktop exposes no
 StatusNotifier watcher — GNOME without the AppIndicator extension, a bare session — the
 settings page shows the D-Bus error and the close button simply quits, so you can never get
-stuck with a window you cannot reach.
+stuck with an icon that does nothing.
 
 ## Rendering check (no screen, no GPU)
 
@@ -264,6 +288,7 @@ target/release/quark --ui preview.png                        # 1360x860, current
 target/release/quark --ui grid.png --view grid --demo        # built-in demo library
 target/release/quark --ui hover.png --demo --hover 160,340   # pointer over a row
 target/release/quark --ui anim.png --demo --frames 3         # mid-transition frame
+target/release/quark --ui home.png --demo --home             # home page and carousel
 target/release/quark --ui dialog.png --demo --dialog settings
 target/release/quark --ui logs.png --demo --dialog logs
 ```
@@ -271,7 +296,7 @@ target/release/quark --ui logs.png --demo --dialog logs
 Options: `--size WxH`, `--scale N`, `--frames N`, `--view list|grid`, `--tab library|store`,
 `--theme amoled|graphite`, `--select <game>`, `--info`, `--running`,
 `--dialog none|add|artwork|exe|scan|settings|settings-defaults|settings-proton|settings-artworks|game|logs|customize|remove|updates`, `--hover X,Y`,
-`--click X,Y`, `--key up|down|left|right|enter|escape`, `--marked`, `--demo`.
+`--click X,Y`, `--key up|down|left|right|enter|escape`, `--marked`, `--home`, `--demo`.
 
 `--click` and `--key` send real input events, so a render also checks the interactions:
 `--key down` really moves the selection, `--click X,Y` really presses a button.
@@ -300,7 +325,8 @@ target/release/quark --update          # latest GitHub release (and downloads th
 
 ```
 src/main.rs         entry point + CLI (--doctor/--search/--fetch/--news/--scan/--ui)
-src/app.rs          application state, egui loop, launching, playtime, toasts, ProtonDB, tray
+src/app.rs          application state, egui loop, launching, playtime, toasts, ProtonDB
+src/ui_home.rs      Home page: recent-games carousel, Continue, sorted library grid
 src/ui_library.rs   Library tab: list/grid column + game pane (banner, Play, news, ProtonDB)
 src/ui_store.rs     Store tab (placeholder)
 src/ui_dialogs.rs   adding a game, global settings, game settings, session log, pickers
@@ -310,8 +336,8 @@ src/scan.rs         game discovery inside a folder (batch adding)
 src/news.rs         per-game news (public Steam feed) and opening links
 src/protondb.rs     ProtonDB rating (public API), tier colours and labels
 src/session.rs      launching, stdout/stderr capture, Stop (wineserver), log tail
-src/tray.rs         notification-area icon (StatusNotifierItem via ksni)
-src/images.rs       texture cache: Quark decodes artwork itself
+src/tray.rs         notification-area icon (StatusNotifierItem via ksni) + `quark --tray`
+src/images.rs       texture cache, rounded/cropped drawing, accent and luminance analysis
 src/proton.rs       Proton runtime detection + launch command (options, umu, anti-cheat)
 src/update.rs       latest GitHub release, version comparison, archive download
 src/theme.rs        AMOLED/Graphite palette, gradients, monogram colours
@@ -322,6 +348,6 @@ src/snapshot.rs     off-screen software renderer (--ui), for visual checks
 ## Possible next steps
 
 - Fill the Store tab (search, game pages, prices).
-- Extra views: full-screen grid, recently played, favourites.
+- Favourites and filters on the home page (genre, ProtonDB tier, native/Proton).
 - Automatic import of the Steam library (`appmanifest_*.acf`).
 - A “verify prefix” action and per-game backup of save files.

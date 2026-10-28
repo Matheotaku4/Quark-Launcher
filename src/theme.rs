@@ -246,9 +246,10 @@ pub fn bottom_gradient(
     );
 }
 
-/// Hauteur de bannière : ratio 3.1:1 comme les `library_hero` de Steam.
+/// Hauteur de bannière : plus haute que le 3.1:1 des `library_hero` de Steam,
+/// pour laisser respirer le logo, le bouton et les actualités.
 pub fn hero_height(width: f32) -> f32 {
-    (width / 3.1).clamp(190.0, 460.0)
+    (width / 2.7).clamp(230.0, 520.0)
 }
 
 pub const COVER_RATIO: f32 = 1.5; // 600x900 comme Steam

@@ -6,7 +6,7 @@
 //! d'avertissement à la place des bannières et des logos.
 
 use crate::app::QuarkApp;
-use eframe::egui::{self, TextureHandle};
+use eframe::egui::{self, Align2, Color32, FontId, TextureHandle};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -49,21 +49,24 @@ impl QuarkApp {
 }
 
 /// Dessine la texture dans `rect` en conservant ses proportions.
-pub fn draw_fit(ui: &mut egui::Ui, texture: &TextureHandle, rect: egui::Rect) {
+
+/// Dessine la texture dans `rect` en conservant ses proportions, collée en bas
+/// à gauche : le logo de la fiche occupe ainsi la même place que le titre de
+/// secours, au lieu de flotter au centre de la bannière.
+pub fn draw_fit_left(ui: &mut egui::Ui, texture: &TextureHandle, rect: egui::Rect) {
     let size = texture.size_vec2();
     if size.x <= 0.0 || size.y <= 0.0 || rect.width() <= 0.0 || rect.height() <= 0.0 {
         return;
     }
     let scale = (rect.width() / size.x).min(rect.height() / size.y);
     let target = size * scale;
-    let fitted = egui::Rect::from_center_size(rect.center(), target);
+    let fitted =
+        egui::Rect::from_min_size(egui::pos2(rect.left(), rect.bottom() - target.y), target);
     ui.put(
         fitted,
         egui::Image::new(egui::load::SizedTexture::new(texture.id(), target)),
     );
 }
-
-/// Dessine la texture dans `rect` en conservant ses proportions.
 
 /// Dessine la texture en remplissant `rect` sans jamais la déformer : l'image
 /// est mise à l'échelle pour couvrir la zone, puis rognée (centrée) sur les
@@ -82,6 +85,123 @@ pub fn draw_cover(painter: &egui::Painter, texture: &TextureHandle, rect: egui::
         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
         egui::Color32::WHITE,
     );
+}
+
+/// Remplissage de secours d'une bannière : un aplat teinté par la couleur du
+/// jeu et sa lettre, plutôt qu'un grand rectangle noir qui ressemble à une
+/// image manquante.
+pub fn hero_placeholder(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    letter: &str,
+    accent: Color32,
+    radius: f32,
+) {
+    painter.rect_filled(rect, radius, accent.gamma_multiply(0.16));
+    painter.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        letter,
+        FontId::proportional((rect.height() * 0.45).clamp(40.0, 200.0)),
+        Color32::from_white_alpha(20),
+    );
+}
+
+/// Dessine une image dans `rect` en la recadrant (« cover » : jamais déformée)
+/// et avec des coins arrondis.
+///
+/// Le widget est posé dans un enfant du `Ui` reçu : le curseur de `ui` ne bouge
+/// pas, on peut donc dessiner vignette par vignette dans une liste sans casser
+/// la mise en page.
+pub fn rounded_cover(ui: &mut egui::Ui, rect: egui::Rect, texture: &TextureHandle, radius: f32) {
+    rounded_cover_tinted(ui, rect, texture, radius, egui::Color32::WHITE);
+}
+
+/// Même chose avec une teinte (fondu d'entrée du carrousel).
+pub fn rounded_cover_tinted(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    texture: &TextureHandle,
+    radius: f32,
+    tint: egui::Color32,
+) {
+    let size = texture.size_vec2();
+    if size.x <= 0.0 || size.y <= 0.0 || rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return;
+    }
+    // Fenêtre de la texture qui garde le rapport de la zone, centrée : c'est
+    // exactement un recadrage, l'image n'est jamais étirée.
+    let target = rect.width() / rect.height();
+    let image = size.x / size.y;
+    let uv = if image > target {
+        let width = target / image;
+        egui::Rect::from_min_max(
+            egui::pos2((1.0 - width) / 2.0, 0.0),
+            egui::pos2((1.0 + width) / 2.0, 1.0),
+        )
+    } else {
+        let height = image / target;
+        egui::Rect::from_min_max(
+            egui::pos2(0.0, (1.0 - height) / 2.0),
+            egui::pos2(1.0, (1.0 + height) / 2.0),
+        )
+    };
+    let widget = egui::Image::new(egui::load::SizedTexture::new(texture.id(), rect.size()))
+        .uv(uv)
+        .corner_radius(radius)
+        .tint(tint);
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+    child.put(rect, widget);
+}
+
+/// Voile noir dégradé posé sur le bas d'une image arrondie.
+///
+/// Les coins du bas sont retirés bande par bande : un simple rectangle de
+/// dégradé déborderait des coins arrondis de la vignette.
+pub fn rounded_veil(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    radius: f32,
+    strength: f32,
+    fraction: f32,
+) {
+    const ROWS: usize = 26;
+    if strength <= 0.0 || rect.height() <= 2.0 {
+        return;
+    }
+    let veil = rect.height() * fraction.clamp(0.0, 1.0);
+    if veil <= 1.0 {
+        return;
+    }
+    let radius = radius.min(rect.width() / 2.0).min(rect.height() / 2.0);
+    for row in 0..ROWS {
+        let top = row as f32 / ROWS as f32;
+        let bottom = (row + 1) as f32 / ROWS as f32;
+        let y0 = rect.bottom() - veil * (1.0 - top);
+        let y1 = rect.bottom() - veil * (1.0 - bottom);
+        let band = egui::Rect::from_min_max(
+            egui::pos2(rect.left(), y0.min(y1)),
+            egui::pos2(rect.right(), y0.max(y1)),
+        );
+        // Retrait latéral dans la zone des coins arrondis.
+        let corner_start = rect.bottom() - radius;
+        let inset = if band.bottom() > corner_start {
+            let dy = (band.bottom() - corner_start).clamp(0.0, radius);
+            radius - (radius * radius - dy * dy).max(0.0).sqrt()
+        } else {
+            0.0
+        };
+        let alpha = (top * top * 235.0 * strength).round().clamp(0.0, 255.0) as u8;
+        painter.rect_filled(
+            band.shrink2(egui::vec2(inset, 0.0)),
+            0.0,
+            egui::Color32::from_black_alpha(alpha),
+        );
+    }
 }
 
 /// Couleur d'accent déduite d'une image : teinte dominante des pixels
