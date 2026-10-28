@@ -48,6 +48,17 @@ pub fn prefix_root() -> PathBuf {
     data_dir().join("prefixes")
 }
 
+/// Dossier des journaux d'un jeu : un fichier par session, plus les journaux
+/// Proton quand l'option est active.
+pub fn log_dir(game_id: &str) -> PathBuf {
+    data_dir().join("logs").join(game_id)
+}
+
+/// Journal de la dernière session (stdout + stderr du jeu et de Proton).
+pub fn session_log(game_id: &str) -> PathBuf {
+    log_dir(game_id).join("session.log")
+}
+
 /// Identifiant unique (suffisant pour une bibliothèque locale).
 pub fn new_id() -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -350,6 +361,9 @@ pub struct Settings {
     /// Migration des anciennes variables globales : elles ont été recopiées
     /// une fois dans les jeux qui n'en avaient pas.
     pub defaults_migrated: bool,
+    /// Garde Quark dans la zone de notification : la croix ne quitte plus
+    /// l'application, elle la range dans l'icône.
+    pub tray_icon: bool,
 }
 
 impl Default for Settings {
@@ -366,6 +380,7 @@ impl Default for Settings {
             default_anticheat: AnticheatMode::None,
             default_env: Vec::new(),
             defaults_migrated: false,
+            tray_icon: true,
         }
     }
 }
@@ -373,6 +388,66 @@ impl Default for Settings {
 // ---------------------------------------------------------------------------
 // Jeux
 // ---------------------------------------------------------------------------
+
+/// Options de lancement graphiques, réglées jeu par jeu : les cases à cocher
+/// remplacent des variables (`MANGOHUD=1`) ou des commandes (`gamescope`,
+/// `gamemoderun`) que tout le monde ne connaît pas.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LaunchOptions {
+    /// `gamemoderun` : profil CPU de GameMode.
+    pub gamemode: bool,
+    /// `MANGOHUD=1` : surcouche de mesures MangoHud.
+    pub mangohud: bool,
+    /// gamescope autour du jeu (compositeur, mise à l'échelle).
+    pub gamescope: bool,
+    pub gamescope_width: u32,
+    pub gamescope_height: u32,
+    /// `-F fsr` : agrandissement FSR de gamescope.
+    pub gamescope_fsr: bool,
+    /// Limite d'images gamescope (0 = aucune).
+    pub gamescope_fps: u32,
+    /// Rendu sur la carte NVIDIA dédiée (PRIME offload).
+    pub prime: bool,
+    /// Commande wrapper : `%command%` y est remplacé par la commande du jeu.
+    pub wrapper: String,
+}
+
+impl Default for LaunchOptions {
+    fn default() -> Self {
+        Self {
+            gamemode: false,
+            mangohud: false,
+            gamescope: false,
+            gamescope_width: 1920,
+            gamescope_height: 1080,
+            gamescope_fsr: false,
+            gamescope_fps: 0,
+            prime: false,
+            wrapper: String::new(),
+        }
+    }
+}
+
+impl LaunchOptions {
+    /// Vrai si une option change la ligne de commande (les variables seules
+    /// comptent aussi : MangoHud et PRIME passent par l'environnement).
+    pub fn any(&self) -> bool {
+        self.gamemode
+            || self.mangohud
+            || self.gamescope
+            || self.prime
+            || !self.wrapper.trim().is_empty()
+    }
+
+    /// Résolution gamescope, bornée pour ne jamais produire `0`.
+    pub fn gamescope_size(&self) -> (u32, u32) {
+        (
+            self.gamescope_width.clamp(320, 7680),
+            self.gamescope_height.clamp(200, 4320),
+        )
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
@@ -384,9 +459,6 @@ pub struct Game {
     pub args: String,
     /// AppID Steam si le jeu a été rapproché de la fiche Steam.
     pub steam_app_id: Option<u32>,
-    /// AppID du raccourci (non-Steam) à lancer via le client Steam, pour avoir
-    /// l'overlay Steam. Vide/0 : Quark lance le jeu lui-même.
-    pub steam_launch_id: Option<u32>,
     /// Identifiant SteamGridDB si le jeu vient de la recherche SteamGridDB.
     pub sgdb_id: Option<u64>,
     pub artwork: Artwork,
@@ -401,6 +473,16 @@ pub struct Game {
     pub env: Vec<EnvVar>,
     /// Runtime anti-triche à utiliser pour ce jeu (aucun par défaut).
     pub anticheat: AnticheatMode,
+    /// Options de lancement graphiques (GameMode, MangoHud, gamescope…).
+    pub launch: LaunchOptions,
+    /// Lance le jeu par umu-launcher (`umu-run`) plutôt que par le script
+    /// Proton de Steam.
+    pub umu: bool,
+    /// GAMEID transmis à umu (« 0 » quand il n'est pas renseigné).
+    pub umu_game_id: String,
+    /// `PROTON_LOG=1` : Proton écrit un journal détaillé dans le dossier de
+    /// logs du jeu, à côté de la sortie standard capturée.
+    pub proton_log: bool,
 }
 
 impl Default for Game {
@@ -411,7 +493,6 @@ impl Default for Game {
             exe: String::new(),
             args: String::new(),
             steam_app_id: None,
-            steam_launch_id: None,
             sgdb_id: None,
             artwork: Artwork::default(),
             playtime_secs: 0,
@@ -421,6 +502,10 @@ impl Default for Game {
             prefix: None,
             env: Vec::new(),
             anticheat: AnticheatMode::None,
+            launch: LaunchOptions::default(),
+            umu: false,
+            umu_game_id: String::new(),
+            proton_log: false,
         }
     }
 }
@@ -722,6 +807,37 @@ mod tests {
         lib.settings.default_env.push(EnvVar::new("PROTON_LOG", "1"));
         lib.migrate_defaults();
         assert_eq!(lib.get("a").unwrap().env.len(), 1);
+    }
+
+    #[test]
+    fn les_options_de_lancement_ont_des_valeurs_par_defaut() {
+        // Config d'une version précédente : ni `launch` ni `umu`.
+        let game: Game = serde_json::from_str(r#"{ "name": "Vieux", "exe": "/tmp/v.exe" }"#).unwrap();
+        assert!(!game.launch.any());
+        assert_eq!(game.launch.gamescope_size(), (1920, 1080));
+        assert!(!game.umu);
+        assert!(!game.proton_log);
+        // Ancienne clé d'overlay : ignorée sans erreur de lecture.
+        let old: Game =
+            serde_json::from_str(r#"{ "name": "V", "steam_launch_id": 42 }"#).unwrap();
+        assert_eq!(old.name, "V");
+    }
+
+    #[test]
+    fn gamescope_borne_la_resolution() {
+        let mut opts = LaunchOptions::default();
+        opts.gamescope_width = 0;
+        opts.gamescope_height = 99_999;
+        assert_eq!(opts.gamescope_size(), (320, 4320));
+    }
+
+    #[test]
+    fn le_journal_est_propre_a_chaque_jeu() {
+        let a = session_log("jeu-a");
+        let b = session_log("jeu-b");
+        assert_ne!(a, b);
+        assert_eq!(a.file_name().unwrap(), "session.log");
+        assert!(a.starts_with(log_dir("jeu-a")));
     }
 
     #[test]

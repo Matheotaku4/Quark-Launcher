@@ -247,13 +247,50 @@ pub struct LaunchSpec {
     pub env: Vec<(String, String)>,
 }
 
+impl LaunchSpec {
+    /// Ligne de commande lisible : journal de session, bloc d'informations.
+    pub fn command_line(&self) -> String {
+        let mut words = vec![shell_quote(&self.program.display().to_string())];
+        words.extend(self.args.iter().map(|arg| shell_quote(arg)));
+        words.join(" ")
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaunchKind {
     Native,
     Proton,
-    /// Lancement confié au client Steam (`steam -applaunch <id>`) : c'est la
-    /// seule façon d'avoir l'overlay Steam, Steam devant lancer le jeu lui-même.
-    Steam,
+    /// umu-launcher (`umu-run`) : Proton sans Steam, umu gérant le préfixe et
+    /// le GAMEID.
+    Umu,
+}
+
+/// Outils externes trouvés sur le PATH.
+///
+/// Une case cochée alors que l'outil n'est pas installé ne doit pas empêcher le
+/// jeu de démarrer : l'option est ignorée et l'interface le dit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Tools {
+    pub gamescope: bool,
+    pub gamemoderun: bool,
+    pub umu_run: bool,
+}
+
+impl Tools {
+    pub fn detect() -> Self {
+        Self {
+            gamescope: on_path("gamescope"),
+            gamemoderun: on_path("gamemoderun"),
+            umu_run: on_path("umu-run"),
+        }
+    }
+}
+
+fn on_path(program: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|dir| dir.join(program).is_file())
 }
 
 #[derive(Debug)]
@@ -264,6 +301,10 @@ pub struct Resolved {
     pub prefix: Option<PathBuf>,
     /// Option anti-triche effectivement appliquée au lancement.
     pub anticheat: AnticheatMode,
+    /// Options de lancement appliquées (« gamescope 2560×1440 », « GameMode »…).
+    pub extras: Vec<String>,
+    /// Options demandées mais impossibles (outil absent) : dites, pas tues.
+    pub warnings: Vec<String>,
 }
 
 impl Resolved {
@@ -272,12 +313,134 @@ impl Resolved {
             (LaunchKind::Native, _) => "Linux (natif)".to_string(),
             (LaunchKind::Proton, Some(rt)) => rt.label(),
             (LaunchKind::Proton, None) => "Proton".to_string(),
-            (LaunchKind::Steam, _) => "Steam · overlay".to_string(),
+            (LaunchKind::Umu, Some(rt)) => format!("umu · {}", rt.name),
+            (LaunchKind::Umu, None) => "umu · Proton auto".to_string(),
         };
-        match self.anticheat {
-            AnticheatMode::None => base,
-            mode => format!("{base} · anti-triche {}", mode.label()),
+        let mut parts = vec![base];
+        if self.anticheat != AnticheatMode::None {
+            parts.push(format!("anti-triche {}", self.anticheat.label()));
         }
+        parts.extend(self.extras.iter().cloned());
+        parts.join(" · ")
+    }
+}
+
+/// Échappement pour `sh` : un mot sans caractère spécial reste tel quel, sinon
+/// il est entouré de guillemets simples (un guillemet simple interne devient
+/// `'\''`).
+pub fn shell_quote(word: &str) -> String {
+    let safe = !word.is_empty()
+        && word
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._-/:+=@%,".contains(c));
+    if safe {
+        word.to_string()
+    } else {
+        format!("'{}'", word.replace('\'', "'\\''"))
+    }
+}
+
+fn shell_join(words: &[String]) -> String {
+    words
+        .iter()
+        .map(|word| shell_quote(word))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Applique les options graphiques à la commande du jeu.
+///
+/// Ordre des enveloppes, de l'extérieur vers l'intérieur : wrapper de
+/// l'utilisateur, gamescope, gamemoderun, puis le jeu — c'est l'ordre que Steam
+/// obtient avec `gamescope -- gamemoderun %command%`.
+fn finalize(
+    program: PathBuf,
+    args: Vec<String>,
+    env: Vec<(String, String)>,
+    opts: &crate::config::LaunchOptions,
+    tools: Tools,
+    extras: &mut Vec<String>,
+    warnings: &mut Vec<String>,
+) -> LaunchSpec {
+    let mut tokens: Vec<String> = std::iter::once(program.display().to_string())
+        .chain(args)
+        .collect();
+    // Noms des enveloppes, de la plus interne à la plus externe.
+    let mut wrappers: Vec<String> = Vec::new();
+
+    if opts.gamemode {
+        if tools.gamemoderun {
+            let mut wrapped = vec!["gamemoderun".to_string()];
+            wrapped.extend(tokens);
+            tokens = wrapped;
+            wrappers.push("GameMode".to_string());
+        } else {
+            warnings.push("gamemoderun n'est pas installé : l'option est ignorée".to_string());
+        }
+    }
+
+    if opts.gamescope {
+        if tools.gamescope {
+            let (width, height) = opts.gamescope_size();
+            let mut wrapped = vec![
+                "gamescope".to_string(),
+                "-W".to_string(),
+                width.to_string(),
+                "-H".to_string(),
+                height.to_string(),
+                "-f".to_string(),
+            ];
+            if opts.gamescope_fsr {
+                wrapped.push("-F".to_string());
+                wrapped.push("fsr".to_string());
+            }
+            if opts.gamescope_fps > 0 {
+                wrapped.push("--fps-limit".to_string());
+                wrapped.push(opts.gamescope_fps.min(1000).to_string());
+            }
+            wrapped.push("--".to_string());
+            wrapped.extend(tokens);
+            tokens = wrapped;
+            wrappers.push(if opts.gamescope_fsr {
+                format!("gamescope {width}×{height} FSR")
+            } else {
+                format!("gamescope {width}×{height}")
+            });
+        } else {
+            warnings.push("gamescope n'est pas installé : l'option est ignorée".to_string());
+        }
+    }
+
+    // À l'affichage, la plus externe d'abord : gamescope, puis GameMode.
+    wrappers.reverse();
+    extras.splice(0..0, wrappers);
+
+    let wrapper = opts.wrapper.trim();
+    if wrapper.is_empty() {
+        let mut iter = tokens.into_iter();
+        let program = iter.next().unwrap_or_default();
+        return LaunchSpec {
+            program: PathBuf::from(program),
+            args: iter.collect(),
+            env,
+        };
+    }
+
+    // `%command%` remplacé par la commande complète, comme dans les options de
+    // lancement Steam ; sans joker, la commande est préfixée.
+    let command = shell_join(&tokens);
+    let line = if wrapper.contains("%command%") {
+        wrapper.replace("%command%", &command)
+    } else {
+        format!("{wrapper} {command}")
+    };
+    extras.insert(0, "wrapper".to_string());
+    // La ligne passe par un shell : c'est ce qui permet `env FOO=1 %command%`,
+    // les pipes ou les redirections.
+    LaunchSpec {
+        program: PathBuf::from("sh"),
+        args: vec!["-c".to_string(), line],
+        env,
     }
 }
 
@@ -356,30 +519,16 @@ pub fn resolve(
     settings: &Settings,
     runtimes: &[ProtonRuntime],
 ) -> Result<Resolved, String> {
-    // Overlay Steam : seul Steam peut l'injecter, donc on lui confie le
-    // lancement. Ses propres réglages (Proton, préfixe, arguments du raccourci)
-    // prennent alors le relais : ceux de Quark ne seraient pas honorés.
-    if let Some(app_id) = game.steam_launch_id {
-        if app_id == 0 {
-            return Err(
-                "Overlay Steam : indique l'AppID du raccourci Steam (Propriétés du raccourci \
-                 → l'identifiant est dans l'URL steam://rungameid/…)."
-                    .to_string(),
-            );
-        }
-        return Ok(Resolved {
-            kind: LaunchKind::Steam,
-            spec: LaunchSpec {
-                program: PathBuf::from("steam"),
-                args: vec!["-applaunch".to_string(), app_id.to_string()],
-                env: Vec::new(),
-            },
-            runtime: None,
-            prefix: None,
-            anticheat: AnticheatMode::None,
-        });
-    }
+    resolve_with(game, settings, runtimes, Tools::detect())
+}
 
+/// Même chose avec des outils imposés (les tests n'ont pas gamescope installé).
+pub fn resolve_with(
+    game: &Game,
+    settings: &Settings,
+    runtimes: &[ProtonRuntime],
+    tools: Tools,
+) -> Result<Resolved, String> {
     if game.exe.trim().is_empty() {
         return Err("Aucun exécutable défini pour ce jeu.".to_string());
     }
@@ -394,19 +543,66 @@ pub fn resolve(
         ProtonMode::Default => looks_windows(&exe),
     };
 
+    let mut env = launch_env(game);
+    let mut extras: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+
+    // PRIME : le rendu part sur la carte NVIDIA dédiée (portables hybrides).
+    if game.launch.prime {
+        for (name, value) in [
+            ("__NV_PRIME_RENDER_OFFLOAD", "1"),
+            ("__GLX_VENDOR_LIBRARY_NAME", "nvidia"),
+            ("__VK_LAYER_NV_optimus", "NVIDIA_only"),
+            ("DRI_PRIME", "1"),
+        ] {
+            env.push((name.to_string(), value.to_string()));
+        }
+        extras.push("PRIME".to_string());
+    }
+
+    // MangoHud : la variable suffit (couche Vulkan implicite) ; aucun lanceur à
+    // installer en plus du paquet MangoHud.
+    if game.launch.mangohud {
+        env.push(("MANGOHUD".to_string(), "1".to_string()));
+        extras.push("MangoHud".to_string());
+    }
+
+    if game.proton_log {
+        env.push(("PROTON_LOG".to_string(), "1".to_string()));
+        env.push((
+            "PROTON_LOG_DIR".to_string(),
+            crate::config::log_dir(&game.id).display().to_string(),
+        ));
+        extras.push("PROTON_LOG".to_string());
+    }
+
     if !want_proton {
+        if game.umu {
+            warnings.push("umu-launcher ne sert qu'aux jeux Windows : lancement natif".to_string());
+        }
+        let argv = std::iter::once(exe.display().to_string())
+            .chain(extra)
+            .collect::<Vec<String>>();
+        if argv.is_empty() {
+            return Err("Aucun exécutable défini pour ce jeu.".to_string());
+        }
+        let spec = finalize(
+            PathBuf::from(&argv[0]),
+            argv[1..].to_vec(),
+            env,
+            &game.launch,
+            tools,
+            &mut extras,
+            &mut warnings,
+        );
         return Ok(Resolved {
             kind: LaunchKind::Native,
-            spec: LaunchSpec {
-                program: exe,
-                args: extra,
-                // Les variables d'environnement s'appliquent aussi aux jeux
-                // natifs : certaines servent hors Wine (MANGOHUD, LD_…).
-                env: launch_env(game),
-            },
+            spec,
             runtime: None,
             prefix: None,
             anticheat: AnticheatMode::None,
+            extras,
+            warnings,
         });
     }
 
@@ -429,9 +625,7 @@ pub fn resolve(
 
     // Option anti-triche : Steam installe ces dossiers à part (« Proton
     // BattlEye Runtime », « Proton EasyAntiCheat Runtime ») et Proton ne les
-    // lance pas — il les trouve par une variable d'environnement. On garde donc
-    // le Proton choisi et on pointe vers le dossier réellement installé, au lieu
-    // d'exiger un script `proton` qui n'existe pas.
+    // lance pas — il les trouve par une variable d'environnement.
     let mut anticheat_env: Vec<(String, String)> = Vec::new();
     let mut missing: Vec<&'static str> = Vec::new();
     for keyword in game.anticheat.keywords() {
@@ -460,16 +654,60 @@ pub fn resolve(
     }
 
     let prefix = game.prefix_path(settings);
-    let mut args = vec!["run".to_string(), exe.display().to_string()];
-    args.extend(extra);
-
-    // Les variables de l'utilisateur d'abord, puis celles que Proton exige :
-    // `Command::env` garde la dernière valeur, donc le préfixe résolu gagne
-    // toujours sur une variable homonyme saisie à la main.
-    let mut env = launch_env(game);
-    // Les dossiers anti-triche d'abord : une variable saisie à la main ne peut
-    // pas contredire l'option cochée dans les paramètres du jeu.
+    // Les variables de l'utilisateur d'abord, puis celles que Quark exige :
+    // `Command::env` garde la dernière valeur.
     env.extend(anticheat_env);
+
+    if game.umu {
+        if !tools.umu_run {
+            return Err(
+                "umu-run introuvable : installe umu-launcher (paquet `umu-launcher` ou \
+                 ~/.local/bin/umu-run), ou décoche « Lancer via umu » dans les paramètres du jeu."
+                    .to_string(),
+            );
+        }
+        env.push((
+            "WINEPREFIX".to_string(),
+            prefix.display().to_string(),
+        ));
+        let game_id = if game.umu_game_id.trim().is_empty() {
+            "0".to_string()
+        } else {
+            game.umu_game_id.trim().to_string()
+        };
+        env.push(("GAMEID".to_string(), game_id));
+        // Un Proton choisi explicitement est transmis à umu ; sinon umu prend
+        // son propre build (UMU-Proton), comme il le fait sans Steam.
+        let pinned = matches!(game.proton, ProtonMode::Runtime(_))
+            || settings.default_proton.is_some();
+        if pinned && runtime.kind == RuntimeKind::Proton {
+            env.push((
+                "PROTONPATH".to_string(),
+                runtime.dir().display().to_string(),
+            ));
+        }
+        let mut args = vec![exe.display().to_string()];
+        args.extend(extra);
+        let spec = finalize(
+            PathBuf::from("umu-run"),
+            args,
+            env,
+            &game.launch,
+            tools,
+            &mut extras,
+            &mut warnings,
+        );
+        return Ok(Resolved {
+            kind: LaunchKind::Umu,
+            spec,
+            runtime: Some(runtime),
+            prefix: Some(prefix),
+            anticheat: game.anticheat,
+            extras,
+            warnings,
+        });
+    }
+
     env.push((
         "STEAM_COMPAT_DATA_PATH".to_string(),
         prefix.display().to_string(),
@@ -479,16 +717,26 @@ pub fn resolve(
         runtime.steam_root.display().to_string(),
     ));
 
+    let mut args = vec!["run".to_string(), exe.display().to_string()];
+    args.extend(extra);
+    let spec = finalize(
+        runtime.path.clone(),
+        args,
+        env,
+        &game.launch,
+        tools,
+        &mut extras,
+        &mut warnings,
+    );
+
     Ok(Resolved {
-        spec: LaunchSpec {
-            program: runtime.path.clone(),
-            args,
-            env,
-        },
         kind: LaunchKind::Proton,
+        spec,
         runtime: Some(runtime),
         prefix: Some(prefix),
         anticheat: game.anticheat,
+        extras,
+        warnings,
     })
 }
 
@@ -525,22 +773,232 @@ mod tests {
         assert!(launch_env(&jeu(vec![EnvVar::new("   ", "x"), EnvVar::new("", "y")])).is_empty());
     }
 
-    #[test]
-    fn l_overlay_steam_confie_le_lancement_a_steam() {
-        let mut game = Game::new("Jeu", "/tmp/jeu.exe");
-        game.steam_launch_id = Some(3_546_210_478);
-        let resolu = resolve(&game, &Settings::default(), &[]).unwrap();
-        // Steam doit lancer le jeu lui-même : lui seul injecte l'overlay.
-        assert_eq!(resolu.kind, LaunchKind::Steam);
-        assert_eq!(resolu.spec.program, PathBuf::from("steam"));
-        assert_eq!(resolu.spec.args, ["-applaunch", "3546210478"]);
-        assert!(resolu.prefix.is_none(), "Steam gère son propre préfixe");
-        assert_eq!(resolu.label(), "Steam · overlay");
+    fn jeu_binaire(dir: &Path) -> Game {
+        let exe = dir.join("jeu.exe");
+        std::fs::write(&exe, b"MZ").unwrap();
+        let mut game = Game::new("Jeu", exe.display().to_string());
+        // Un exécutable Windows voudrait Proton ; ces tests portent sur la
+        // ligne de commande, donc on force le lancement direct.
+        game.proton = ProtonMode::Native;
+        game
+    }
 
-        // AppID à zéro : message clair plutôt qu'un Steam sans jeu.
-        game.steam_launch_id = Some(0);
-        let err = resolve(&game, &Settings::default(), &[]).unwrap_err();
-        assert!(err.contains("AppID"), "{err}");
+    fn dossier(nom: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("quark-{nom}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn outils(gamescope: bool, gamemoderun: bool, umu_run: bool) -> Tools {
+        Tools {
+            gamescope,
+            gamemoderun,
+            umu_run,
+        }
+    }
+
+    fn valeur(env: &[(String, String)], name: &str) -> Option<String> {
+        env.iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.clone())
+    }
+
+    #[test]
+    fn les_options_graphiques_s_enchainent_comme_dans_steam() {
+        let dir = dossier("lancement");
+        let mut game = jeu_binaire(&dir);
+        game.launch.gamescope = true;
+        game.launch.gamescope_width = 2560;
+        game.launch.gamescope_height = 1440;
+        game.launch.gamescope_fsr = true;
+        game.launch.gamescope_fps = 60;
+        game.launch.gamemode = true;
+
+        let resolu = resolve_with(
+            &game,
+            &Settings::default(),
+            &[],
+            outils(true, true, false),
+        )
+        .unwrap();
+        // gamescope enveloppe gamemoderun, qui enveloppe le jeu.
+        assert_eq!(resolu.spec.program, PathBuf::from("gamescope"));
+        let args: Vec<&str> = resolu.spec.args.iter().map(String::as_str).collect();
+        assert_eq!(
+            &args[..],
+            [
+                "-W",
+                "2560",
+                "-H",
+                "1440",
+                "-f",
+                "-F",
+                "fsr",
+                "--fps-limit",
+                "60",
+                "--",
+                "gamemoderun",
+                game.exe.as_str()
+            ]
+        );
+        assert_eq!(resolu.extras, ["gamescope 2560×1440 FSR", "GameMode"]);
+        assert!(resolu.warnings.is_empty());
+        assert_eq!(
+            resolu.label(),
+            "Linux (natif) · gamescope 2560×1440 FSR · GameMode"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn le_wrapper_remplace_le_joker_ou_prefixe_la_commande() {
+        let dir = dossier("wrapper");
+        let mut game = jeu_binaire(&dir);
+
+        game.launch.wrapper = "env FOO=1 %command%".to_string();
+        let resolu = resolve_with(&game, &Settings::default(), &[], Tools::default()).unwrap();
+        // Une ligne de wrapper passe par sh, comme dans Steam.
+        assert_eq!(resolu.spec.program, PathBuf::from("sh"));
+        assert_eq!(resolu.spec.args[0], "-c");
+        assert_eq!(
+            resolu.spec.args[1],
+            format!("env FOO=1 {}", game.exe)
+        );
+
+        // Sans joker, la commande est préfixée par le wrapper.
+        game.launch.wrapper = "prime-run".to_string();
+        let resolu = resolve_with(&game, &Settings::default(), &[], Tools::default()).unwrap();
+        assert_eq!(resolu.spec.args[1], format!("prime-run {}", game.exe));
+        assert!(resolu.extras.contains(&"wrapper".to_string()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn une_case_cochee_sans_outil_est_ignoree_et_signalee() {
+        let dir = dossier("outils-absents");
+        let mut game = jeu_binaire(&dir);
+        game.launch.gamescope = true;
+        game.launch.gamemode = true;
+
+        let resolu = resolve_with(
+            &game,
+            &Settings::default(),
+            &[],
+            outils(false, false, false),
+        )
+        .unwrap();
+        // Le jeu démarre quand même : aucune option n'est appliquée.
+        assert_eq!(resolu.spec.program, game.exe_path());
+        assert!(resolu.extras.is_empty());
+        assert_eq!(resolu.warnings.len(), 2);
+        assert!(resolu.warnings.iter().any(|w| w.contains("gamescope")));
+        assert!(resolu.warnings.iter().any(|w| w.contains("gamemoderun")));
+        assert_eq!(resolu.label(), "Linux (natif)");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn prime_mangohud_et_journal_passent_par_l_environnement() {
+        let dir = dossier("env-lancement");
+        let mut game = jeu_binaire(&dir);
+        game.launch.prime = true;
+        game.launch.mangohud = true;
+        game.proton_log = true;
+
+        let resolu = resolve_with(&game, &Settings::default(), &[], Tools::default()).unwrap();
+        assert_eq!(valeur(&resolu.spec.env, "MANGOHUD").as_deref(), Some("1"));
+        assert_eq!(
+            valeur(&resolu.spec.env, "__NV_PRIME_RENDER_OFFLOAD").as_deref(),
+            Some("1")
+        );
+        assert_eq!(
+            valeur(&resolu.spec.env, "__GLX_VENDOR_LIBRARY_NAME").as_deref(),
+            Some("nvidia")
+        );
+        assert_eq!(valeur(&resolu.spec.env, "PROTON_LOG").as_deref(), Some("1"));
+        assert_eq!(
+            valeur(&resolu.spec.env, "PROTON_LOG_DIR"),
+            Some(crate::config::log_dir(&game.id).display().to_string())
+        );
+        assert!(resolu.extras.contains(&"PRIME".to_string()));
+        assert!(resolu.extras.contains(&"MangoHud".to_string()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn umu_remplace_le_script_proton() {
+        let dir = dossier("umu");
+        let root = dir.join("steam");
+        std::fs::create_dir_all(&root).unwrap();
+        let mut game = jeu_binaire(&dir);
+        game.proton = ProtonMode::Runtime("GE-Proton9-20".to_string());
+        game.umu = true;
+        game.umu_game_id = "367520".to_string();
+
+        let runtime = ProtonRuntime {
+            key: "GE-Proton9-20".to_string(),
+            name: "GE-Proton9-20".to_string(),
+            version: None,
+            path: root.join("GE-Proton9-20/proton"),
+            steam_root: root.clone(),
+            kind: RuntimeKind::Proton,
+            has_proton_script: true,
+        };
+        let resolu = resolve_with(
+            &game,
+            &Settings::default(),
+            &[runtime.clone()],
+            outils(false, false, true),
+        )
+        .unwrap();
+        assert_eq!(resolu.kind, LaunchKind::Umu);
+        assert_eq!(resolu.spec.program, PathBuf::from("umu-run"));
+        assert_eq!(resolu.spec.args, [game.exe.clone()]);
+        // umu gère le préfixe et le GAMEID ; le Proton choisi lui est transmis.
+        assert_eq!(
+            valeur(&resolu.spec.env, "WINEPREFIX"),
+            Some(game.prefix_path(&Settings::default()).display().to_string())
+        );
+        assert_eq!(valeur(&resolu.spec.env, "GAMEID").as_deref(), Some("367520"));
+        assert_eq!(
+            valeur(&resolu.spec.env, "PROTONPATH"),
+            Some(root.join("GE-Proton9-20").display().to_string())
+        );
+        assert_eq!(resolu.label(), "umu · GE-Proton9-20");
+
+        // GAMEID vide : umu reçoit « 0 » plutôt qu'une variable absente.
+        game.umu_game_id.clear();
+        let resolu = resolve_with(
+            &game,
+            &Settings::default(),
+            &[runtime.clone()],
+            outils(false, false, true),
+        )
+        .unwrap();
+        assert_eq!(valeur(&resolu.spec.env, "GAMEID").as_deref(), Some("0"));
+
+        // umu-run absent : message clair plutôt qu'un jeu qui ne démarre pas.
+        let err = resolve_with(
+            &game,
+            &Settings::default(),
+            &[runtime],
+            outils(false, false, false),
+        )
+        .unwrap_err();
+        assert!(err.contains("umu"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn un_chemin_avec_espace_est_protege() {
+        assert_eq!(shell_quote("simple"), "simple");
+        assert_eq!(
+            shell_quote("/jeux/mon jeu/jeu.exe"),
+            "'/jeux/mon jeu/jeu.exe'"
+        );
+        assert_eq!(shell_quote("l'a"), "'l'\\''a'");
+        assert_eq!(shell_quote(""), "''");
     }
 
     fn faux_runtime(root: &Path, name: &str) {

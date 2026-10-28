@@ -76,7 +76,7 @@ pub const HELP: &str = "\
       [--view list|grid] [--tab library|store] [--theme amoled|graphite]\n\
       [--select <jeu>] [--info] [--running] [--marked]\n\
       [--dialog none|add|artwork|exe|scan|settings|settings-proton|\n\
-      settings-env|settings-artworks|game|updates|customize|remove]\n\
+      settings-env|settings-artworks|game|logs|updates|customize|remove]\n\
       [--hover X,Y] [--click X,Y] [--key up|down|left|right|enter|escape] [--demo]\n\
       --demo : bibliothèque de démonstration avec artworks factices (la\n\
       configuration réelle n'est ni lue ni écrite)\n";
@@ -98,9 +98,23 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
         app.filter.clear();
         // Runtimes factices : la VM n'a ni Steam ni Proton.
         app.runtimes = demo_runtimes();
-        // Raccourcis non-Steam et jeux installés factices, de même.
-        app.steam_shortcuts = demo_shortcuts();
-        app.steam_installed = vec![292_030];
+        // Outils externes : la VM n'a ni gamescope ni umu-launcher, on montre
+        // l'état « installé » là où c'est utile au rendu.
+        app.tools = crate::proton::Tools {
+            gamescope: true,
+            gamemoderun: true,
+            umu_run: false,
+        };
+        // Note ProtonDB factice pour le jeu de démonstration (aucun réseau).
+        app.protondb.insert(
+            292_030,
+            crate::app::ProtonDbState::Ready(crate::protondb::Report {
+                tier: crate::protondb::Tier::Platinum,
+                confidence: "strong".to_string(),
+                total: 379,
+                best: Some(crate::protondb::Tier::Platinum),
+            }),
+        );
     }
     if let Some(view) = opts.view {
         app.lib.settings.view = view;
@@ -316,7 +330,7 @@ fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
             customize.plan = Some(plan);
             app.customize = Some(customize);
         }
-        "game" | "game-nolicense" => {
+        "game" => {
             let id = app
                 .selected
                 .clone()
@@ -329,14 +343,53 @@ fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
             // Les deux options anti-triche cochées : c'est l'état que le rendu
             // doit montrer (les deux dossiers trouvés et leur variable).
             game.anticheat = crate::config::AnticheatMode::Both;
-            // Et l'overlay Steam : un raccourci connu dans un cas, un AppID
-            // inconnu dans l'autre (le cas « no license »).
-            game.steam_launch_id = Some(if dialog == "game" {
-                3_546_210_478
-            } else {
-                999_999
-            });
+            // Options de lancement cochées : le rendu doit montrer les cases,
+            // la résolution gamescope, le wrapper et le journal Proton.
+            game.launch.gamemode = true;
+            game.launch.mangohud = true;
+            game.launch.gamescope = true;
+            game.launch.gamescope_width = 2560;
+            game.launch.gamescope_height = 1440;
+            game.launch.gamescope_fsr = true;
+            game.launch.gamescope_fps = 60;
+            game.launch.prime = true;
+            game.launch.wrapper = "env DXVK_HUD=0 %command%".to_string();
+            game.proton_log = true;
             app.editing = Some(game);
+        }
+        "logs" => {
+            let id = app
+                .selected
+                .clone()
+                .ok_or_else(|| "aucun jeu sélectionné".to_string())?;
+            let path = crate::config::session_log(&id);
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir).map_err(|err| err.to_string())?;
+            }
+            let demo = "\u{5b}quark] session du 2026-10-28 21:04 UTC\n\
+\u{5b}quark] GE-Proton9-20 · gamescope 2560×1440 FSR · GameMode · MangoHud\n\
+\u{5b}quark] gamescope -W 2560 -H 1440 -f -F fsr --fps-limit 60 -- gamemoderun \"\
+/home/matheo/.steam/steam/compatibilitytools.d/GE-Proton9-20/proton\" run \"\
+/jeux/witcher3/bin/x64_dx12/witcher3.exe\"\n\
+\u{5b}quark] préfixe /home/matheo/Games/prefixes/witcher3\n\
+\u{5b}quark] env STEAM_COMPAT_DATA_PATH=/home/matheo/Games/prefixes/witcher3\n\
+\u{5b}quark] env MANGOHUD=1\n\
+\u{5b}quark] env PROTON_LOG=1\n\
+--------------------------------------------------------------\n\
+fsync: up and running.\n\
+wine: Using setpriority to control niceness in the [-10,10] range\n\
+info:  Game: witcher3.exe\n\
+info:  DXVK: v2.7.0\n\
+info:  Found device: AMD Radeon RX 7800 XT (RADV NAVI32)\n\
+info:  Vulkan 1.3.296 / RADV driver 24.2.7\n\
+info:  GameMode: client library loaded\n\
+warn:  DXVK: No swapchain HDR metadata support\n\
+err:   DXVK: vkCreateSwapchainKHR failed (VK_ERROR_OUT_OF_DATE_KHR), retrying\n\
+info:  Present mode: MAILBOX (2560×1440, 60 fps limit)\n\
+MangoHud: initialised (vulkan layer)\n\
+[2026-10-28 21:05:12] Session started, playtime counter running.\n";
+            std::fs::write(&path, demo).map_err(|err| err.to_string())?;
+            app.open_logs(&id);
         }
         "remove" => {
             // Avec --marked, la confirmation porte sur toute la sélection.
@@ -534,12 +587,18 @@ fn mark_running(app: &mut QuarkApp) {
         return;
     };
     if let Ok(child) = Command::new("sleep").arg("600").spawn() {
+        let log = crate::config::session_log(&id);
         app.running.insert(
             id,
-            crate::app::RunningGame {
+            crate::session::Session {
                 child,
+                pid: 0,
                 started: std::time::Instant::now(),
                 session: 4_740,
+                log,
+                prefix: None,
+                wineserver: None,
+                stopping: None,
             },
         );
     }
@@ -665,27 +724,6 @@ fn save_demo_png(
         }
     }
     image.save(path).map_err(|err| err.to_string())
-}
-
-/// Raccourcis non-Steam factices : la VM n'a pas de Steam, mais les rendus
-/// doivent montrer le sélecteur et le diagnostic réels.
-fn demo_shortcuts() -> Vec<crate::steam::Shortcut> {
-    vec![
-        crate::steam::Shortcut {
-            app_id: 3_546_210_478,
-            name: "The Witcher 3: Wild Hunt".to_string(),
-            exe: "/jeux/witcher3/bin/x64_dx12/witcher3.exe".to_string(),
-            start_dir: "/jeux/witcher3/bin/x64_dx12".to_string(),
-            launch_options: String::new(),
-        },
-        crate::steam::Shortcut {
-            app_id: 2_654_321_098,
-            name: "Celeste".to_string(),
-            exe: "/jeux/Celeste/Celeste.exe".to_string(),
-            start_dir: "/jeux/Celeste".to_string(),
-            launch_options: String::new(),
-        },
-    ]
 }
 
 /// Jeux de test : certains complets, d'autres partiels, d'autres sans aucun

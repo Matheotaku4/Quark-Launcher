@@ -5,7 +5,10 @@ use crate::config::{
     Artwork, AssetKind, Game, Library, ProtonMode, ThemeMode, ViewMode, human_playtime, now_ts,
 };
 use crate::news::{self, NewsItem};
+use crate::protondb::{self, Report};
 use crate::proton::{self, ProtonRuntime};
+use crate::session::Session;
+use crate::tray::TrayHandle;
 use crate::theme::{self, Palette};
 use crate::update::{self, Release};
 use crate::widgets::{self, Icon};
@@ -19,12 +22,6 @@ use std::time::{Duration, Instant};
 pub enum Tab {
     Store,
     Library,
-}
-
-pub struct RunningGame {
-    pub child: std::process::Child,
-    pub started: Instant,
-    pub session: u64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -166,6 +163,29 @@ pub struct NewsJob {
     pub rx: Receiver<Result<Vec<NewsItem>, String>>,
 }
 
+/// Note ProtonDB d'un jeu (mise en cache par appid).
+pub enum ProtonDbState {
+    Loading,
+    Ready(Report),
+    Failed(String),
+}
+
+/// Requête ProtonDB en cours.
+pub struct ProtonDbJob {
+    pub app_id: u32,
+    pub rx: Receiver<Result<Report, String>>,
+}
+
+/// Fenêtre « Journal » : ce que la dernière session a affiché.
+pub struct LogView {
+    pub game_id: String,
+    pub path: PathBuf,
+    pub lines: Vec<String>,
+    pub truncated: bool,
+    pub error: Option<String>,
+    pub updated: Instant,
+}
+
 /// État de la vérification des mises à jour.
 #[derive(Clone)]
 pub enum UpdateState {
@@ -286,12 +306,9 @@ pub struct QuarkApp {
     /// Jeux marqués par Ctrl+clic : ils se retirent en lot.
     pub marked: Vec<String>,
     pub runtimes: Vec<ProtonRuntime>,
-    /// Raccourcis non-Steam détectés : ils servent à l'overlay Steam, et un
-    /// AppID absent de cette liste ne peut pas se lancer.
-    pub steam_shortcuts: Vec<crate::steam::Shortcut>,
-    /// AppIDs des jeux Steam installés (donc sous licence).
-    pub steam_installed: Vec<u32>,
-    pub running: HashMap<String, RunningGame>,
+    /// Outils externes trouvés sur le PATH (gamescope, gamemoderun, umu-run).
+    pub tools: proton::Tools,
+    pub running: HashMap<String, Session>,
     pub job: Option<AssetJob>,
     pub toasts: Vec<Toast>,
     pub dirty: bool,
@@ -318,6 +335,17 @@ pub struct QuarkApp {
     /// État de la vérification des mises à jour.
     pub update: UpdateState,
     pub update_rx: Option<Receiver<UpdateMessage>>,
+    /// Notes ProtonDB, une recherche par appid.
+    pub protondb: HashMap<u32, ProtonDbState>,
+    pub protondb_job: Option<ProtonDbJob>,
+    /// Journal de session ouvert (bouton « Journal »).
+    pub logs: Option<LogView>,
+    /// Icône de la zone de notification.
+    pub tray: Option<TrayHandle>,
+    pub tray_attempted: bool,
+    pub tray_error: Option<String>,
+    /// Fermeture autorisée malgré l'icône (menu « Quitter »).
+    pub allow_close: bool,
 }
 
 impl QuarkApp {
@@ -333,8 +361,7 @@ impl QuarkApp {
             applied_theme: Some(lib.settings.theme),
             selected,
             runtimes,
-            steam_shortcuts: crate::steam::detect(),
-            steam_installed: crate::steam::installed_app_ids(),
+            tools: proton::Tools::detect(),
             lib,
             pal,
             tab: Tab::Library,
@@ -366,6 +393,13 @@ impl QuarkApp {
             news_job: None,
             update: UpdateState::Idle,
             update_rx: None,
+            protondb: HashMap::new(),
+            protondb_job: None,
+            logs: None,
+            tray: None,
+            tray_attempted: false,
+            tray_error: None,
+            allow_close: false,
         }
     }
 
@@ -423,6 +457,8 @@ impl QuarkApp {
     // -----------------------------------------------------------------------
 
     fn tick(&mut self, ctx: &egui::Context) {
+        self.poll_tray(ctx);
+        self.sync_tray(ctx);
         self.poll_running_games();
         self.poll_update(ctx);
         self.poll_artwork_plan(ctx);
@@ -434,6 +470,8 @@ impl QuarkApp {
         self.poll_scan();
         self.auto_search(ctx);
         self.ensure_news(ctx);
+        self.ensure_protondb(ctx);
+        self.poll_protondb();
 
         if self.add.scan.running || self.add.scan.search_rx.is_some() {
             ctx.request_repaint_after(Duration::from_millis(120));
@@ -460,9 +498,40 @@ impl QuarkApp {
 
         if ctx.input(|i| i.viewport().close_requested()) {
             let _ = self.lib.save();
+            // Icône de notification : la croix range Quark dans la zone de
+            // notification, seul « Quitter » (menu de l'icône) termine le
+            // processus.
+            if self.lib.settings.tray_icon
+                && !self.allow_close
+                && self.tray.as_ref().is_some_and(|tray| tray.alive())
+            {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+            }
         }
 
-        if self.job.is_some() || self.news_job.is_some() || !self.running.is_empty() {
+        // Journal ouvert sur un jeu en cours : il se rafraîchit tout seul.
+        let refresh_due = self.logs.as_ref().is_some_and(|logs| {
+            self.running.contains_key(&logs.game_id)
+                && logs.updated.elapsed() >= Duration::from_millis(800)
+        });
+        if refresh_due {
+            self.refresh_log();
+        }
+        if self
+            .logs
+            .as_ref()
+            .is_some_and(|logs| self.running.contains_key(&logs.game_id))
+        {
+            ctx.request_repaint_after(Duration::from_millis(800));
+        }
+
+        if self.job.is_some()
+            || self.news_job.is_some()
+            || self.protondb_job.is_some()
+            || !self.running.is_empty()
+            || self.logs.is_some()
+        {
             ctx.request_repaint_after(Duration::from_millis(400));
         }
     }
@@ -471,7 +540,14 @@ impl QuarkApp {
         let mut finished: Vec<(String, u64)> = Vec::new();
         for (id, game) in self.running.iter_mut() {
             match game.child.try_wait() {
-                Ok(None) => game.session = game.started.elapsed().as_secs(),
+                Ok(None) => {
+                    game.session = game.started.elapsed().as_secs();
+                    // Arrêt demandé mais le jeu s'accroche : on tue le groupe.
+                    if game.should_escalate() {
+                        crate::session::force_kill(game);
+                        game.escalated();
+                    }
+                }
                 Ok(Some(_)) => finished.push((id.clone(), game.started.elapsed().as_secs())),
                 Err(_) => finished.push((id.clone(), game.started.elapsed().as_secs())),
             }
@@ -1219,22 +1295,10 @@ impl QuarkApp {
         };
         match proton::resolve(&game, &self.lib.settings, &self.runtimes) {
             Ok(resolved) => {
-                // Overlay Steam : sans raccourci ni licence, Steam referme le
-                // jeu aussitôt (« no license »). Mieux vaut le dire avant de
-                // lancer que laisser une fenêtre clignoter.
-                if resolved.kind == proton::LaunchKind::Steam {
-                    if let Some(app_id) = game.steam_launch_id {
-                        let status =
-                            crate::steam::check(&self.steam_shortcuts, &self.steam_installed, app_id);
-                        if status.is_broken() {
-                            self.toast_error(format!(
-                                "Steam : aucun raccourci non-Steam avec l'AppID {app_id}, et ce jeu \
-                                 n'est pas installé via Steam — il répondra « no license » et \
-                                 refermera le jeu. Choisis un raccourci dans ses paramètres."
-                            ));
-                            return;
-                        }
-                    }
+                // Une option demandée mais impossible (gamescope absent) ne
+                // bloque pas le jeu : elle est ignorée, et dite ici.
+                for warning in &resolved.warnings {
+                    self.toast_error(format!("{} : {warning}", game.name));
                 }
                 if let Some(prefix) = &resolved.prefix {
                     if let Err(err) = std::fs::create_dir_all(prefix) {
@@ -1242,39 +1306,14 @@ impl QuarkApp {
                         return;
                     }
                 }
-                let mut cmd = std::process::Command::new(&resolved.spec.program);
-                cmd.args(&resolved.spec.args);
-                for (key, value) in &resolved.spec.env {
-                    cmd.env(key, value);
-                }
-                let workdir = game
-                    .exe_path()
-                    .parent()
-                    .map(|p| p.to_path_buf())
-                    .or_else(|| resolved.spec.program.parent().map(|p| p.to_path_buf()));
-                if let Some(dir) = workdir {
-                    cmd.current_dir(dir);
-                }
-                cmd.stdin(std::process::Stdio::null())
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null());
-                // Groupe de processus dédié : « Arrêter » peut tuer wine et le jeu.
-                #[cfg(unix)]
-                {
-                    use std::os::unix::process::CommandExt;
-                    cmd.process_group(0);
-                }
-                match cmd.spawn() {
-                    Ok(child) => {
-                        self.running.insert(
-                            id.to_string(),
-                            RunningGame {
-                                child,
-                                started: Instant::now(),
-                                session: 0,
-                            },
-                        );
+                match crate::session::start(&game, &resolved) {
+                    Ok(session) => {
+                        self.running.insert(id.to_string(), session);
                         self.toast_info(format!("{} lancé · {}", game.name, resolved.label()));
+                        // Nouvelle session : le journal ouvert repart de zéro.
+                        if self.logs.as_ref().is_some_and(|logs| logs.game_id == id) {
+                            self.refresh_log();
+                        }
                         ctx.request_repaint();
                     }
                     Err(err) => self.toast_error(format!("Lancement impossible : {err}")),
@@ -1284,16 +1323,180 @@ impl QuarkApp {
         }
     }
 
+    /// Arrête le jeu : `wineserver -k` du préfixe puis le groupe de processus.
     pub fn stop(&mut self, id: &str) {
-        if let Some(game) = self.running.get_mut(id) {
-            // Proton lance wine en enfant : on termine tout le groupe de processus
-            // (le jeu est lancé dans son propre groupe, voir `launch`).
-            let pid = game.child.id() as i32;
-            #[cfg(unix)]
-            unsafe {
-                libc::kill(-pid, libc::SIGTERM);
+        let name = self
+            .lib
+            .get(id)
+            .map(|game| game.name.clone())
+            .unwrap_or_default();
+        let Some(running) = self.running.get_mut(id) else {
+            return;
+        };
+        crate::session::stop(running);
+        self.toast_info(format!("Arrêt de {name}\u{2026}"));
+        if self.logs.as_ref().is_some_and(|logs| logs.game_id == id) {
+            self.refresh_log();
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Journal de session (bouton « Journal »)
+    // -----------------------------------------------------------------------
+
+    /// Ouvre le journal de la dernière session du jeu.
+    pub fn open_logs(&mut self, id: &str) {
+        // Le chemin de la session en cours d'abord : c'est le fichier que le
+        // jeu écrit maintenant.
+        let path = self
+            .running
+            .get(id)
+            .map(|session| session.log.clone())
+            .unwrap_or_else(|| crate::config::session_log(id));
+        self.logs = Some(LogView {
+            game_id: id.to_string(),
+            path,
+            lines: Vec::new(),
+            truncated: false,
+            error: None,
+            updated: Instant::now(),
+        });
+        self.refresh_log();
+    }
+
+    /// Relit la fin du journal (le fichier peut grossir pendant la partie).
+    pub fn refresh_log(&mut self) {
+        let Some(view) = self.logs.as_mut() else {
+            return;
+        };
+        match crate::session::read_log_tail(&view.path, 500) {
+            Ok((lines, truncated)) => {
+                view.lines = lines;
+                view.truncated = truncated;
+                view.error = None;
             }
-            let _ = game.child.kill();
+            Err(err) => {
+                view.lines.clear();
+                view.error = Some(err);
+            }
+        }
+        view.updated = Instant::now();
+    }
+
+    // -----------------------------------------------------------------------
+    // Note ProtonDB
+    // -----------------------------------------------------------------------
+
+    /// Charge la note ProtonDB du jeu sélectionné, une seule fois par appid.
+    fn ensure_protondb(&mut self, ctx: &egui::Context) {
+        let Some(id) = self.selected.clone() else {
+            return;
+        };
+        let Some(app_id) = self
+            .lib
+            .get(&id)
+            .and_then(|game| game.steam_app_id)
+        else {
+            return;
+        };
+        if self.protondb.contains_key(&app_id) {
+            return;
+        }
+        if self
+            .protondb_job
+            .as_ref()
+            .is_some_and(|job| job.app_id == app_id)
+        {
+            return;
+        }
+        self.start_protondb(ctx, app_id);
+    }
+
+    pub fn start_protondb(&mut self, ctx: &egui::Context, app_id: u32) {
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let client = artwork::http();
+            let _ = tx.send(protondb::fetch(&client, app_id));
+            repaint.request_repaint();
+        });
+        self.protondb.insert(app_id, ProtonDbState::Loading);
+        self.protondb_job = Some(ProtonDbJob { app_id, rx });
+        ctx.request_repaint_after(Duration::from_millis(200));
+    }
+
+    fn poll_protondb(&mut self) {
+        let received = self
+            .protondb_job
+            .as_ref()
+            .map(|job| (job.app_id, job.rx.try_recv()));
+        match received {
+            Some((app_id, Ok(Ok(report)))) => {
+                self.protondb_job = None;
+                self.protondb.insert(app_id, ProtonDbState::Ready(report));
+            }
+            Some((app_id, Ok(Err(message)))) => {
+                self.protondb_job = None;
+                self.protondb
+                    .insert(app_id, ProtonDbState::Failed(message));
+            }
+            Some((app_id, Err(TryRecvError::Disconnected))) => {
+                self.protondb_job = None;
+                self.protondb.insert(
+                    app_id,
+                    ProtonDbState::Failed("requête ProtonDB interrompue".to_string()),
+                );
+            }
+            _ => {}
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Icône de la zone de notification
+    // -----------------------------------------------------------------------
+
+    /// Crée (ou retire) l'icône selon le réglage, sans réessayer en boucle
+    /// quand le bureau n'a pas de zone de notification.
+    fn sync_tray(&mut self, ctx: &egui::Context) {
+        if !self.lib.settings.tray_icon {
+            if self.tray.is_some() || self.tray_error.is_some() || self.tray_attempted {
+                self.tray = None;
+                self.tray_error = None;
+                self.tray_attempted = false;
+            }
+            return;
+        }
+        if self.tray_attempted {
+            return;
+        }
+        self.tray_attempted = true;
+        match TrayHandle::spawn(ctx) {
+            Ok(handle) => {
+                self.tray = Some(handle);
+                self.tray_error = None;
+            }
+            Err(err) => {
+                self.tray = None;
+                self.tray_error = Some(err);
+            }
+        }
+    }
+
+    fn poll_tray(&mut self, ctx: &egui::Context) {
+        let Some(tray) = self.tray.as_ref() else {
+            return;
+        };
+        let show = tray.take_show();
+        let quit = tray.take_quit();
+        if show {
+            // Un clic sur l'icône ramène la fenêtre telle qu'elle était.
+            self.allow_close = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+        if quit {
+            self.allow_close = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
 
@@ -1490,13 +1693,6 @@ impl QuarkApp {
         }
         self.confirm_remove = targets;
     }
-
-    /// Relit les raccourcis non-Steam (Steam vient d'en ajouter un, `.vdf`
-    /// modifié à la main…).
-    pub fn refresh_steam_shortcuts(&mut self) {
-        self.steam_shortcuts = crate::steam::detect();
-        self.steam_installed = crate::steam::installed_app_ids();
-    }
 }
 
 /// Jeux à retirer quand on demande la suppression de `id` : la sélection
@@ -1533,6 +1729,7 @@ impl QuarkApp {
         self.customize_dialog(ctx);
         self.game_settings_dialog(ctx);
         self.confirm_remove_dialog(ctx);
+        self.logs_dialog(ctx);
         self.toasts_ui(ctx);
     }
 
@@ -1545,6 +1742,7 @@ impl QuarkApp {
             || self.settings_open
             || self.editing.is_some()
             || self.customize.is_some()
+            || self.logs.is_some()
             || !self.confirm_remove.is_empty()
         {
             return;

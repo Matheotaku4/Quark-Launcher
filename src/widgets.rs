@@ -14,6 +14,8 @@ pub enum Icon {
     Trash,
     Gear,
     Info,
+    /// Journal de session (page lignée).
+    Log,
     List,
     Grid,
     Folder,
@@ -149,6 +151,21 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
                 1.0,
                 color,
             );
+        }
+        Icon::Log => {
+            let page = Rect::from_center_size(c, Vec2::new(s * 0.60, s * 0.74));
+            border_rect(painter, page, (s * 0.08).max(1.0), color);
+            for i in 0..3 {
+                let y = page.top() + page.height() * (0.30 + i as f32 * 0.19);
+                painter.rect_filled(
+                    Rect::from_min_size(
+                        Pos2::new(page.left() + s * 0.10, y),
+                        Vec2::new(page.width() - s * 0.20, s * 0.06),
+                    ),
+                    0.5,
+                    color,
+                );
+            }
         }
         Icon::List => {
             for i in 0..3 {

@@ -2,8 +2,8 @@
 
 A **lightweight game launcher for Linux**, written in Rust (egui), meant as a sober
 alternative to Steam: deep black (AMOLED), list or grid view, a game banner with a
-**Play** button and playtime, automatic official artwork, and Windows games launched
-through **Proton**.
+**Play** button, playtime, ProtonDB rating and official artwork, with Windows games launched
+through **Proton** — or through **umu-launcher**.
 
 ## Features
 
@@ -25,8 +25,8 @@ through **Proton**.
   `library_600x900_2x` cover, `library_hero` banner, transparent logo and small capsule.
 - **Steam-like layout**: list on the left (thumbnail + title, the selected row has a blue
   marker), game pane on the right; banner on top, **Play** button with **playtime** right
-  next to it, the **settings gear in the top right** and the **ⓘ** button just left of it,
-  which shows or hides the detailed game information.
+  next to it, then the **Journal**, **ⓘ**, **Customize** and **settings** buttons in the top
+  right. `Play` becomes `Stop` while the game is running.
 - **Thumbnails that never move**: the list shows the game capsule, as Steam does. When a
   game has no icon, the tile is filled with the first letter of its title — leading
   articles ignored, so `The Witcher 3` → `W` and `Les Chevaliers de Baphomet` → `C`, while
@@ -35,24 +35,41 @@ through **Proton**.
 - **News under the banner**: the latest official announcements of the selected game
   (public Steam `ISteamNews` feed) — source, author, date, plain-text excerpt; clicking one
   opens the article in your desktop browser.
+- **ProtonDB rating**: the compatibility tier (Platinum, Gold, Silver, Bronze, Borked) is
+  read from ProtonDB's public API for the game's Steam AppID and shown as a coloured pill
+  next to the playtime, plus a row in the information block. Clicking it opens
+  `protondb.com/app/<id>`. Cached per AppID; games without an AppID or without a report
+  simply show no rating.
 - **List / Grid switch** from the left column (the grid widens the column and shows the
   2:3 covers).
-- **Short, cheap transitions**: hover, selection, banner entrance, news cards, tabs and
-  messages are animated. They all go through egui's animation manager, which only asks for
-  a repaint while a value is actually moving, so an idle window stays idle and the launcher
-  keeps its responsiveness.
-- **AMOLED theme** (`#000000`) by default, plus a "Graphite" variant (softer black) in the
-  settings.
-- **Proton**: automatic runtime detection (`steamapps/common/Proton*` and
-  `compatibilitytools.d/*`, including Flatpak/Snap), runtime chosen **per game** or as a
-  default, a **default Proton prefix** in the settings and a **per-game override**.
-- **Steam overlay, the honest way**: a DLL override alone cannot make the overlay appear;
-  Steam has to launch the game itself. Each game can therefore be marked *Launch via Steam*:
-  Quark reads your non-Steam shortcuts out of `shortcuts.vdf`, so you pick one from a list
-  instead of pasting an AppID, then runs `steam -applaunch <AppID>` and Steam applies its own
-  Proton, prefix and overlay. A store AppID you do not own is refused **before** launching,
-  because Steam would answer "no license" and close the game instantly. See
-  [Steam overlay](#steam-overlay).
+- **Launch options as checkboxes, per game** — no command line to remember:
+  - **gamemoderun** (CPU governor from GameMode);
+  - **MangoHud** (`MANGOHUD=1`, no wrapper binary needed);
+  - **gamescope** with resolution, **FSR** upscaling (`-F fsr`) and frame limit
+    (`--fps-limit`), built as `gamescope -W … -H … -f … -- gamemoderun … `;
+  - **PRIME offload** for hybrid laptops (`__NV_PRIME_RENDER_OFFLOAD`,
+    `__GLX_VENDOR_LIBRARY_NAME`, `__VK_LAYER_NV_optimus`, `DRI_PRIME`);
+  - a free **wrapper command** where `%command%` is replaced by the game command, exactly
+    like Steam's launch options (`env FOO=1 %command%`); the line runs through `sh`, so
+    `env`, pipes and redirections work. Without `%command%`, the wrapper is prepended.
+  A missing tool never prevents the game from starting: the option is ignored (and the game
+  still launches) and Quark says so. A “Tout réinitialiser” button clears them all.
+- **Session log, readable in the app**: stdout and stderr of the game and of Wine are
+  captured into `~/.local/share/quark/logs/<game>/session.log`, prefixed with the exact
+  command, the prefix and every environment variable. The **Journal** button (left of
+  *Customize*) shows the tail of that file, refreshes itself while the game runs, and can
+  open the folder. Optional **`PROTON_LOG=1`** switch per game: Proton writes its own
+  detailed log into the same folder (`PROTON_LOG_DIR`).
+- **Stopping a game really stops it**: `Stop` runs `wineserver -k` on the game's prefix
+  (closing the Windows processes the game spawned) and sends `SIGTERM` to the whole process
+  group; after 4 seconds, the group is killed with `SIGKILL`.
+- **umu-launcher support**: a per-game switch launches through `umu-run` instead of the
+  Proton script, with `WINEPREFIX`, `GAMEID` (editable, `0` by default) and `PROTONPATH`
+  when a runtime is selected. A missing `umu-run` is reported before launching.
+- **Stays in the notification area**: with the setting enabled, closing the window keeps
+  Quark alive in a tray icon (StatusNotifierItem, no GTK dependency): clicking it brings the
+  window back, and *Quit Quark* in its menu really exits. Disabled by default only if your
+  desktop has no watcher — the settings page then says why, and the close button quits.
 - **Playtime tracking**: every session is timed (relaunch, total time, last session).
 - **Environment variables per game**: a `NAME=value` list (for example
   `WINEDLLOVERRIDES=winmm=n,b;steam_api64`) with a wide value field, plus default variables in
@@ -74,15 +91,23 @@ through **Proton**.
 - **Customize** a game from its page (or by right-clicking it): each image — cover,
   banner, logo, icon — can be replaced by another online proposal or by a file from your
   disk, or removed to fall back to the built-in rendering.
-- **Settings in tabs**: Appearance, Defaults, Proton, Artworks, About. Explanations live in
-  small ⓘ buttons next to each setting instead of lines of grey text.
+- **Short, cheap transitions**: hover, selection, banner entrance, news cards, tabs and
+  messages are animated. They all go through egui's animation manager, which only asks for
+  a repaint while a value is actually moving, so an idle window stays idle and the launcher
+  keeps its responsiveness.
+- **AMOLED theme** (`#000000`) by default, plus a "Graphite" variant (softer black) in the
+  settings.
+- **Proton**: automatic runtime detection (`steamapps/common/Proton*` and
+  `compatibilitytools.d/*`, including Flatpak/Snap), runtime chosen **per game** or as a
+  default, a **default Proton prefix** in the settings and a **per-game override**.
+- **Settings in tabs**: Appearance (theme, default view, notification icon), Defaults,
+  Proton, Artworks, About. Explanations live in small ⓘ buttons next to each setting instead
+  of lines of grey text.
 - **BattlEye and EasyAntiCheat runtimes** are detected next to Proton — including Steam's
   `Proton BattlEye Runtime` / `Proton EasyAntiCheat Runtime` folders, which carry no `proton`
   script — and each one can be enabled separately per game (both at once is allowed). Quark
-  does not try to launch those folders: it keeps your Proton and passes them through
-  `PROTON_BATTLEYE_RUNTIME` / `PROTON_EAC_RUNTIME`, the variables Proton actually reads. The
-  game settings show the folder Quark found and the variable it will use, instead of asking
-  you to install something you already have.
+  does not try to launch those folders: its keeps your Proton and passes them through
+  `PROTON_BATTLEYE_RUNTIME` / `PROTON_EAC_RUNTIME`, the variables Proton actually reads.
 - **Keyboard navigation**: arrows to move through the library (up/down and left/right in
   the grid), `Enter` to launch, `Ctrl+F` (or `/`) to jump to the search field, `Esc` to
   clear it. Shortcuts stay out of the way while a dialog or a text field has focus.
@@ -116,9 +141,12 @@ cargo build --release      # binary: target/release/quark
 
 - `eframe` / `egui` **0.32** (UI), `egui_extras` 0.32 (loading the HTTP thumbnails shown in
   the search results).
-- `reqwest` (blocking, rustls) for Steam and SteamGridDB, `serde` for `config.json`.
+- `reqwest` (blocking, rustls) for Steam, SteamGridDB and ProtonDB, `serde` for
+  `config.json`.
 - `rfd` for the **native** file pickers (XDG Desktop Portal: GTK or KDE dialog depending on
   the desktop, `zenity` as a fallback). No GTK build dependency.
+- `ksni` (StatusNotifierItem over D-Bus, `blocking` + `async-io` features) for the
+  notification-area icon. No GTK/AppIndicator build dependency either.
 - `image` (PNG/JPEG/WebP codecs): Quark decodes artwork itself and hands egui plain
   textures, instead of relying on the `file://` loader from `egui_extras`, which is not
   compiled by default and used to show an error icon where banners should be.
@@ -134,10 +162,10 @@ Note: `egui` 0.37 reshuffles its API (panels / `App::ui`); Quark intentionally t
 3. Click the right result, then fill in the executable → **Add game**.
    Artwork downloads in the background (progress shown at the bottom of the column).
    Arguments, Proton runtime and prefix come pre-filled from **Settings → Defaults**.
-4. The game appears selected: banner, logo, **Play** button and playtime.
-   The gear in the top right of the pane opens the **game settings**
-   (executable, arguments, Proton runtime, per-game Proton prefix, Steam overlay, anti-cheat,
-   per-game variables, removal).
+4. The game appears selected: banner, logo, **Play** button, playtime and its ProtonDB
+   rating. The gear in the top right of the pane opens the **game settings**
+   (executable, arguments, Proton runtime, per-game prefix, anti-cheat, launch options,
+   per-game variables, removal); the page icon left of it opens the session log.
 
 ### SteamGridDB API key (optional but recommended)
 
@@ -154,6 +182,8 @@ configuration file.
 | `~/.config/quark/config.json` | settings + games (readable, hand-editable JSON) |
 | `~/.local/share/quark/artwork/<id>/` | downloaded artwork (no network request while displaying) |
 | `~/.local/share/quark/prefixes/<id>/` | automatically created Proton prefixes |
+| `~/.local/share/quark/logs/<id>/session.log` | last session: command, environment, game and Wine output |
+| `~/.local/share/quark/updates/` | downloaded release archives (never installed automatically) |
 
 ## Releases
 
@@ -169,40 +199,9 @@ as the **quark-ui-renders** artifact — so every push can be reviewed without i
 anything.
 
 ```bash
-tar -xzf quark-0.6.1-linux-x86_64.tar.gz
+tar -xzf quark-0.7.0-linux-x86_64.tar.gz
 cd quark && ./quark
 ```
-
-## Steam overlay
-
-The overlay is injected by the Steam client into a process it launched itself. That is why
-`WINEDLLOVERRIDES=gameoverlayrenderer.dll=n,b` alone does nothing visible: Proton loads the
-DLL, but no Steam client is there to render anything. `SteamClientLaunch`, `SteamAppId` and
-friends do not create that connection either.
-
-What works is letting Steam own the launch:
-
-1. Steam → **Games → Add a Non-Steam Game to My Library**, pick the game (or a small script
-   that starts it).
-2. In that shortcut's **Properties**, enable the overlay and choose the Proton version and
-   prefix Steam should use.
-3. In Quark: game settings → **Overlay Steam** → *Launch via Steam*, then pick that shortcut
-   from the list. Quark parses `shortcuts.vdf` itself (every profile under
-   `steam/userdata/*/config/`), so there is no AppID to copy; the field remains for shortcuts
-   Quark cannot see.
-
-Quark then starts `steam -applaunch <AppID>`; Steam applies its compatibility tool, prefix and
-overlay. Quark's own Proton, prefix and variables are **not** used in that mode — Steam's
-shortcut settings take over — and playtime is measured until the `steam` command returns.
-
-Under the checkbox Quark says what Steam will actually do with the chosen ID:
-
-- *shortcut found* — it shows the shortcut's name and target, and warns if that target is not
-  the game's own executable;
-- *store AppID, installed* — Steam launches the store game, so your executable, prefix and
-  variables do not apply;
-- *no shortcut, not installed* — Steam answers "no license" and closes the game immediately.
-  Quark refuses that launch instead of flashing a window; the fix is a non-Steam shortcut.
 
 ## Proton, concretely
 
@@ -217,6 +216,37 @@ Under the checkbox Quark says what Steam will actually do with the chosen ID:
   (native)` to force a direct launch, or a specific Proton runtime.
 - A runtime from `compatibilitytools.d` (GE-Proton…) is preferred by default (most recent
   first) when no explicit choice was made.
+- **Wrapping order**: user wrapper (outermost) → gamescope → gamemoderun → game. A missing
+  `gamescope` or `gamemoderun` is skipped with a visible warning.
+
+### umu-launcher
+
+umu runs a Windows game with Proton without Steam and without its own copy of Proton. In the
+game settings, **Lancer via umu-launcher** switches the launch to:
+
+```sh
+WINEPREFIX=<prefix> GAMEID=<id|0> [PROTONPATH=<runtime>] umu-run <exe> <args>
+```
+
+`GAMEID` is the game's ProtonDB/Steam AppID (it drives ProtonDB reports and per-game fixes);
+`0` is fine for an unknown game. With a Proton runtime selected, its folder is passed as
+`PROTONPATH`; otherwise umu uses its own build. If `umu-run` is not in `PATH`, Quark refuses
+the launch and says so instead of failing silently.
+
+## Notification icon
+
+When **Settings → Appearance → Zone de notification** is enabled, closing the window no
+longer exits: Quark keeps running with a tray icon
+([StatusNotifierItem](https://www.freedesktop.org/wiki/Specifications/StatusNotifierItem/)).
+
+- left click / *Ouvrir Quark* → the window comes back (it was minimised, playtime counting
+  continues);
+- *Quitter Quark* → the process really exits (running sessions are still credited).
+
+The icon is drawn by Quark itself (no icon theme needed). If your desktop exposes no
+StatusNotifier watcher — GNOME without the AppIndicator extension, a bare session — the
+settings page shows the D-Bus error and the close button simply quits, so you can never get
+stuck with a window you cannot reach.
 
 ## Rendering check (no screen, no GPU)
 
@@ -230,19 +260,21 @@ target/release/quark --ui grid.png --view grid --demo        # built-in demo lib
 target/release/quark --ui hover.png --demo --hover 160,340   # pointer over a row
 target/release/quark --ui anim.png --demo --frames 3         # mid-transition frame
 target/release/quark --ui dialog.png --demo --dialog settings
+target/release/quark --ui logs.png --demo --dialog logs
 ```
 
 Options: `--size WxH`, `--scale N`, `--frames N`, `--view list|grid`, `--tab library|store`,
 `--theme amoled|graphite`, `--select <game>`, `--info`, `--running`,
-`--dialog none|add|artwork|exe|scan|settings|settings-defaults|settings-proton|settings-artworks|game|customize|remove|updates`, `--hover X,Y`,
+`--dialog none|add|artwork|exe|scan|settings|settings-defaults|settings-proton|settings-artworks|game|logs|customize|remove|updates`, `--hover X,Y`,
 `--click X,Y`, `--key up|down|left|right|enter|escape`, `--marked`, `--demo`.
 
 `--click` and `--key` send real input events, so a render also checks the interactions:
 `--key down` really moves the selection, `--click X,Y` really presses a button.
 
 `--demo` builds a library of fake games with generated artwork (complete games, partial ones
-and games with no image at all), so every fallback gets rendered. Without `--demo` the real
-configuration is read; nothing is ever written, only the PNG is produced.
+and games with no image at all), plus a fake ProtonDB rating and a fake session log, so every
+fallback gets rendered. Without `--demo` the real configuration is read; nothing is ever
+written, only the PNG is produced.
 
 The rasteriser is an approximation (gamma-space compositing, no sRGB framebuffer), so
 antialiased edges can differ very slightly from the OpenGL backend used on screen — the
@@ -263,16 +295,19 @@ target/release/quark --update          # latest GitHub release (and downloads th
 
 ```
 src/main.rs         entry point + CLI (--doctor/--search/--fetch/--news/--scan/--ui)
-src/app.rs          application state, egui loop, launching, playtime, toasts
-src/ui_library.rs   Library tab: list/grid column + game pane (banner, Play, news)
+src/app.rs          application state, egui loop, launching, playtime, toasts, ProtonDB, tray
+src/ui_library.rs   Library tab: list/grid column + game pane (banner, Play, news, ProtonDB)
 src/ui_store.rs     Store tab (placeholder)
-src/ui_dialogs.rs   adding a game, global settings, game settings (native pickers)
+src/ui_dialogs.rs   adding a game, global settings, game settings, session log, pickers
 src/config.rs       data model, persistence (JSON), labels (playtime, dates, monogram)
 src/artwork.rs      Steam/SteamGridDB search + artwork download and cache
 src/scan.rs         game discovery inside a folder (batch adding)
 src/news.rs         per-game news (public Steam feed) and opening links
+src/protondb.rs     ProtonDB rating (public API), tier colours and labels
+src/session.rs      launching, stdout/stderr capture, Stop (wineserver), log tail
+src/tray.rs         notification-area icon (StatusNotifierItem via ksni)
 src/images.rs       texture cache: Quark decodes artwork itself
-src/proton.rs       Proton runtime detection + command line construction
+src/proton.rs       Proton runtime detection + launch command (options, umu, anti-cheat)
 src/update.rs       latest GitHub release, version comparison, archive download
 src/theme.rs        AMOLED/Graphite palette, gradients, monogram colours
 src/widgets.rs      hand-drawn vector icons and buttons (no icon font)
@@ -283,4 +318,5 @@ src/snapshot.rs     off-screen software renderer (--ui), for visual checks
 
 - Fill the Store tab (search, game pages, prices).
 - Extra views: full-screen grid, recently played, favourites.
-- Automatic import of the Steam library (`appmanifest_*.acf`) and non-Steam shortcuts.
+- Automatic import of the Steam library (`appmanifest_*.acf`).
+- A “verify prefix” action and per-game backup of save files.

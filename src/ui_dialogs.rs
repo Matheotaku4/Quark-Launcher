@@ -570,6 +570,63 @@ impl QuarkApp {
                                  liste / grille).",
                             );
                         });
+
+                        section(ui, "ZONE DE NOTIFICATION", &pal);
+                        ui.horizontal(|ui| {
+                            if ui
+                                .checkbox(
+                                    &mut self.lib.settings.tray_icon,
+                                    "Garder Quark dans la zone de notification",
+                                )
+                                .changed()
+                            {
+                                self.touch();
+                            }
+                            widgets::info_button(
+                                ui,
+                                &pal,
+                                "Coché, la croix de la fenêtre range Quark dans l'icône au lieu de \
+                                 quitter : un clic sur l'icône ramène la fenêtre, et « Quitter \
+                                 Quark » dans son menu termine le processus. Décoché, la croix \
+                                 quitte normalement.",
+                            );
+                        });
+                        if self.lib.settings.tray_icon {
+                            match (&self.tray, &self.tray_error) {
+                                (Some(_), _) => {
+                                    ui.label(
+                                        RichText::new("Icône active sur le bureau.")
+                                            .size(11.0)
+                                            .color(pal.text_faint),
+                                    );
+                                }
+                                (None, Some(err)) => {
+                                    // Message court dans la page, erreur D-Bus complète
+                                    // dans le ⓘ : la ligne brute débordait de la fenêtre.
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            RichText::new(
+                                                "Icône indisponible : ce bureau n'a pas de zone \
+                                                 de notification.",
+                                            )
+                                            .size(11.0)
+                                            .color(pal.danger),
+                                        );
+                                        widgets::info_button(ui, &pal, err);
+                                    });
+                                    ui.label(
+                                        RichText::new(
+                                            "Le bureau doit fournir un watcher StatusNotifierItem \
+                                             (extension AppIndicator sous GNOME). Décoché, la \
+                                             croix quitte Quark.",
+                                        )
+                                        .size(10.5)
+                                        .color(pal.text_faint),
+                                    );
+                                }
+                                (None, None) => {}
+                            }
+                        }
                     }
                     SettingsTab::Proton => {
                         section(ui, "RUNTIME", &pal);
@@ -1049,7 +1106,6 @@ impl QuarkApp {
         let mut browse_exe = false;
         let mut browse_prefix = false;
         let mut remove = false;
-        let mut redetect_steam = false;
 
         let max_height = (ctx.screen_rect().height() * 0.70).max(280.0);
         let modal = egui::Modal::new(egui::Id::new("quark_game_settings")).show(ctx, |ui| {
@@ -1138,151 +1194,131 @@ impl QuarkApp {
 
                 section_hint(
                     ui,
-                    "OVERLAY STEAM",
+                    "OPTIONS DE LANCEMENT",
                     &pal,
-                    "L'overlay est injecté par le client Steam : une DLL override \
-                     (WINEDLLOVERRIDES=gameoverlayrenderer.dll=n,b) ne suffit pas, il faut que \
-                     Steam lance le jeu. Ajoute le jeu comme raccourci non-Steam, puis choisis ce \
-                     raccourci ici : Quark lit shortcuts.vdf tout seul. Un AppID du magasin n'est \
-                     pas un raccourci et, sans licence, Steam répond « no license » en refermant \
-                     le jeu aussitôt. Quark lance alors « steam -applaunch <AppID> » : Steam \
-                     applique son Proton, son préfixe et l'overlay ; les réglages Proton et les \
-                     variables de Quark ne s'appliquent plus dans ce mode.",
+                    "Ces cases remplacent des commandes à taper. Elles enveloppent la commande du \
+                     jeu, de l'extérieur vers l'intérieur : gamescope, puis gamemoderun, puis le \
+                     jeu. Un outil absent est ignoré — le jeu démarre quand même — et signalé ici.",
                 );
-                let mut via_steam = game.steam_launch_id.is_some();
                 ui.horizontal(|ui| {
-                    if ui
-                        .checkbox(&mut via_steam, "Lancer via Steam (overlay)")
-                        .changed()
-                    {
-                        game.steam_launch_id = if via_steam { Some(0) } else { None };
+                    ui.checkbox(&mut game.launch.gamemode, "gamemoderun");
+                    if !self.tools.gamemoderun {
+                        ui.label(RichText::new("(absent)").size(10.5).color(pal.danger));
                     }
-                    if widgets::info_button(
+                    ui.add_space(16.0);
+                    ui.checkbox(&mut game.launch.mangohud, "MangoHud");
+                    ui.add_space(16.0);
+                    ui.checkbox(&mut game.launch.prime, "PRIME (NVIDIA)");
+                    widgets::info_button(
                         ui,
                         &pal,
-                        "Choisis le raccourci non-Steam : Quark lit la liste directement dans \
-                         shortcuts.vdf, donc rien à recopier. Un AppID du magasin ne sert que si \
-                         tu possèdes et as installé ce jeu ; sinon Steam répond « no license » et \
-                         referme le jeu aussitôt.",
-                    )
-                    .clicked()
-                    {
-                        redetect_steam = true;
+                        "MangoHud passe par MANGOHUD=1, rien à taper. PRIME force le rendu sur la \
+                         carte NVIDIA dédiée des portables hybrides (DRI_PRIME pour les autres).",
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut game.launch.gamescope, "gamescope");
+                    if !self.tools.gamescope {
+                        ui.label(RichText::new("(absent)").size(10.5).color(pal.danger));
+                    }
+                    if game.launch.gamescope {
+                        ui.add_space(10.0);
+                        ui.add(
+                            egui::DragValue::new(&mut game.launch.gamescope_width)
+                                .range(320..=7680)
+                                .speed(4.0)
+                                .suffix(" px"),
+                        );
+                        ui.label(RichText::new("×").size(11.0).color(pal.text_dim));
+                        ui.add(
+                            egui::DragValue::new(&mut game.launch.gamescope_height)
+                                .range(200..=4320)
+                                .speed(4.0)
+                                .suffix(" px"),
+                        );
+                        ui.add_space(10.0);
+                        ui.checkbox(&mut game.launch.gamescope_fsr, "FSR");
+                        ui.add_space(10.0);
+                        ui.label(RichText::new("max").size(11.5).color(pal.text_dim));
+                        ui.add(
+                            egui::DragValue::new(&mut game.launch.gamescope_fps)
+                                .range(0..=1000)
+                                .speed(1.0)
+                                .suffix(" fps"),
+                        );
+                        widgets::info_button(
+                            ui,
+                            &pal,
+                            "gamescope affiche le jeu dans son propre compositeur, à cette \
+                             résolution. FSR agrandit une image plus petite (gain de performance) ; \
+                             « max » limite les images par seconde (0 = aucune limite).",
+                        );
                     }
                 });
-                if let Some(app_id) = game.steam_launch_id.as_mut() {
-                    let current = *app_id;
-                    ui.horizontal(|ui| {
-                        let selected_name = self
-                            .steam_shortcuts
-                            .iter()
-                            .find(|shortcut| shortcut.app_id == current)
-                            .map(|shortcut| shortcut.name.clone())
-                            .unwrap_or_else(|| {
-                                if current == 0 {
-                                    "Choisir un raccourci…".to_string()
-                                } else {
-                                    format!("AppID {current}")
-                                }
-                            });
-                        egui::ComboBox::from_id_salt("quark_steam_shortcut")
-                            .width(300.0)
-                            .selected_text(selected_name)
-                            .show_ui(ui, |ui| {
-                                if self.steam_shortcuts.is_empty() {
-                                    ui.label(
-                                        RichText::new("aucun raccourci non-Steam détecté")
-                                            .size(11.0)
-                                            .color(pal.text_faint),
-                                    );
-                                }
-                                for shortcut in &self.steam_shortcuts {
-                                    if ui
-                                        .selectable_label(
-                                            shortcut.app_id == current,
-                                            shortcut.label(),
-                                        )
-                                        .clicked()
-                                    {
-                                        *app_id = shortcut.app_id;
-                                    }
-                                }
-                            });
-                        if widgets::ghost_button(ui, "Détecter", &pal, Icon::Refresh).clicked() {
-                            redetect_steam = true;
-                        }
-                        ui.add_space(6.0);
-                        ui.label(RichText::new("AppID").size(11.5).color(pal.text_dim));
-                        let mut text = if current == 0 {
-                            String::new()
-                        } else {
-                            current.to_string()
-                        };
-                        let response = ui.add(
-                            egui::TextEdit::singleline(&mut text)
-                                .hint_text("ex. 3546210478")
-                                .desired_width(150.0),
-                        );
-                        if response.changed() {
-                            *app_id = text.trim().parse().unwrap_or(0);
-                        }
-                    });
-
-                    // Ce que Steam fera vraiment de cet identifiant : c'est
-                    // l'explication d'un jeu qui « se ferme instantanément ».
-                    match crate::steam::check(
-                        &self.steam_shortcuts,
-                        &self.steam_installed,
-                        current,
-                    ) {
-                        crate::steam::OverlayCheck::Shortcut { name, exe } => {
-                            ui.label(
-                                RichText::new(format!("Raccourci « {name} » · cible {exe}"))
-                                    .size(11.0)
-                                    .color(pal.text_dim),
-                            );
-                            if !crate::steam::same_exe(&exe, &game.exe) {
-                                ui.label(
-                                    RichText::new(
-                                        "La cible du raccourci n'est pas l'exe de ce jeu : Steam \
-                                         lancera celle du raccourci.",
-                                    )
-                                    .size(11.0)
-                                    .color(pal.danger),
-                                );
-                            }
-                        }
-                        crate::steam::OverlayCheck::StoreInstalled => {
-                            ui.label(
-                                RichText::new(
-                                    "AppID du magasin (jeu installé) : Steam lance le jeu du \
-                                     magasin, sans ton exe ni tes variables.",
-                                )
-                                .size(11.0)
-                                .color(pal.text_dim),
-                            );
-                        }
-                        crate::steam::OverlayCheck::NoLicense => {
-                            ui.label(
-                                RichText::new(
-                                    "Aucun raccourci non-Steam avec cet AppID : Steam répond « no \
-                                     license » et referme aussitôt. Choisis un raccourci ci-dessus.",
-                                )
-                                .size(11.0)
-                                .color(pal.danger),
-                            );
-                        }
-                        crate::steam::OverlayCheck::Unknown => {
-                            ui.label(
-                                RichText::new(
-                                    "Aucun raccourci lisible (Steam absent, ou aucun raccourci \
-                                     non-Steam) : impossible de vérifier cet AppID.",
-                                )
-                                .size(11.0)
-                                .color(pal.text_faint),
-                            );
-                        }
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Commande wrapper").size(12.5).color(pal.text_dim));
+                    widgets::info_button(
+                        ui,
+                        &pal,
+                        "Comme les options de lancement Steam : %command% est remplacé par la \
+                         commande du jeu. Exemple : env FOO=1 %command%. Sans %command%, la \
+                         commande est placée devant. La ligne passe par un shell, donc env, pipes \
+                         et redirections fonctionnent.",
+                    );
+                });
+                ui.add(
+                    egui::TextEdit::singleline(&mut game.launch.wrapper)
+                        .hint_text("%command%")
+                        .desired_width(f32::INFINITY),
+                );
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut game.proton_log, "Journal Proton détaillé (PROTON_LOG=1)");
+                    widgets::info_button(
+                        ui,
+                        &pal,
+                        "Proton écrit un journal détaillé dans le dossier de logs du jeu, à côté de \
+                         la sortie standard capturée par Quark. Utile quand un jeu refuse de \
+                         démarrer.",
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut game.umu, "Lancer via umu-launcher");
+                    if !self.tools.umu_run {
+                        ui.label(RichText::new("(umu-run absent)").size(10.5).color(pal.danger));
                     }
+                    widgets::info_button(
+                        ui,
+                        &pal,
+                        "umu-launcher lance un jeu Windows avec Proton sans Steam : il gère le \
+                         préfixe et transmet GAMEID à Proton. Sans umu-run installé, Quark refuse \
+                         le lancement avec un message clair plutôt que d'échouer en silence.",
+                    );
+                });
+                if game.launch.any() || game.proton_log || game.umu {
+                    ui.add_space(4.0);
+                    if widgets::ghost_button(ui, "Tout réinitialiser", &pal, Icon::None).clicked() {
+                        game.launch = config::LaunchOptions::default();
+                        game.proton_log = false;
+                        game.umu = false;
+                        game.umu_game_id.clear();
+                    }
+                }
+                if game.umu {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("GAMEID").size(11.5).color(pal.text_dim));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut game.umu_game_id)
+                                .hint_text("0")
+                                .desired_width(120.0),
+                        );
+                        widgets::info_button(
+                            ui,
+                            &pal,
+                            "Identifiant ProtonDB du jeu (son AppID Steam). « 0 » suffit pour un \
+                             jeu inconnu.",
+                        );
+                    });
                 }
 
                 section_hint(
@@ -1418,13 +1454,6 @@ impl QuarkApp {
             cancel = true;
         }
 
-        if redetect_steam {
-            self.refresh_steam_shortcuts();
-            self.toast_info(format!(
-                "{} raccourci(s) non-Steam détecté(s)",
-                self.steam_shortcuts.len()
-            ));
-        }
         if browse_exe {
             self.pick_file(ctx, own_dir(&game.exe), PickerTarget::GameExe);
         }
@@ -2238,5 +2267,148 @@ impl QuarkApp {
         });
 
         action
+    }
+}
+
+
+impl QuarkApp {
+    // -----------------------------------------------------------------------
+    // Journal de session
+    // -----------------------------------------------------------------------
+
+    pub(crate) fn logs_dialog(&mut self, ctx: &egui::Context) {
+        let Some((game_id, lines, truncated, error, path)) = self.logs.as_ref().map(|logs| {
+            (
+                logs.game_id.clone(),
+                logs.lines.clone(),
+                logs.truncated,
+                logs.error.clone(),
+                logs.path.clone(),
+            )
+        }) else {
+            return;
+        };
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.logs = None;
+            return;
+        }
+        let pal = self.pal;
+        let name = self
+            .lib
+            .get(&game_id)
+            .map(|game| game.name.clone())
+            .unwrap_or_else(|| game_id.clone());
+        let running = self.is_running(&game_id);
+        let mut close = false;
+        let mut refresh = false;
+        let mut open_folder = false;
+        let max_height = (ctx.screen_rect().height() * 0.58).max(220.0);
+
+        let modal = egui::Modal::new(egui::Id::new("quark_logs")).show(ctx, |ui| {
+            ui.set_min_width(780.0);
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!("Journal · {name}"))
+                        .size(17.0)
+                        .color(pal.text),
+                );
+                if running {
+                    ui.add_space(8.0);
+                    ui.spinner();
+                    ui.label(
+                        RichText::new("session en cours")
+                            .size(11.0)
+                            .color(pal.text_dim),
+                    );
+                }
+            });
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(path.display().to_string())
+                    .size(10.5)
+                    .color(pal.text_faint),
+            );
+            widgets::info_button(
+                ui,
+                &pal,
+                "Tout ce que le jeu et Wine affichent (stdout et stderr) est écrit ici, précédé de \
+                 la commande lancée et de ses variables. Avec « Journal Proton détaillé », \
+                 PROTON_LOG écrit son propre fichier dans ce même dossier.",
+            );
+            ui.add_space(8.0);
+
+            egui::ScrollArea::vertical()
+                .id_salt("quark_logs_scroll")
+                .max_height(max_height)
+                .auto_shrink([false, false])
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
+                    if let Some(message) = &error {
+                        ui.label(RichText::new(message).size(11.5).color(pal.danger));
+                        ui.add_space(6.0);
+                        ui.label(
+                            RichText::new("Le journal est créé au premier lancement du jeu.")
+                                .size(11.5)
+                                .color(pal.text_faint),
+                        );
+                        return;
+                    }
+                    if truncated {
+                        ui.label(
+                            RichText::new("début du journal tronqué à l'affichage")
+                                .size(10.5)
+                                .color(pal.text_faint),
+                        );
+                        ui.add_space(4.0);
+                    }
+                    if lines.is_empty() {
+                        ui.label(RichText::new("journal vide").size(11.5).color(pal.text_faint));
+                    } else {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(lines.join("\n"))
+                                    .monospace()
+                                    .size(11.0)
+                                    .color(pal.text_dim),
+                            )
+                            .wrap_mode(egui::TextWrapMode::Extend)
+                            .selectable(true),
+                        );
+                    }
+                });
+
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if widgets::accent_button(ui, Vec2::new(130.0, 32.0), "Fermer", &pal, true, Icon::None)
+                    .clicked()
+                {
+                    close = true;
+                }
+                ui.add_space(8.0);
+                if widgets::ghost_button(ui, "Actualiser", &pal, Icon::Refresh).clicked() {
+                    refresh = true;
+                }
+                if widgets::ghost_button(ui, "Ouvrir le dossier", &pal, Icon::Folder).clicked() {
+                    open_folder = true;
+                }
+            });
+        });
+        if modal.should_close() {
+            close = true;
+        }
+        if refresh {
+            self.refresh_log();
+        }
+        if open_folder {
+            let dir = path.parent().map(|parent| parent.to_path_buf());
+            if let Some(dir) = dir {
+                if let Err(err) = crate::session::open_folder(&dir) {
+                    self.toast_error(format!("Ouverture du dossier impossible : {err}"));
+                }
+            }
+        }
+        if close {
+            self.logs = None;
+        }
     }
 }

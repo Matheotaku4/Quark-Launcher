@@ -327,11 +327,7 @@ impl QuarkApp {
         let resolved = proton::resolve(&game, &settings, &self.runtimes);
         let is_proton = resolved
             .as_ref()
-            .map(|r| r.kind == LaunchKind::Proton)
-            .unwrap_or(false);
-        let is_steam = resolved
-            .as_ref()
-            .map(|r| r.kind == LaunchKind::Steam)
+            .map(|r| matches!(r.kind, LaunchKind::Proton | LaunchKind::Umu))
             .unwrap_or(false);
         let launch_label = match &resolved {
             Ok(r) => r.label(),
@@ -348,6 +344,20 @@ impl QuarkApp {
             0.22,
         );
         let slide = (1.0 - entrance) * 10.0;
+        // Lien externe demandé par un clic (ProtonDB) : ouvert après le rendu,
+        // pour ne pas lancer de navigateur au milieu de la mise en page.
+        let mut open_url: Option<String> = None;
+
+        // Note ProtonDB du jeu, telle qu'elle sera affichée.
+        let protondb_label = match game
+            .steam_app_id
+            .and_then(|app_id| self.protondb.get(&app_id))
+        {
+            Some(crate::app::ProtonDbState::Ready(report)) => report.label(),
+            Some(crate::app::ProtonDbState::Loading) => "chargement…".to_string(),
+            Some(crate::app::ProtonDbState::Failed(err)) => err.clone(),
+            None => "—".to_string(),
+        };
 
         egui::ScrollArea::vertical()
             .id_salt("quark_detail_scroll")
@@ -367,6 +377,8 @@ impl QuarkApp {
                 let mut info_clicked = false;
                 let mut gear_clicked = false;
                 let mut customize_clicked = false;
+                let mut log_clicked = false;
+                let mut open_protondb = false;
                 ui.scope_builder(
                     egui::UiBuilder::new()
                         .max_rect(hero_rect)
@@ -466,6 +478,13 @@ impl QuarkApp {
                                     format!("{} de jeu", game.playtime_label())
                                 };
                                 ui.label(RichText::new(text).size(13.0).color(pal.text_dim));
+                                ui.add_space(18.0);
+                                let state = game
+                                    .steam_app_id
+                                    .and_then(|app_id| self.protondb.get(&app_id));
+                                if protondb_badge(ui, &pal, state) {
+                                    open_protondb = true;
+                                }
                             },
                         );
 
@@ -481,6 +500,23 @@ impl QuarkApp {
                                 Icon::Info,
                                 &pal,
                                 "Informations du jeu",
+                                hero_light,
+                            )
+                            .clicked();
+                        });
+
+                        // Journal de session, à gauche de « Personnaliser ».
+                        let log_rect = Rect::from_min_size(
+                            Pos2::new(hero.right() - 176.0, hero.top() + 14.0),
+                            Vec2::splat(34.0),
+                        );
+                        ui.scope_builder(egui::UiBuilder::new().max_rect(log_rect), |ui| {
+                            log_clicked = widgets::floating_icon_button(
+                                ui,
+                                34.0,
+                                Icon::Log,
+                                &pal,
+                                "Journal de la session",
                                 hero_light,
                             )
                             .clicked();
@@ -530,6 +566,14 @@ impl QuarkApp {
                 if customize_clicked {
                     self.open_customize(&id);
                 }
+                if log_clicked {
+                    self.open_logs(&id);
+                }
+                if open_protondb {
+                    if let Some(app_id) = game.steam_app_id {
+                        open_url = Some(crate::protondb::Tier::url(app_id));
+                    }
+                }
                 if play_clicked {
                     if is_running {
                         self.stop(&id);
@@ -567,15 +611,14 @@ impl QuarkApp {
                         ("Lancement", launch_label),
                         (
                             "Préfixe Proton",
-                            if is_steam {
-                                "géré par Steam (overlay)".to_string()
-                            } else if is_proton {
+                            if is_proton {
                                 prefix.display().to_string()
                             } else {
                                 "\u{2014} (pas de Proton pour ce jeu)".to_string()
                             },
                         ),
                         ("Artworks", artworks_label),
+                        ("ProtonDB", protondb_label),
                         ("Temps de jeu", game.playtime_label()),
                         ("Dernière session", game.last_played_label()),
                     ];
@@ -592,7 +635,16 @@ impl QuarkApp {
                         });
                     }
 
-                    ui.add_space(6.0);
+                    if let Some(app_id) = game.steam_app_id {
+                        ui.horizontal(|ui| {
+                            ui.add_space(32.0);
+                            if widgets::ghost_button(ui, "Page ProtonDB", &pal, Icon::Info).clicked()
+                            {
+                                open_url = Some(crate::protondb::Tier::url(app_id));
+                            }
+                        });
+                        ui.add_space(6.0);
+                    }
                     ui.horizontal(|ui| {
                         ui.add_space(32.0);
                         if widgets::ghost_button(ui, "Paramètres du jeu", &pal, Icon::Gear).clicked() {
@@ -623,6 +675,12 @@ impl QuarkApp {
 
                 ui.add_space(40.0);
             });
+
+        if let Some(url) = open_url {
+            if let Err(err) = news::open_in_browser(&url) {
+                self.toast_error(format!("Ouverture du lien impossible : {err}"));
+            }
+        }
     }
 
     fn empty_state(&mut self, ui: &mut egui::Ui) {
@@ -1036,4 +1094,45 @@ fn paragraph(text: &str, size: f32, color: Color32, max_rows: usize) -> egui::te
         },
     );
     job
+}
+
+
+/// Pastille de la note ProtonDB : couleur officielle, texte qui la contraste.
+fn protondb_badge(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    state: Option<&crate::app::ProtonDbState>,
+) -> bool {
+    use crate::app::ProtonDbState;
+    let (label, color, tip) = match state {
+        Some(ProtonDbState::Loading) => (
+            "ProtonDB…".to_string(),
+            pal.surface_hover,
+            "Note ProtonDB en cours de chargement".to_string(),
+        ),
+        Some(ProtonDbState::Failed(err)) => (
+            "ProtonDB · ?".to_string(),
+            pal.surface_hover,
+            format!("{err} · cliquer pour ouvrir la page"),
+        ),
+        Some(ProtonDbState::Ready(report)) => {
+            let (r, g, b) = report.tier.color();
+            (
+                format!("{} · ProtonDB", report.tier.label().to_uppercase()),
+                Color32::from_rgb(r, g, b),
+                report.label(),
+            )
+        }
+        None => return false,
+    };
+    let ink = theme::on_accent(color);
+    ui.add(
+        egui::Button::new(RichText::new(label).size(10.5).strong().color(ink))
+            .fill(color)
+            .stroke(egui::Stroke::NONE)
+            .corner_radius(10.0)
+            .min_size(Vec2::new(0.0, 20.0)),
+    )
+    .on_hover_text(tip)
+    .clicked()
 }
