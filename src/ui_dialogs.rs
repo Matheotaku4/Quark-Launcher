@@ -498,12 +498,16 @@ impl QuarkApp {
         let mut browse_prefix = false;
         let mut redetect = false;
         let mut check_updates = false;
+        let mut open_steam_import = false;
         let mut download_update = false;
         let mut open_url: Option<String> = None;
 
-        // Hauteur généreuse : une liste de variables d'environnement longue doit
-        // tenir sans faire défiler une petite boîte.
-        let max_height = (ctx.screen_rect().height() * 0.70).max(320.0);
+        // La page défile dans l'espace qui reste dans la fenêtre, une fois
+        // l'en-tête, les onglets et le bouton Fermer retirés (~250 px). Plus
+        // grand, le pied de page débordait et recouvrait le contenu ; une
+        // hauteur calculée sur la place restante ne marchait pas non plus, la
+        // fenêtre se dimensionnant elle-même sur son contenu.
+        let page_height = (ctx.screen_rect().height() - 250.0).max(200.0);
         let modal = egui::Modal::new(egui::Id::new("quark_settings")).show(ctx, |ui| {
             ui.set_min_width(860.0);
             ui.horizontal(|ui| {
@@ -533,7 +537,7 @@ impl QuarkApp {
 
             egui::ScrollArea::vertical()
                 .id_salt("quark_settings_scroll")
-                .max_height(max_height)
+                .max_height(page_height)
                 // Se rétrécit quand la page est courte, mais grandit jusqu'à
                 // `max_height` quand les variables s'accumulent.
                 .auto_shrink([false, true])
@@ -572,8 +576,29 @@ impl QuarkApp {
                             widgets::info_button(
                                 ui,
                                 &pal,
-                                "La vue se bascule aussi depuis la colonne de gauche (icônes \
-                                 liste / grille).",
+                                "La vue se bascule aussi depuis la barre du haut (icônes liste / \
+                                 grille).",
+                            );
+                        });
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            if widgets::ghost_button(
+                                ui,
+                                "Importer la bibliothèque Steam installée…",
+                                &pal,
+                                Icon::Steam,
+                            )
+                            .clicked()
+                            {
+                                open_steam_import = true;
+                            }
+                            widgets::info_button(
+                                ui,
+                                &pal,
+                                "Lit les fichiers appmanifest_*.acf de toutes tes bibliothèques \
+                                 Steam (dossier historique, autres disques, Flatpak et Snap), \
+                                 propose les jeux installés et ne duplique pas ceux déjà dans \
+                                 Quark. L'exécutable est cherché dans le dossier de chaque jeu.",
                             );
                         });
 
@@ -685,78 +710,6 @@ impl QuarkApp {
                             }
                         }
                     }
-                    SettingsTab::Proton => {
-                        section(ui, "RUNTIME", &pal);
-                        let mut mode = self
-                            .lib
-                            .settings
-                            .default_proton
-                            .clone()
-                            .map(ProtonMode::Runtime)
-                            .unwrap_or(ProtonMode::Default);
-                        if runtime_combo(
-                            ui,
-                            &pal,
-                            "default_runtime",
-                            &mut mode,
-                            &self.runtimes,
-                            false,
-                        ) {
-                            self.lib.settings.default_proton = match mode {
-                                ProtonMode::Runtime(key) => Some(key),
-                                _ => None,
-                            };
-                            self.touch();
-                        }
-                        ui.add_space(4.0);
-                        ui.horizontal(|ui| {
-                            let protons = self
-                                .runtimes
-                                .iter()
-                                .filter(|runtime| runtime.kind == RuntimeKind::Proton)
-                                .count();
-                            let anticheat = self.runtimes.len() - protons;
-                            ui.label(
-                                RichText::new(format!(
-                                    "{protons} runtime(s) Proton · {anticheat} runtime(s) anti-triche"
-                                ))
-                                .size(11.0)
-                                .color(pal.text_faint),
-                            );
-                            if widgets::ghost_button(ui, "Redétecter", &pal, Icon::Refresh).clicked() {
-                                redetect = true;
-                            }
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                RichText::new(format!(
-                                    "Anti-triche : {}",
-                                    proton::anticheat_summary(&self.runtimes)
-                                ))
-                                .size(11.0)
-                                .color(pal.text_faint),
-                            );
-                            widgets::info_button(
-                                ui,
-                                &pal,
-                                "BattlEye et EasyAntiCheat sont deux options indépendantes, \
-                                 cochables ensemble dans les paramètres du jeu : Quark déclare les \
-                                 dossiers trouvés à ton Proton via PROTON_BATTLEYE_RUNTIME et \
-                                 PROTON_EAC_RUNTIME. Ces dossiers ne se lancent pas eux-mêmes.",
-                            );
-                        });
-                        if self.runtimes.is_empty() {
-                            ui.add_space(4.0);
-                            ui.label(
-                                RichText::new(
-                                    "Aucun runtime trouvé. Installe Proton (Steam) ou dépose un \
-                                     build dans ~/.steam/steam/compatibilitytools.d/.",
-                                )
-                                .size(11.0)
-                                .color(pal.text_faint),
-                            );
-                        }
-                    }
                     SettingsTab::Defaults => {
                         section_hint(
                             ui,
@@ -841,6 +794,56 @@ impl QuarkApp {
                                 _ => None,
                             };
                             self.touch();
+                        }
+                        // Les runtimes détectés et le compte d'anti-triche
+                        // vivaient dans leur propre onglet « Proton », qui ne
+                        // servait qu'à ça : ils sont ici, à côté du choix.
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            let protons = self
+                                .runtimes
+                                .iter()
+                                .filter(|runtime| runtime.kind == RuntimeKind::Proton)
+                                .count();
+                            let anticheat = self.runtimes.len() - protons;
+                            ui.label(
+                                RichText::new(format!(
+                                    "{protons} runtime(s) Proton · {anticheat} runtime(s) anti-triche"
+                                ))
+                                .size(11.0)
+                                .color(pal.text_faint),
+                            );
+                            if widgets::ghost_button(ui, "Redétecter", &pal, Icon::Refresh).clicked() {
+                                redetect = true;
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(format!(
+                                    "Anti-triche : {}",
+                                    proton::anticheat_summary(&self.runtimes)
+                                ))
+                                .size(11.0)
+                                .color(pal.text_faint),
+                            );
+                            widgets::info_button(
+                                ui,
+                                &pal,
+                                "BattlEye et EasyAntiCheat sont deux options indépendantes, \
+                                 cochables ensemble dans les paramètres du jeu : Quark déclare les \
+                                 dossiers trouvés à ton Proton via PROTON_BATTLEYE_RUNTIME et \
+                                 PROTON_EAC_RUNTIME. Ces dossiers ne se lancent pas eux-mêmes.",
+                            );
+                        });
+                        if self.runtimes.is_empty() {
+                            ui.label(
+                                RichText::new(
+                                    "Aucun runtime trouvé. Installe Proton (Steam) ou dépose un \
+                                     build dans ~/.steam/steam/compatibilitytools.d/.",
+                                )
+                                .size(11.0)
+                                .color(pal.text_faint),
+                            );
                         }
 
                         section_hint(
@@ -1101,6 +1104,35 @@ impl QuarkApp {
                             .color(pal.text_faint),
                         );
 
+                        section(ui, "RESSOURCES", &pal);
+                        ui.horizontal(|ui| {
+                            let memory = config::resident_mb()
+                                .map(|mb| format!("{mb} Mo"))
+                                .unwrap_or_else(|| "—".to_string());
+                            ui.label(
+                                RichText::new(format!("Mémoire résidente : {memory}"))
+                                    .size(11.5)
+                                    .color(pal.text_dim),
+                            );
+                            ui.add_space(14.0);
+                            ui.label(
+                                RichText::new(format!(
+                                    "{} texture(s) en cache",
+                                    self.textures.len()
+                                ))
+                                .size(11.0)
+                                .color(pal.text_faint),
+                            );
+                            widgets::info_button(
+                                ui,
+                                &pal,
+                                "Les artworks sont décodés en textures : une bannière occupe \
+                                 plusieurs mégaoctets. Au-delà de 96 textures, les plus \
+                                 anciennes sont libérées, si bien que parcourir la bibliothèque \
+                                 ne fait plus grimper la mémoire indéfiniment.",
+                            );
+                        });
+
                         section(ui, "DOSSIERS", &pal);
                         info_line(
                             ui,
@@ -1151,6 +1183,9 @@ impl QuarkApp {
             if let Err(err) = crate::news::open_in_browser(&url) {
                 self.toast_error(format!("Ouverture du lien impossible : {err}"));
             }
+        }
+        if open_steam_import {
+            self.open_steam_import(ctx);
         }
         if browse_prefix {
             let start = self
@@ -1528,7 +1563,6 @@ impl QuarkApp {
         let mut remove = false;
         let mut refresh_meta = false;
 
-        let max_height = (ctx.screen_rect().height() * 0.70).max(280.0);
         let modal = egui::Modal::new(egui::Id::new("quark_game_settings")).show(ctx, |ui| {
                 ui.set_min_width(660.0);
                 ui.label(
@@ -1537,8 +1571,10 @@ impl QuarkApp {
                         .color(pal.text),
                 );
                 ui.add_space(10.0);
+                // Même règle que les paramètres globaux : la page laisse la
+                // place aux boutons du bas, sans les recouvrir.
                 egui::ScrollArea::vertical()
-                    .max_height(max_height)
+                    .max_height((ctx.screen_rect().height() - 210.0).max(160.0))
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
                 section(ui, "JEU", &pal);
@@ -2914,8 +2950,19 @@ impl QuarkApp {
         let mut open_folder = false;
         let max_height = (ctx.screen_rect().height() * 0.58).max(220.0);
 
-        let modal = egui::Modal::new(egui::Id::new("quark_logs")).show(ctx, |ui| {
+        // Fond opaque explicite : sans lui, une fenêtre plus large que l'écran
+        // laissait voir la bibliothèque au travers.
+        let log_frame = egui::Frame::new()
+            .fill(pal.bg)
+            .stroke(egui::Stroke::new(1.0_f32, pal.border))
+            .corner_radius(12.0)
+            .inner_margin(14.0);
+        let modal = egui::Modal::new(egui::Id::new("quark_logs")).frame(log_frame).show(ctx, |ui| {
             ui.set_min_width(780.0);
+            // Les lignes d'un journal sont longues : la fenêtre se limite à
+            // l'écran et le texte défile horizontalement au lieu de pousser le
+            // cadre hors de la fenêtre.
+            ui.set_max_width((ctx.screen_rect().width() - 120.0).clamp(520.0, 980.0));
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new(format!("Journal · {name}"))
@@ -2947,7 +2994,7 @@ impl QuarkApp {
             );
             ui.add_space(8.0);
 
-            egui::ScrollArea::vertical()
+            egui::ScrollArea::both()
                 .id_salt("quark_logs_scroll")
                 .max_height(max_height)
                 .auto_shrink([false, false])

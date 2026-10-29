@@ -34,6 +34,25 @@ pub fn data_dir() -> PathBuf {
         .join("quark")
 }
 
+/// Mémoire résidente du processus, en mégaoctets, lue dans `/proc`.
+///
+/// Affichée dans « À propos » : c'est la mesure qui permet de vérifier que la
+/// consommation ne grimpe plus quand on parcourt la bibliothèque.
+pub fn resident_mb() -> Option<u64> {
+    parse_vmrss(&std::fs::read_to_string("/proc/self/status").ok()?)
+}
+
+/// Extrait `VmRSS` (en Ko) d'un contenu de `/proc/self/status`, converti en Mo.
+pub fn parse_vmrss(status: &str) -> Option<u64> {
+    for line in status.lines() {
+        if let Some(rest) = line.strip_prefix("VmRSS:") {
+            let kb: u64 = rest.split_whitespace().next()?.parse().ok()?;
+            return Some(kb / 1024);
+        }
+    }
+    None
+}
+
 pub fn config_path() -> PathBuf {
     config_dir().join("config.json")
 }
@@ -300,6 +319,16 @@ impl GameStatus {
         GameStatus::Dropped,
     ];
 
+    /// Ordre des sections de la vue liste, comme les colonnes Steam : ce qui
+    /// est commencé d'abord, les jeux sans statut à la fin.
+    pub const COLUMNS: [GameStatus; 5] = [
+        GameStatus::Playing,
+        GameStatus::Backlog,
+        GameStatus::Finished,
+        GameStatus::Dropped,
+        GameStatus::None,
+    ];
+
     pub fn label(self) -> &'static str {
         match self {
             GameStatus::None => "Aucun",
@@ -307,6 +336,14 @@ impl GameStatus {
             GameStatus::Playing => "En cours",
             GameStatus::Finished => "Termin\u{e9}",
             GameStatus::Dropped => "Abandonn\u{e9}",
+        }
+    }
+
+    /// Titre de section : « Sans statut » plutôt que « Aucun ».
+    pub fn column_label(self) -> &'static str {
+        match self {
+            GameStatus::None => "Sans statut",
+            other => other.label(),
         }
     }
 

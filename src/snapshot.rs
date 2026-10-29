@@ -47,6 +47,8 @@ pub struct SnapshotOptions {
     pub marked: bool,
     /// Page d'accueil au lieu de la fiche du jeu.
     pub home: bool,
+    /// Clic avec le bouton droit : ouvre un menu contextuel.
+    pub right_click: bool,
 }
 
 impl Default for SnapshotOptions {
@@ -69,6 +71,7 @@ impl Default for SnapshotOptions {
             demo: false,
             marked: false,
             home: false,
+            right_click: false,
         }
     }
 }
@@ -78,10 +81,11 @@ pub const HELP: &str = "\
       [--size 1360x860] [--scale 1.5] [--frames 16]\n\
       [--view list|grid] [--tab library|store] [--theme amoled|graphite]\n\
       [--select <jeu>] [--info] [--running] [--marked] [--home]\n\
-      [--dialog none|add|artwork|exe|scan|settings|settings-proton|\n\
+      [--dialog none|add|artwork|exe|scan|settings|settings-defaults|\n\
       settings-env|settings-artworks|settings-stats|settings-disk|\n\
-      game|logs|updates|customize|remove|steam|overlay]\n\
-      [--hover X,Y] [--click X,Y] [--key up|down|left|right|enter|escape] [--demo]\n\
+      settings-about|game|logs|updates|customize|remove|steam|overlay]\n\
+      [--hover X,Y] [--click X,Y] [--button left|right]\n\
+      [--key up|down|left|right|enter|escape] [--demo]\n\
       --demo : bibliothèque de démonstration avec artworks factices (la\n\
       configuration réelle n'est ni lue ni écrite)\n";
 
@@ -186,18 +190,28 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
             if frame == 0 {
                 input.events.push(Event::PointerMoved(pointer));
             }
-            if frame == 1 {
+            // Bouton droit disponible : c'est ainsi qu'on vérifie au rendu le
+            // menu contextuel et ses icônes.
+            let button = if opts.right_click {
+                PointerButton::Secondary
+            } else {
+                PointerButton::Primary
+            };
+            // Le clic arrive après quelques images : la première n'a pas encore
+            // de mise en page stable (police, taille des fenêtres), un clic
+            // envoyé trop tôt tombait à côté du bouton visé.
+            if frame == 6 {
                 input.events.push(Event::PointerButton {
                     pos: pointer,
-                    button: PointerButton::Primary,
+                    button,
                     pressed: true,
                     modifiers: Modifiers::NONE,
                 });
             }
-            if frame == 2 {
+            if frame == 7 {
                 input.events.push(Event::PointerButton {
                     pos: pointer,
-                    button: PointerButton::Primary,
+                    button,
                     pressed: false,
                     modifiers: Modifiers::NONE,
                 });
@@ -302,11 +316,7 @@ fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
     match dialog {
         "none" => {}
         "settings" => app.settings_open = true,
-        "settings-proton" => {
-            app.settings_open = true;
-            app.settings_tab = crate::app::SettingsTab::Proton;
-        }
-        "settings-env" | "settings-defaults" => {
+        "settings-env" | "settings-defaults" | "settings-proton" => {
             app.settings_open = true;
             app.settings_tab = crate::app::SettingsTab::Defaults;
         }
@@ -321,6 +331,10 @@ fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
         "settings-disk" => {
             app.settings_open = true;
             app.settings_tab = crate::app::SettingsTab::Disk;
+        }
+        "settings-about" => {
+            app.settings_open = true;
+            app.settings_tab = crate::app::SettingsTab::About;
         }
         "overlay" => {
             let id = app

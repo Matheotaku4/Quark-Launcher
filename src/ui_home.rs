@@ -485,7 +485,9 @@ impl QuarkApp {
         let available = (ui.available_width() - PADDING * 2.0).max(240.0);
         let gap = 14.0;
         let columns = ((available + gap) / 154.0).floor().clamp(2.0, 7.0) as usize;
-        let tile_w = ((available - gap * (columns as f32 - 1.0)) / columns as f32).max(96.0);
+        let tile_w = ((available - gap * (columns as f32 - 1.0)) / columns as f32)
+            .floor()
+            .max(96.0);
         let cover_h = tile_w * theme::COVER_RATIO;
         let row_h = cover_h + 34.0;
 
@@ -496,6 +498,9 @@ impl QuarkApp {
         let mut index = 0usize;
         while index < ids.len() {
             ui.horizontal(|ui| {
+                // L'espacement automatique d'egui s'ajoutait à la marge et aux
+                // gouttières : la dernière colonne dépassait de la fenêtre.
+                ui.spacing_mut().item_spacing.x = 0.0;
                 ui.add_space(PADDING);
                 for slot in 0..columns {
                     let Some(id) = ids.get(index + slot) else {
@@ -538,10 +543,11 @@ impl QuarkApp {
                             );
                         }
                         None => {
-                            painter.rect_filled(cover, TILE_RADIUS, pal.surface_hover);
+                            // Monogramme plein cadre : une tuile sans couverture
+                            // garde exactement la géométrie des autres.
                             widgets::monogram(
                                 &painter,
-                                cover.shrink(cover.width() * 0.18),
+                                cover,
                                 &game.monogram_letter(),
                                 theme::monogram_color(&game.name),
                                 &pal,

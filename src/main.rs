@@ -247,6 +247,14 @@ fn cli(args: &[String]) -> Option<i32> {
                             return Some(2);
                         }
                     },
+                    "--button" => match value.as_deref() {
+                        Some("right") => opts.right_click = true,
+                        Some("left") => opts.right_click = false,
+                        _ => {
+                            eprintln!("--button attend left ou right");
+                            return Some(2);
+                        }
+                    },
                     "--key" => match value {
                         Some(key) => opts.key = Some(key),
                         None => {

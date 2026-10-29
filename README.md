@@ -30,12 +30,18 @@ through **Proton** — or through **umu-launcher**.
   is added (per-game *Fetch from Steam* button to refresh). Genres feed the genre filter.
 - **Grid view shows the grid, nothing else**: the game page opens **as an overlay** with a
   close button, a click next to it, or `Esc`. The page background is the game's own banner,
-  **blurred** and darkened instead of a flat black, and the four action buttons are now
-  colour-coded small icons: **red bin** (remove), **green pencil** (customize), **blue gear**
-  (configure).
+  blurred, and the bottom third of the banner **fades into it** instead of ending on a hard
+  edge; a graduated dark veil keeps the text readable all the way down. The four action
+  buttons are colour-coded small icons — **red bin** (remove), **green pencil** (customize),
+  **blue gear** (configure) — each on a dark disc with a coloured ring so it stays legible on
+  a pale banner too.
 - **Missing executable**: launching a game whose `.exe` no longer exists is refused with a
   clear message, and the game stays **highlighted in red** in the list, the grid and its page
   until the path is fixed.
+- **Memory that stays flat**: artwork textures are decoded once and cached, but the cache is
+  capped at 96 entries — the least recently used are freed first — so browsing a large
+  library no longer makes memory climb indefinitely. Settings → About shows the resident
+  memory and the number of textures currently held.
 - **Adding a game in two steps**:
   1. type the game name — Quark searches **Steam** (public `storesearch` API) then
      **SteamGridDB** and fetches the **original artwork** (banner `library_hero`,
@@ -74,8 +80,13 @@ through **Proton** — or through **umu-launcher**.
   a Linux binary that runs without Proton, plus a row in the information block. Clicking it
   opens `protondb.com/app/<id>`. Cached per AppID; games without an AppID or without a report
   simply show no rating.
-- **List / Grid switch** from the top bar; grid view shows only the grid, the game page
-  being an overlay.
+- **List / Grid switch**, only in the top-right corner of the top bar (no duplicate buttons
+  in the left column or on the grid page); grid view shows only the grid, the game page being
+  an overlay.
+- **Status sections in list view**: games are grouped under their status — *Playing*, *To
+  play*, *Finished*, *Dropped*, then *No status* — each header carrying its colour dot and
+  game count, with a rule between sections. Clicking a header folds the section, as Steam's
+  library columns do.
 - **Launch options as checkboxes, per game** — no command line to remember:
   - **gamemoderun** (CPU governor from GameMode);
   - **MangoHud** (`MANGOHUD=1`, no wrapper binary needed);
@@ -115,10 +126,11 @@ through **Proton** — or through **umu-launcher**.
 - **Disk space page** (Settings → Disk space): size of each Proton prefix, the artwork cache,
   session logs, downloaded update archives and each game folder, measured in a background
   thread so the window never freezes.
-- **Steam library import**: the `+` menu reads `appmanifest_*.acf` files from every Steam
-  library (`libraryfolders.vdf`, Flatpak and Snap included), lists installed games with their
-  AppID and detected executable, skips games already in Quark, and fetches artwork and
-  metadata for each imported game.
+- **Steam library import** (Settings → Appearance → *Import the installed Steam library*):
+  reads `appmanifest_*.acf` files from every Steam library (`libraryfolders.vdf`, Flatpak and
+  Snap included), lists installed games with their AppID and detected executable, skips games
+  already in Quark, and fetches artwork and metadata for each imported game. It lives in the
+  settings rather than next to `+`, which is only for adding one game by hand.
 - **Environment variables per game**: a `NAME=value` list (for example
   `WINEDLLOVERRIDES=winmm=n,b;steam_api64`) with a wide value field, plus default variables in
   the settings that are **copied into each game when you add it** — each game then owns its
@@ -126,12 +138,15 @@ through **Proton** — or through **umu-launcher**.
 - **"Defaults" settings page**: prefix, arguments, Proton runtime, anti-cheat, **launch
   options** (GameMode, MangoHud, gamescope, PRIME, wrapper, `PROTON_LOG`, umu) and environment
   variables that are **pre-filled** in every new game. These are defaults, not global
-  settings: changing one does not modify games already in the library.
+  settings: changing one does not modify games already in the library. Detected runtimes,
+  the anti-cheat folders and a *Redetect* button sit right under the runtime choice; there is
+  no separate “Proton” page any more, it only repeated these.
 - **Icons that follow their background**: icons drawn over a banner use a translucent panel
   and switch to a dark tint of the background colour on a light image (a white icon over a
   sky-blue banner would be invisible). Monograms follow the same rule.
-- **Right-click a game** to open its settings. **Ctrl+click** marks several games and
-  removes them in one go; `Esc` clears the selection.
+- **Right-click a game** for a menu with the same colour-coded icons as the game page:
+  *Launch*, *Customize*, *Settings*, *Remove*. **Ctrl+click** marks several games and removes
+  them in one go; `Esc` clears the selection.
 - **Proton prefix used as-is**: the folder you pick (per game, or as the global default) *is*
   the prefix — Quark creates no sub-folder inside it. Only the automatic fallback keeps its
   own folder under `~/.local/share/quark/prefixes/<id>`.
@@ -250,7 +265,7 @@ as the **quark-ui-renders** artifact — so every push can be reviewed without i
 anything.
 
 ```bash
-tar -xzf quark-0.9.1-linux-x86_64.tar.gz
+tar -xzf quark-0.9.2-linux-x86_64.tar.gz
 cd quark && ./quark
 ```
 
@@ -335,8 +350,9 @@ target/release/quark --ui logs.png --demo --dialog logs
 
 Options: `--size WxH`, `--scale N`, `--frames N`, `--view list|grid`, `--tab library|store`,
 `--theme amoled|graphite`, `--select <game>`, `--info`, `--running`,
-`--dialog none|add|artwork|exe|scan|settings|settings-defaults|settings-proton|settings-artworks|settings-stats|settings-disk|game|logs|customize|remove|updates|steam|overlay`, `--hover X,Y`,
-`--click X,Y`, `--key up|down|left|right|enter|escape`, `--marked`, `--home`, `--demo`.
+`--dialog none|add|artwork|exe|scan|settings|settings-defaults|settings-artworks|settings-stats|settings-disk|settings-about|game|logs|customize|remove|updates|steam|overlay`, `--hover X,Y`,
+`--click X,Y`, `--button left|right`, `--key up|down|left|right|enter|escape`, `--marked`,
+`--home`, `--demo`.
 
 `--click` and `--key` send real input events, so a render also checks the interactions:
 `--key down` really moves the selection, `--click X,Y` really presses a button.
@@ -393,5 +409,5 @@ src/snapshot.rs     off-screen software renderer (--ui), for visual checks
 
 - Fill the Store tab (search, game pages, prices).
 - Favourites and filters on the home page (genre, ProtonDB tier, native/Proton).
-- Automatic import of the Steam library (`appmanifest_*.acf`).
+- A time-range selector on the statistics page (7 days, 30 days, this year).
 - A “verify prefix” action and per-game backup of save files.

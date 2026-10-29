@@ -509,7 +509,7 @@ pub fn icon_button(ui: &mut egui::Ui, size: f32, icon: Icon, pal: &Palette, tool
 
 /// Bouton icône carré coloré, pour les actions d'un jeu : poubelle rouge,
 /// crayon vert, engrenage bleu. La couleur reste lisible sur le noir AMOLED et
-/// sur une bannière claire grâce à une pastille teintée.
+/// sur une bannière claire grâce à une pastille sombre puis un liseré coloré.
 pub fn tinted_icon_button(
     ui: &mut egui::Ui,
     size: f32,
@@ -524,28 +524,78 @@ pub fn tinted_icon_button(
         resp.hovered(),
         0.12,
     );
-    // Fond : la couleur de l'action, très diluée ; au survol, un peu plus.
+    // Pastille sombre sous le symbole : posée sur une bannière claire, l'icône
+    // colorée gardait peu de contraste. Le fond sombre la détache de l'image.
     painter.circle_filled(
         rect.center(),
         size * 0.5,
-        Color32::from_rgba_unmultiplied(
-            color.r(),
-            color.g(),
-            color.b(),
-            (26.0 + 34.0 * hover).round() as u8,
-        ),
+        Color32::from_black_alpha((105.0 + 45.0 * hover).round() as u8),
+    );
+    // Liseré de la couleur de l'action : le bouton se lit même de loin.
+    painter.circle_stroke(
+        rect.center(),
+        size * 0.5 - 0.5,
+        Stroke::new(1.0_f32, color.gamma_multiply(0.65 + 0.35 * hover)),
     );
     paint_icon(
         &painter,
         rect.shrink(size * (0.29 + 0.02 * hover)),
         icon,
-        theme::lerp_color(color, Color32::WHITE, hover * 0.25),
+        theme::lerp_color(color, Color32::WHITE, hover * 0.30),
     );
     if tooltip.is_empty() {
         resp
     } else {
         resp.on_hover_text(tooltip)
     }
+}
+
+/// Entrée de menu contextuel : petite pastille sombre, icône colorée, libellé.
+///
+/// Un menu egui standard ne porte que du texte ; ces lignes donnent au clic
+/// droit les mêmes icônes que la fiche. La pastille sombre garde le symbole
+/// lisible même quand la fenêtre est posée sur une bannière claire.
+pub fn menu_row(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    icon: Icon,
+    color: Color32,
+    label: &str,
+) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width().max(206.0), 28.0),
+        Sense::click(),
+    );
+    let painter = ui.painter_at(rect);
+    let hover = ui.ctx().animate_bool_with_time(
+        ui.id().with(("quark_menu", label)),
+        resp.hovered(),
+        0.10,
+    );
+    if hover > 0.0 {
+        painter.rect_filled(rect, 5.0, pal.surface_hover.gamma_multiply(hover));
+    }
+    let center = Pos2::new(rect.left() + 18.0, rect.center().y);
+    painter.circle_filled(center, 10.0, Color32::from_black_alpha(130));
+    painter.circle_stroke(
+        center,
+        9.5,
+        Stroke::new(1.0_f32, color.gamma_multiply(0.6)),
+    );
+    paint_icon(
+        &painter,
+        Rect::from_center_size(center, Vec2::splat(12.0)),
+        icon,
+        color,
+    );
+    painter.text(
+        Pos2::new(rect.left() + 36.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        FontId::proportional(12.5),
+        theme::lerp_color(pal.text_dim, pal.text, 0.55 + 0.45 * hover),
+    );
+    resp.clicked()
 }
 
 /// Onglet de la barre supérieure (Boutique / Bibliothèque).

@@ -248,9 +248,9 @@ pub struct NativePicker {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SettingsTab {
     Appearance,
-    /// Ce qui est prérempli dans chaque jeu ajouté (ce n'est pas global).
+    /// Ce qui est prérempli dans chaque jeu ajouté (ce n'est pas global) :
+    /// préfixe, arguments, runtime Proton, anti-triche, options, variables.
     Defaults,
-    Proton,
     Artworks,
     /// Historique de jeu : heures par semaine, calendrier, séries.
     Stats,
@@ -260,10 +260,9 @@ pub enum SettingsTab {
 }
 
 impl SettingsTab {
-    pub const ALL: [(SettingsTab, &'static str); 7] = [
+    pub const ALL: [(SettingsTab, &'static str); 6] = [
         (SettingsTab::Appearance, "Apparence"),
         (SettingsTab::Defaults, "Par défaut"),
-        (SettingsTab::Proton, "Proton"),
         (SettingsTab::Artworks, "Artworks"),
         (SettingsTab::Stats, "Statistiques"),
         (SettingsTab::Disk, "Espace disque"),
@@ -1627,8 +1626,8 @@ impl QuarkApp {
                             self.settings_open = true;
                         }
                         ui.add_space(6.0);
-                        // Toujours accessibles, y compris en vue grille où la
-                        // colonne de gauche n'existe pas.
+                        // Seul endroit où l'on bascule de vue : la colonne de
+                        // gauche et la page grille ne les dupliquent plus.
                         if self.tab == Tab::Library {
                             ui.add_space(4.0);
                             if widgets::icon_button(ui, 28.0, Icon::Grid, &pal, "Vue grille").clicked() {
@@ -1643,23 +1642,6 @@ impl QuarkApp {
                                 .clicked()
                             {
                                 self.open_add_dialog();
-                            }
-                            if widgets::icon_button(
-                                ui,
-                                28.0,
-                                Icon::Steam,
-                                &pal,
-                                "Importer les jeux Steam installés",
-                            )
-                            .clicked()
-                            {
-                                self.open_steam_import(ctx);
-                            }
-                            if widgets::icon_button(ui, 28.0, Icon::Home, &pal, "Accueil").clicked()
-                            {
-                                self.home = true;
-                                self.home_at = Instant::now();
-                                self.overlay = None;
                             }
                             ui.add_space(6.0);
                         }
@@ -1891,6 +1873,7 @@ impl QuarkApp {
             || self.editing.is_some()
             || self.customize.is_some()
             || self.logs.is_some()
+            || self.steam_import.is_some()
             || !self.confirm_remove.is_empty()
         {
             return;

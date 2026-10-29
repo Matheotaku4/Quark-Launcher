@@ -11,17 +11,38 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+/// Nombre de textures gardées en mémoire. Une bannière Steam fait facilement
+/// 1920 × 620 pixels, soit près de 5 Mo en RGBA : sans plafond, parcourir la
+/// bibliothèque faisait monter la mémoire indéfiniment.
+pub const TEXTURE_BUDGET: usize = 96;
+
+struct CachedTexture {
+    stamp: Option<SystemTime>,
+    texture: TextureHandle,
+    /// Numéro de la dernière demande : le plus petit est le plus ancien.
+    used: u64,
+}
+
 #[derive(Default)]
 pub struct TextureCache {
-    entries: HashMap<PathBuf, (Option<SystemTime>, TextureHandle)>,
+    entries: HashMap<PathBuf, CachedTexture>,
+    /// Compteur de demandes (une par texture utilisée et par image affichée).
+    tick: u64,
 }
 
 impl TextureCache {
+    /// Nombre de textures actuellement en mémoire.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
     /// Texture d'un fichier local, rechargée si le fichier a changé.
     pub fn get(&mut self, ctx: &egui::Context, path: &Path) -> Option<&TextureHandle> {
+        self.tick += 1;
+        let tick = self.tick;
         let modified = std::fs::metadata(path).ok().and_then(|m| m.modified().ok());
         let stale = match self.entries.get(path) {
-            Some((stamp, _)) => *stamp != modified,
+            Some(entry) => entry.stamp != modified,
             None => true,
         };
 
@@ -34,11 +55,54 @@ impl TextureCache {
                 egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw().as_slice());
             let texture =
                 ctx.load_texture(path.to_string_lossy(), color_image, egui::TextureOptions::LINEAR);
-            self.entries.insert(path.to_path_buf(), (modified, texture));
+            self.entries.insert(
+                path.to_path_buf(),
+                CachedTexture {
+                    stamp: modified,
+                    texture,
+                    used: tick,
+                },
+            );
+            // Élagage dès le dépassement : les textures des jeux qu'on ne
+            // regarde plus sont rendues au GPU, donc la mémoire redescend au
+            // lieu de croître. Le tri n'a lieu qu'au chargement d'une image.
+            if self.entries.len() > TEXTURE_BUDGET {
+                self.evict();
+            }
         }
 
-        self.entries.get(path).map(|(_, texture)| texture)
+        if let Some(entry) = self.entries.get_mut(path) {
+            entry.used = tick;
+        }
+        self.entries.get(path).map(|entry| &entry.texture)
     }
+
+    /// Libère les textures les moins récemment demandées.
+    fn evict(&mut self) {
+        let used: Vec<(PathBuf, u64)> = self
+            .entries
+            .iter()
+            .map(|(path, entry)| (path.clone(), entry.used))
+            .collect();
+        for path in evict_candidates(&used, TEXTURE_BUDGET) {
+            self.entries.remove(&path);
+        }
+    }
+}
+
+/// Chemins à libérer pour ramener le cache à `keep` entrées : les plus
+/// anciennement demandés d'abord. Fonction pure, testée sans GPU.
+pub fn evict_candidates(used: &[(PathBuf, u64)], keep: usize) -> Vec<PathBuf> {
+    if used.len() <= keep {
+        return Vec::new();
+    }
+    let mut sorted: Vec<&(PathBuf, u64)> = used.iter().collect();
+    sorted.sort_by_key(|(_, tick)| *tick);
+    sorted
+        .into_iter()
+        .take(used.len() - keep)
+        .map(|(path, _)| path.clone())
+        .collect()
 }
 
 impl QuarkApp {
@@ -58,7 +122,11 @@ pub struct BlurCache {
     entries: HashMap<PathBuf, (Option<SystemTime>, TextureHandle)>,
 }
 
-const BLUR_WIDTH: u32 = 96;
+const BLUR_WIDTH: u32 = 144;
+
+/// Nombre de bannières floutées gardées. Chacune est minuscule (144 px de
+/// large, ~50 Ko), mais autant borner le cache que les textures.
+const BLUR_BUDGET: usize = 32;
 
 impl BlurCache {
     pub fn get(&mut self, ctx: &egui::Context, path: &Path) -> Option<&TextureHandle> {
@@ -77,7 +145,9 @@ impl BlurCache {
             let small = decoded
                 .resize(BLUR_WIDTH, scaled_height, image::imageops::FilterType::Triangle)
                 .to_rgba8();
-            let blurred = image::imageops::blur(&small, 4.0);
+            // Un rayon un peu plus large compense la résolution plus haute :
+            // le fond est doux au lieu d'être une bouillie de gros pixels.
+            let blurred = image::imageops::blur(&small, 6.0);
             let color_image = egui::ColorImage::from_rgba_unmultiplied(
                 [blurred.width() as usize, blurred.height() as usize],
                 blurred.as_raw(),
@@ -87,7 +157,16 @@ impl BlurCache {
                 color_image,
                 egui::TextureOptions::LINEAR,
             );
-            self.entries.insert(path.to_path_buf(), (modified, texture));
+            // Le clone ne coûte qu'un compteur de références ; il permet de
+            // réinsérer la texture courante après un vidage.
+            self.entries
+                .insert(path.to_path_buf(), (modified, texture.clone()));
+            if self.entries.len() > BLUR_BUDGET {
+                // Vidage simple : ces textures sont recalculées à la demande en
+                // quelques millisecondes, la mémoire reste plate.
+                self.entries.clear();
+                self.entries.insert(path.to_path_buf(), (modified, texture));
+            }
         }
         self.entries.get(path).map(|(_, texture)| texture)
     }
@@ -137,6 +216,70 @@ pub fn draw_cover(painter: &egui::Painter, texture: &TextureHandle, rect: egui::
         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
         egui::Color32::WHITE,
     );
+}
+
+/// Fenêtre de la texture qui la fait couvrir `rect` sans déformation (celle
+/// qu'utilise `draw_cover`).
+fn cover_uv(size: egui::Vec2, rect: egui::Rect) -> egui::Rect {
+    let scale = (rect.width() / size.x).max(rect.height() / size.y);
+    let fitted = size * scale;
+    let u = (rect.width() / fitted.x).clamp(0.0, 1.0);
+    let v = (rect.height() / fitted.y).clamp(0.0, 1.0);
+    egui::Rect::from_min_max(
+        egui::pos2((1.0 - u) / 2.0, (1.0 - v) / 2.0),
+        egui::pos2((1.0 + u) / 2.0, (1.0 + v) / 2.0),
+    )
+}
+
+/// Dessine la texture en « cover » puis fond ses derniers `fade` pixels dans ce
+/// qu'il y a derrière.
+///
+/// Sans ce fondu, la bannière s'arrêtait net sur le fond flouté de la fiche :
+/// une coupure franche en plein milieu de l'image. Chaque bande du dégradé
+/// n'affiche que sa propre tranche de texture, donc elles ne se superposent
+/// pas et ne s'assombrissent pas l'une l'autre.
+pub fn draw_cover_faded(
+    painter: &egui::Painter,
+    texture: &TextureHandle,
+    rect: egui::Rect,
+    fade: f32,
+) {
+    let size = texture.size_vec2();
+    if size.x <= 0.0 || size.y <= 0.0 || rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return;
+    }
+    let uv = cover_uv(size, rect);
+    let fade = fade.clamp(0.0, rect.height());
+    let solid_bottom = rect.bottom() - fade;
+    let v_at = |y: f32| uv.min.y + uv.height() * ((y - rect.top()) / rect.height()).clamp(0.0, 1.0);
+
+    if solid_bottom > rect.top() {
+        painter.image(
+            texture.id(),
+            egui::Rect::from_min_max(rect.min, egui::pos2(rect.right(), solid_bottom)),
+            egui::Rect::from_min_max(uv.min, egui::pos2(uv.max.x, v_at(solid_bottom))),
+            Color32::WHITE,
+        );
+    }
+    if fade <= 1.0 {
+        return;
+    }
+    const BANDS: usize = 26;
+    for band in 0..BANDS {
+        let t0 = band as f32 / BANDS as f32;
+        let t1 = (band + 1) as f32 / BANDS as f32;
+        let y0 = solid_bottom + fade * t0;
+        let y1 = solid_bottom + fade * t1;
+        // Profil quadratique : la fin de la bannière disparaît doucement, sans
+        // bande visible dans le dégradé.
+        let alpha = ((1.0 - t0) * (1.0 - t0) * 255.0).round().clamp(0.0, 255.0) as u8;
+        painter.image(
+            texture.id(),
+            egui::Rect::from_min_max(egui::pos2(rect.left(), y0), egui::pos2(rect.right(), y1)),
+            egui::Rect::from_min_max(egui::pos2(uv.min.x, v_at(y0)), egui::pos2(uv.max.x, v_at(y1))),
+            Color32::from_white_alpha(alpha),
+        );
+    }
 }
 
 /// Remplissage de secours d'une bannière : un aplat teinté par la couleur du
@@ -406,6 +549,45 @@ mod tests {
         assert!(!is_light(&sombre));
         // Fichier absent : on ne casse rien, on suppose sombre.
         assert!(!is_light(&dir.join("absent.png")));
+    }
+
+    #[test]
+    fn le_cache_de_textures_libere_les_plus_anciennes() {
+        let used: Vec<(PathBuf, u64)> = (0..5)
+            .map(|index| (PathBuf::from(format!("/jeu/{index}.png")), 100 - index as u64))
+            .collect();
+        // Rien à libérer tant qu'on reste sous le plafond.
+        assert!(evict_candidates(&used, 5).is_empty());
+        let freed = evict_candidates(&used, 3);
+        assert_eq!(freed.len(), 2);
+        assert_eq!(freed[0], PathBuf::from("/jeu/4.png"));
+        assert_eq!(freed[1], PathBuf::from("/jeu/3.png"));
+        // Le plafond tient : après libération il ne reste que `keep` entrées.
+        assert_eq!(evict_candidates(&used, 96).len(), 0);
+    }
+
+    #[test]
+    fn le_cache_ne_depasse_jamais_son_plafond() {
+        let dir = std::env::temp_dir().join("quark-cache-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let ctx = eframe::egui::Context::default();
+        let mut cache = TextureCache::default();
+        let total = TEXTURE_BUDGET + 6;
+        for index in 0..total {
+            let path = dir.join(format!("img{index}.png"));
+            image::RgbaImage::from_pixel(4, 4, image::Rgba([index as u8, 90, 160, 255]))
+                .save(&path)
+                .unwrap();
+            assert!(cache.get(&ctx, &path).is_some());
+            assert!(
+                cache.len() <= TEXTURE_BUDGET,
+                "{} textures en cache après {index} chargements",
+                cache.len()
+            );
+        }
+        // La dernière demandée survit à l'élagage.
+        let last = dir.join(format!("img{}.png", total - 1));
+        assert!(cache.get(&ctx, &last).is_some());
     }
 
     #[test]
