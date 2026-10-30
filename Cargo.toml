@@ -1,6 +1,6 @@
 [package]
 name = "quark"
-version = "0.9.2"
+version = "1.0.0"
 edition = "2024"
 
 [dependencies]
@@ -19,4 +19,8 @@ ring = "0.17"
 flate2 = "1.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+# Configuration Ludusavi : un `config.yaml` existant peut être du YAML commenté,
+# pas seulement le JSON que Quark y écrit. `serde_yaml` étant archivé, on prend
+# le fork maintenu, d'API identique.
+serde_yaml_ng = "0.10"
 ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }

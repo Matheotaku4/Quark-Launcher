@@ -7,6 +7,7 @@ pub mod credentials;
 pub mod gog;
 pub mod legendary;
 pub mod model;
+pub mod operations;
 pub mod runner;
 pub mod steam;
 pub mod tools;

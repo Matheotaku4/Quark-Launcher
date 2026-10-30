@@ -3,14 +3,16 @@
 A **lightweight game launcher for Linux**, written in Rust (egui), meant as a sober
 alternative to Steam: deep black (AMOLED), list or grid view, a game banner with a
 **Play** button, playtime, ProtonDB rating and official artwork, with Windows games launched
-through **Proton** — or through **umu-launcher**.
+through **Proton** — or through **umu-launcher**. Three tabs: a Steam store page, your
+library, and **Mes jeux** — the Steam and Epic titles you own or have installed, in one list,
+with save snapshots through Ludusavi.
 
 ## Features
 
-- **Two tabs**: `Store` (deliberately empty for now) and `Library`, plus a **Home** page
-  reachable from the button above the game list. `Ctrl+Q` quits completely (tray icon
-  included); the title bar and the executable carry the Quark icon (`assets/quark.png`,
-  `assets/quark.desktop`).
+- **Three tabs**: `Store` (Steam discovery), `Library`, and **Mes jeux** (owned and
+  installed games across stores), plus a **Home** page reachable from the button above the
+  game list. `Ctrl+Q` quits completely (tray icon included); the title bar and the executable
+  carry the Quark icon (`assets/quark.png`, `assets/quark.desktop`).
 - **Home page**: a carousel of the games you played last — the banner as background with
   rounded corners, the game's logo (or title), a **Continue** button (it becomes
   **Stop** while the game runs), playtime and last session next to it, the ProtonDB score
@@ -166,8 +168,8 @@ through **Proton** — or through **umu-launcher**.
   `compatibilitytools.d/*`, including Flatpak/Snap), runtime chosen **per game** or as a
   default, a **default Proton prefix** in the settings and a **per-game override**.
 - **Settings in tabs**: Appearance (theme, default view, notification icon), Defaults,
-  Proton, Artworks, About. Explanations live in small ⓘ buttons next to each setting instead
-  of lines of grey text.
+  Artworks, Statistics, Disk space, **Stores & tools** (accounts and managed tools) and About.
+  Explanations live in small ⓘ buttons next to each setting instead of lines of grey text.
 - **BattlEye and EasyAntiCheat runtimes** are detected next to Proton — including Steam's
   `Proton BattlEye Runtime` / `Proton EasyAntiCheat Runtime` folders, which carry no `proton`
   script — and each one can be enabled separately per game (both at once is allowed). Quark
@@ -182,6 +184,26 @@ through **Proton** — or through **umu-launcher**.
 - **Command-line diagnostics**: `--doctor`, `--search`, `--fetch`, `--news`, `--scan`,
   `--update` and `--ui` (no screen required, `--home` renders the home page). `--tray` runs
   the notification-icon process and is started by Quark itself.
+- **Steam store page**: regional specials, a search field (*Rechercher un jeu sur Steam…*),
+  prices in your currency, and the store page opened in your browser — Quark never buys
+  anything. The catalogue is cached in `~/.local/share/quark/store-cache.json` and shown
+  again, marked as potentially stale, when Steam is unreachable; the *recommandations
+  locales* are ranked from the titles already in your library, on your machine, and your
+  profile is never sent to Steam. These Steam endpoints are undocumented and handled as
+  best-effort: a malformed response is reported, never cached as an empty store.
+- **Mes jeux**: Steam (read from local `appmanifest_*.acf`) and Epic (through Legendary)
+  games in one list — owned, installed, or both — with a filter per store, the detected
+  install path, and what the store can actually do. The same game on two stores can be
+  **merged** into one row and **split** again.
+- **Installs are delegated, never faked**: *Installer via Steam* hands the AppID to the Steam
+  client (`steam://install/<id>`) and then rescans; *Installer via Legendary* installs into
+  the folder you choose and only marks the game **Installé** once a matching local directory
+  has been found. A dialog closing or a process exiting is never taken as proof.
+- **Save folders and snapshots from the same page**: custom save folders per installation,
+  Ludusavi preview, backup, backup inventory and restore — see *Save files* below.
+- **Deliberately absent**: achievements, cloud saves and the GOG library. No verified source
+  is wired for them, so Quark shows nothing rather than empty results or invented
+  capabilities.
 
 ## Build
 
@@ -241,14 +263,82 @@ best-rated community banners/logos/covers, including for games absent from Steam
 (GOG, itch.io, emulation…). The key goes into **Settings → Artwork** and stays in your local
 configuration file.
 
+## Stores, tools and save files
+
+Steam works without any account: installed games are read from local `appmanifest_*.acf`
+files. Everything else is optional, and stays on this machine.
+
+### Credentials
+
+Steam owned games (**Settings → Stores & tools**) need a personal Steam Web API key and a
+SteamID64. They are written to `~/.config/quark/credentials.json` with mode `0600`, and **that
+file is not encrypted**: anyone who can read your home directory can read the key. Quark never
+logs it, and redacts registered secrets from command output. `GetOwnedGames` still returns
+nothing for a profile whose game details are private, so an empty answer is reported as
+ambiguous — it never becomes a "verified empty library" that would erase the games you already
+know. Epic and GOG have their own fields in the same file.
+
+### Managed tools
+
+Legendary, gogdl and Ludusavi are downloaded from their official GitHub releases into
+`~/.local/share/quark/tools/`:
+
+| Tool | Used for | State |
+| --- | --- | --- |
+| Legendary | Epic library, installs | owned + installed lists, installs into a folder you pick |
+| Ludusavi | local save snapshots | preview, backup, inventory, restore |
+| gogdl | GOG | downloadable, but no GOG library or install flow yet |
+
+The SHA-256 digest published in the release metadata is mandatory: a release without a
+digest, a digest mismatch, a missing Linux x64 asset, or a `--version` that does not match the
+tag is refused. The downloaded file is never executed before its digest matches, and the
+verified binary then replaces the previous one atomically, so a failed download or update
+leaves the last working tool in place. **Settings → Stores & tools** shows the installed state
+and only downloads when you ask.
+
+### Save files (Ludusavi)
+
+Saves are handled per provider installation, not per title:
+
+- **Custom folders**: **Mes jeux → Dossiers de sauvegarde…** adds folders Ludusavi does not
+  know for that installation. They are merged into Quark's isolated
+  `~/.local/share/quark/ludusavi/config.yaml`; `--config` is always passed, so your own
+  `~/.config/ludusavi` is never touched. An existing YAML file keeps its settings, its other
+  `customGames` entries and their keys (`registry`, `alias`…), but rewriting it drops comments
+  and inlines anchors, and a path is never removed automatically.
+- **Preview, then confirmation**: **Aperçu sauvegarde** runs Ludusavi's preview and shows the
+  changed and processed games plus the data size; nothing is written until **Créer la
+  sauvegarde**. A Ludusavi error or a failed file blocks that step and is reported as a
+  failure, never as a successful backup.
+- **One vault per installation** (`~/.local/share/quark/save-backups/<hash>/`), keeping at most
+  10 full backups and no differential ones.
+- **Automatic snapshots**: for a game linked to a provider installation, a background backup
+  starts when the game is launched and another one when it exits. They never block or cancel a
+  launch: a failure is a message, not a dialog.
+- **Restore** requires the backup inventory, a fresh preview of the destination paths and an
+  explicit confirmation; every destination is re-validated right before writing and must stay
+  inside your home directory, the installation folder or a declared save folder. The forced
+  Ludusavi call exists only inside that confirmed flow.
+
+Achievements and cloud saves are **not** offered: no verified source is wired for either, so
+nothing is claimed or displayed as empty. GOG games cannot be synced or installed yet.
+
+The full manual check — real Ludusavi binary, exact commands, expected JSON and pass/fail
+criteria — is in [`docs/verification/ludusavi-config.md`](docs/verification/ludusavi-config.md).
+
 ## Files
 
 | Path | Contents |
 | --- | --- |
 | `~/.config/quark/config.json` | settings + games (readable, hand-editable JSON) |
+| `~/.config/quark/credentials.json` | optional Steam/Epic/GOG credentials, mode `0600`, not encrypted |
 | `~/.local/share/quark/artwork/<id>/` | downloaded artwork (no network request while displaying) |
 | `~/.local/share/quark/prefixes/<id>/` | automatically created Proton prefixes |
 | `~/.local/share/quark/logs/<id>/session.log` | last session: command, environment, game and Wine output |
+| `~/.local/share/quark/tools/<name>` | managed tools (Legendary, gogdl, Ludusavi), digest-checked |
+| `~/.local/share/quark/ludusavi/config.yaml` | isolated Ludusavi config, custom save folders merged in |
+| `~/.local/share/quark/save-backups/<hash>/` | one save vault per provider installation |
+| `~/.local/share/quark/store-cache.json` | last Steam store catalogue, reused when Steam is unreachable |
 | `~/.local/share/quark/updates/` | downloaded release archives (never installed automatically) |
 
 ## Releases
@@ -348,9 +438,9 @@ target/release/quark --ui dialog.png --demo --dialog settings
 target/release/quark --ui logs.png --demo --dialog logs
 ```
 
-Options: `--size WxH`, `--scale N`, `--frames N`, `--view list|grid`, `--tab library|store`,
+Options: `--size WxH`, `--scale N`, `--frames N`, `--view list|grid`, `--tab library|store|my-games`,
 `--theme amoled|graphite`, `--select <game>`, `--info`, `--running`,
-`--dialog none|add|artwork|exe|scan|settings|settings-defaults|settings-artworks|settings-stats|settings-disk|settings-about|game|logs|customize|remove|updates|steam|overlay`, `--hover X,Y`,
+`--dialog none|add|artwork|exe|scan|settings|settings-defaults|settings-env|settings-proton|settings-providers|settings-artworks|settings-stats|settings-disk|settings-about|game|logs|customize|remove|updates|steam|overlay`, `--hover X,Y`,
 `--click X,Y`, `--button left|right`, `--key up|down|left|right|enter|escape`, `--marked`,
 `--home`, `--demo`.
 
@@ -384,7 +474,11 @@ src/main.rs         entry point + CLI (--doctor/--search/--fetch/--news/--scan/-
 src/app.rs          application state, egui loop, launching, playtime, toasts, ProtonDB
 src/ui_home.rs      Home page: recent-games carousel, Continue, sorted library grid
 src/ui_library.rs   Library tab: list/grid column + game pane (banner, Play, news, ProtonDB)
-src/ui_store.rs     Store tab (placeholder)
+src/ui_my_games.rs  Mes jeux: store sync, duplicate merge, install handoff, save folders
+src/ui_store.rs     Store tab: specials, search, local recommendations, price display
+src/steam_store.rs  Steam Store catalogue, regional prices, local cache, recommendation ranking
+src/providers/      provider model, Steam/Epic/GOG adapters, managed tools, credentials, installs
+src/saves/          Ludusavi: isolated config merge, preview, backup, inventory, restore
 src/ui_dialogs.rs   adding a game, global settings, game settings, session log, pickers
 src/config.rs       data model, persistence (JSON), labels (playtime, dates, monogram)
 src/artwork.rs      Steam/SteamGridDB search + artwork download and cache
@@ -407,7 +501,8 @@ src/snapshot.rs     off-screen software renderer (--ui), for visual checks
 
 ## Possible next steps
 
-- Fill the Store tab (search, game pages, prices).
-- Favourites and filters on the home page (genre, ProtonDB tier, native/Proton).
+- Achievements and cloud saves, but only once a per-store source can be verified.
+- Wire the gogdl adapter into **Mes jeux** once its library and install output are pinned.
+- Favourites on the home page.
 - A time-range selector on the statistics page (7 days, 30 days, this year).
-- A “verify prefix” action and per-game backup of save files.
+- A “verify prefix” action.

@@ -1296,6 +1296,7 @@ mod tests {
                 title: "Celeste".to_string(),
                 owned: true,
                 install_path: Some(PathBuf::from("/games/Celeste")),
+                custom_save_paths: Vec::new(),
                 install_state: crate::providers::InstallState::Installed,
                 quark_game_id: Some("quark-game".to_string()),
                 capabilities: crate::providers::GameCapabilities {

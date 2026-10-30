@@ -221,9 +221,11 @@ pub fn ensure_helper() -> Result<u32, String> {
         }
         std::thread::sleep(Duration::from_millis(40));
     }
-    Err("aucune zone de notification : ce bureau n'expose pas de watcher \
+    Err(
+        "aucune zone de notification : ce bureau n'expose pas de watcher \
          StatusNotifierItem (extension AppIndicator sous GNOME)"
-        .to_string())
+            .to_string(),
+    )
 }
 
 /// Retire l'icône (réglage décoché).

@@ -314,7 +314,10 @@ mod tests {
             "Stardew Valley"
         );
         assert_eq!(guess_title("game", "Hades"), "Hades");
-        assert_eq!(guess_title("hollow_knight", "Hollow Knight"), "Hollow Knight");
+        assert_eq!(
+            guess_title("hollow_knight", "Hollow Knight"),
+            "Hollow Knight"
+        );
     }
 
     #[test]

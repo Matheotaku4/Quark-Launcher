@@ -188,11 +188,26 @@ pub fn apply(ctx: &egui::Context, mode: ThemeMode) {
 
     style.visuals = v;
     style.text_styles = [
-        (egui::TextStyle::Heading, FontId::new(20.0, FontFamily::Proportional)),
-        (egui::TextStyle::Body, FontId::new(13.5, FontFamily::Proportional)),
-        (egui::TextStyle::Monospace, FontId::new(12.0, FontFamily::Monospace)),
-        (egui::TextStyle::Button, FontId::new(13.5, FontFamily::Proportional)),
-        (egui::TextStyle::Small, FontId::new(11.0, FontFamily::Proportional)),
+        (
+            egui::TextStyle::Heading,
+            FontId::new(20.0, FontFamily::Proportional),
+        ),
+        (
+            egui::TextStyle::Body,
+            FontId::new(13.5, FontFamily::Proportional),
+        ),
+        (
+            egui::TextStyle::Monospace,
+            FontId::new(12.0, FontFamily::Monospace),
+        ),
+        (
+            egui::TextStyle::Button,
+            FontId::new(13.5, FontFamily::Proportional),
+        ),
+        (
+            egui::TextStyle::Small,
+            FontId::new(11.0, FontFamily::Proportional),
+        ),
     ]
     .into();
     style.spacing.item_spacing = Vec2::new(8.0, 6.0);
@@ -307,7 +322,10 @@ mod tests {
         let icone = on_surface(ciel);
         let [r, g, b, a] = icone.to_array();
         assert_eq!(a, 255, "l'icône doit rester opaque : {icone:?}");
-        assert!(r < 90 && g < 120 && b < 140, "icône trop claire : {icone:?}");
+        assert!(
+            r < 90 && g < 120 && b < 140,
+            "icône trop claire : {icone:?}"
+        );
         assert!(b > r, "la teinte doit rester bleutée : {icone:?}");
         // Fond sombre : l'icône repasse en blanc cassé.
         let sombre = on_surface(rgb(0x0B, 0x0E, 0x11));
@@ -325,13 +343,12 @@ mod tests {
 /// Mélange linéaire de deux couleurs, pour les transitions (survol, sélection).
 pub fn lerp_color(from: Color32, to: Color32, t: f32) -> Color32 {
     let t = t.clamp(0.0, 1.0);
-    let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round().clamp(0.0, 255.0) as u8;
+    let mix = |a: u8, b: u8| {
+        (a as f32 + (b as f32 - a as f32) * t)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
     let [r1, g1, b1, a1] = from.to_array();
     let [r2, g2, b2, a2] = to.to_array();
-    Color32::from_rgba_premultiplied(
-        mix(r1, r2),
-        mix(g1, g2),
-        mix(b1, b2),
-        mix(a1, a2),
-    )
+    Color32::from_rgba_premultiplied(mix(r1, r2), mix(g1, g2), mix(b1, b2), mix(a1, a2))
 }

@@ -8,6 +8,10 @@ use std::time::Duration;
 
 pub const PINNED_VERSION: &str = "0.21.1";
 
+/// Une installation télécharge plusieurs gigaoctets : le délai des commandes
+/// d'inventaire (60 s) tuerait le processus en pleine écriture.
+pub const INSTALL_TIMEOUT: Duration = Duration::from_secs(6 * 60 * 60);
+
 #[derive(Debug, Clone)]
 pub struct LegendaryAdapter {
     pub executable: PathBuf,
@@ -39,6 +43,14 @@ impl LegendaryAdapter {
         cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<CommandOutput, String> {
         super::runner::run(self.command(args), self.timeout, cancellation)
+    }
+
+    pub fn run_install(
+        &self,
+        args: impl IntoIterator<Item = String>,
+        cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Result<CommandOutput, String> {
+        super::runner::run(self.command(args), INSTALL_TIMEOUT, cancellation)
     }
 
     pub fn sync_owned(
@@ -167,6 +179,7 @@ pub fn parse_owned_json(json: &str, fetched_at: i64) -> Result<Vec<ProviderGame>
             title: entry.app_title,
             owned: true,
             install_path: None,
+            custom_save_paths: Vec::new(),
             install_state: InstallState::NotInstalled,
             quark_game_id: None,
             capabilities: Default::default(),
@@ -194,6 +207,9 @@ pub fn parse_installed_json(json: &str, fetched_at: i64) -> Result<Vec<ProviderG
         {
             return Err("entrée d'installation Legendary invalide".to_string());
         }
+        if !entry.install_path.is_dir() {
+            continue;
+        }
         if !seen.insert(entry.app_name.clone()) {
             continue;
         }
@@ -205,6 +221,7 @@ pub fn parse_installed_json(json: &str, fetched_at: i64) -> Result<Vec<ProviderG
             title: entry.title,
             owned: true,
             install_path: Some(entry.install_path),
+            custom_save_paths: Vec::new(),
             install_state: InstallState::Installed,
             quark_game_id: None,
             capabilities: Default::default(),
@@ -215,12 +232,70 @@ pub fn parse_installed_json(json: &str, fetched_at: i64) -> Result<Vec<ProviderG
 }
 
 pub fn merge_epic(existing: &[ProviderGame], refreshed_epic: &[ProviderGame]) -> Vec<ProviderGame> {
-    existing
+    merge_epic_with_verified_installs(existing, refreshed_epic, &[])
+}
+
+pub fn merge_epic_with_verified_installs(
+    existing: &[ProviderGame],
+    refreshed_owned: &[ProviderGame],
+    verified_installed: &[ProviderGame],
+) -> Vec<ProviderGame> {
+    let refreshed = refreshed_owned.iter().map(|incoming| {
+        let mut game = incoming.clone();
+        if let Some(previous) = existing
+            .iter()
+            .find(|previous| previous.key == incoming.key)
+        {
+            if previous.install_state == InstallState::Installed
+                && previous
+                    .install_path
+                    .as_ref()
+                    .is_some_and(|path| path.is_dir())
+            {
+                game.install_state = InstallState::Installed;
+                game.install_path = previous.install_path.clone();
+            }
+            if game.quark_game_id.is_none() {
+                game.quark_game_id = previous.quark_game_id.clone();
+            }
+            if game.capabilities.achievements == CapabilityState::Unknown {
+                game.capabilities.achievements = previous.capabilities.achievements.clone();
+            }
+            if game.capabilities.cloud_saves == CapabilityState::Unknown {
+                game.capabilities.cloud_saves = previous.capabilities.cloud_saves.clone();
+            }
+        }
+        game
+    });
+    let mut merged: Vec<ProviderGame> = existing
         .iter()
         .filter(|game| game.key.provider != Provider::Epic)
         .cloned()
-        .chain(refreshed_epic.iter().cloned())
-        .collect()
+        .collect();
+    for game in refreshed {
+        if let Some(previous) = merged.iter_mut().find(|previous| previous.key == game.key) {
+            *previous = game;
+        } else {
+            merged.push(game);
+        }
+    }
+    for installed in verified_installed {
+        if let Some(previous) = merged
+            .iter_mut()
+            .find(|previous| previous.key == installed.key)
+        {
+            let custom_paths = previous.custom_save_paths.clone();
+            let quark_game_id = previous.quark_game_id.clone();
+            *previous = installed.clone();
+            previous.custom_save_paths = custom_paths;
+            if previous.quark_game_id.is_none() {
+                previous.quark_game_id = quark_game_id;
+            }
+        } else {
+            merged.push(installed.clone());
+        }
+    }
+    merged
 }
 
 fn ensure_success(output: &CommandOutput) -> Result<(), String> {
@@ -257,14 +332,24 @@ mod tests {
 
     #[test]
     fn legendary_installed_json_keeps_provider_path_and_matches_app_name() {
-        let json = r#"[{"app_name":"app_123","title":"Example Game","install_path":"/games/example","version":"1","base_urls":[],"can_run_offline":true,"egl_guid":"x","executable":"game.exe","install_size":42,"install_tags":[],"is_dlc":false,"launch_parameters":[],"manifest_path":"/games/example/manifest","needs_verification":false,"platform":"Windows","prereq_info":{},"uninstaller":null,"requires_ot":false,"save_path":"/games/example/save","is_preloaded":false}]"#;
-        let games = parse_installed_json(json, 1234).unwrap();
+        let root =
+            std::env::temp_dir().join(format!("quark-legendary-fixture-{}", std::process::id()));
+        let install_path = root.join("example");
+        std::fs::create_dir_all(&install_path).unwrap();
+        let json = format!(
+            r#"[{{"app_name":"app_123","title":"Example Game","install_path":"{}","version":"1","base_urls":[],"can_run_offline":true,"egl_guid":"x","executable":"game.exe","install_size":42,"install_tags":[],"is_dlc":false,"launch_parameters":[],"manifest_path":"{}/manifest","needs_verification":false,"platform":"Windows","prereq_info":{{}},"uninstaller":null,"requires_ot":false,"save_path":"{}/save","is_preloaded":false}}]"#,
+            install_path.display(),
+            install_path.display(),
+            install_path.display()
+        );
+        let games = parse_installed_json(&json, 1234).unwrap();
         assert_eq!(games[0].key.product_id, "app_123");
         assert_eq!(
             games[0].install_path.as_deref(),
-            Some(std::path::Path::new("/games/example"))
+            Some(install_path.as_path())
         );
         assert_eq!(games[0].install_state, InstallState::Installed);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -289,6 +374,7 @@ mod tests {
             title: "Portal 2".into(),
             owned: true,
             install_path: None,
+            custom_save_paths: Vec::new(),
             install_state: InstallState::Unknown,
             quark_game_id: None,
             capabilities: Default::default(),
@@ -302,6 +388,7 @@ mod tests {
             title: "Old".into(),
             owned: true,
             install_path: None,
+            custom_save_paths: Vec::new(),
             install_state: InstallState::Unknown,
             quark_game_id: None,
             capabilities: Default::default(),
@@ -313,6 +400,146 @@ mod tests {
         assert!(merged.iter().any(|game| game.key == steam.key));
         assert!(merged.iter().any(|game| game.key.product_id == "new"));
         assert!(!merged.iter().any(|game| game.key.product_id == "old"));
+    }
+
+    #[test]
+    fn epic_refresh_preserves_a_previously_verified_install_for_the_same_app_name() {
+        let install_path =
+            std::env::temp_dir().join(format!("quark-epic-existing-{}", std::process::id()));
+        std::fs::create_dir_all(&install_path).unwrap();
+        let existing = ProviderGame {
+            key: ProviderGameKey {
+                provider: Provider::Epic,
+                product_id: "app_123".into(),
+            },
+            title: "Example Game".into(),
+            owned: true,
+            install_path: Some(install_path.clone()),
+            custom_save_paths: Vec::new(),
+            install_state: InstallState::Installed,
+            quark_game_id: Some("quark-1".into()),
+            capabilities: Default::default(),
+            last_synced: Some(10),
+        };
+        let refreshed =
+            parse_owned_json(r#"[{"app_name":"app_123","app_title":"Example Game"}]"#, 20).unwrap();
+        let merged = merge_epic(&[existing], &refreshed);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].install_state, InstallState::Installed);
+        assert_eq!(merged[0].install_path, Some(install_path.clone()));
+        assert_eq!(merged[0].quark_game_id.as_deref(), Some("quark-1"));
+        let _ = std::fs::remove_dir_all(install_path);
+    }
+
+    #[test]
+    fn epic_merge_combines_owned_and_installed_records_without_duplicate_provider_ids() {
+        let owned = parse_owned_json(
+            r#"[{"app_name":"app_1","app_title":"Owned Game"},{"app_name":"app_2","app_title":"Installed Game"}]"#,
+            1,
+        )
+        .unwrap();
+        let root =
+            std::env::temp_dir().join(format!("quark-legendary-merge-{}", std::process::id()));
+        let install_path = root.join("installed");
+        std::fs::create_dir_all(&install_path).unwrap();
+        let installed_json = format!(
+            r#"[{{"app_name":"app_2","title":"Installed Game","install_path":"{}"}}]"#,
+            install_path.display()
+        );
+        let installed = parse_installed_json(&installed_json, 2).unwrap();
+        let merged = merge_epic_with_verified_installs(&[], &owned, &installed);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(
+            merged
+                .iter()
+                .filter(|game| game.key.product_id == "app_2")
+                .count(),
+            1
+        );
+        assert_eq!(
+            merged
+                .iter()
+                .find(|game| game.key.product_id == "app_2")
+                .unwrap()
+                .install_state,
+            InstallState::Installed
+        );
+        assert_eq!(
+            merged
+                .iter()
+                .find(|game| game.key.product_id == "app_1")
+                .unwrap()
+                .install_state,
+            InstallState::NotInstalled
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn newly_verified_epic_install_path_replaces_the_previous_install_location() {
+        let root =
+            std::env::temp_dir().join(format!("quark-epic-reinstall-{}", std::process::id()));
+        let old_path = root.join("old");
+        let new_path = root.join("new");
+        std::fs::create_dir_all(&old_path).unwrap();
+        std::fs::create_dir_all(&new_path).unwrap();
+        let previous = ProviderGame {
+            key: ProviderGameKey {
+                provider: Provider::Epic,
+                product_id: "app_1".into(),
+            },
+            title: "Game".into(),
+            owned: true,
+            install_path: Some(old_path),
+            custom_save_paths: Vec::new(),
+            install_state: InstallState::Installed,
+            quark_game_id: Some("quark-id".into()),
+            capabilities: Default::default(),
+            last_synced: Some(1),
+        };
+        let mut installed = previous.clone();
+        installed.install_path = Some(new_path.clone());
+        installed.last_synced = Some(2);
+        let merged = merge_epic_with_verified_installs(&[previous], &[], &[installed]);
+        assert_eq!(merged[0].install_path, Some(new_path));
+        assert_eq!(merged[0].quark_game_id.as_deref(), Some("quark-id"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn legendary_install_entries_with_missing_directories_are_not_verified_installs() {
+        let missing =
+            std::env::temp_dir().join(format!("quark-legendary-missing-{}", std::process::id()));
+        let json = format!(
+            r#"[{{"app_name":"app_1","title":"Example","install_path":"{}"}}]"#,
+            missing.display()
+        );
+        // Un chemin disparu n'est pas une installation vérifiée, mais il ne
+        // doit pas non plus invalider la détection des autres jeux.
+        let games = parse_installed_json(&json, 1).unwrap();
+        assert!(games.is_empty());
+
+        let root =
+            std::env::temp_dir().join(format!("quark-legendary-mixed-{}", std::process::id()));
+        let present = root.join("present");
+        std::fs::create_dir_all(&present).unwrap();
+        let mixed = format!(
+            r#"[{{"app_name":"app_1","title":"Gone","install_path":"{}"}},{{"app_name":"app_2","title":"Present","install_path":"{}"}}]"#,
+            missing.display(),
+            present.display()
+        );
+        let games = parse_installed_json(&mixed, 2).unwrap();
+        assert_eq!(games.len(), 1);
+        assert_eq!(games[0].key.product_id, "app_2");
+        assert_eq!(games[0].install_state, InstallState::Installed);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn installs_outlive_the_inventory_command_timeout() {
+        let adapter = LegendaryAdapter::new();
+        assert!(INSTALL_TIMEOUT > adapter.timeout);
+        assert!(INSTALL_TIMEOUT >= Duration::from_secs(60 * 60 * 2));
     }
 
     #[test]

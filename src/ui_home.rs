@@ -11,7 +11,9 @@ use crate::proton::{self, LaunchKind};
 use crate::theme::{self, Palette};
 use crate::ui_library::{protondb_badge, single_line};
 use crate::widgets::{self, Icon};
-use eframe::egui::{self, Align, Align2, Color32, FontId, Layout, Pos2, Rect, RichText, Sense, Vec2};
+use eframe::egui::{
+    self, Align, Align2, Color32, FontId, Layout, Pos2, Rect, RichText, Sense, Vec2,
+};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -112,7 +114,7 @@ impl QuarkApp {
         let auto_progress = if self.lib.settings.carousel_auto {
             (self.carousel_at.elapsed().as_secs_f32()
                 / self.lib.settings.carousel_secs.clamp(3.0, 120.0))
-                .clamp(0.0, 1.0)
+            .clamp(0.0, 1.0)
         } else {
             0.0
         };
@@ -562,8 +564,8 @@ impl QuarkApp {
                             egui::StrokeKind::Inside,
                         );
                     }
-                    let title_color = theme::lerp_color(pal.text_dim, pal.text, anim)
-                        .gamma_multiply(appear);
+                    let title_color =
+                        theme::lerp_color(pal.text_dim, pal.text, anim).gamma_multiply(appear);
                     let job = single_line(&game.name, 12.5, title_color, tile_w);
                     let galley = painter.layout_job(job);
                     painter.galley(
@@ -641,10 +643,13 @@ impl QuarkApp {
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
             ui.add_space(PADDING);
-            if widgets::chip_colored(ui, "Tout", status == crate::config::GameStatus::None
-                && tag.is_empty()
-                && genre.is_empty(), &pal, pal.accent)
-            {
+            if widgets::chip_colored(
+                ui,
+                "Tout",
+                status == crate::config::GameStatus::None && tag.is_empty() && genre.is_empty(),
+                &pal,
+                pal.accent,
+            ) {
                 new_status = Some(crate::config::GameStatus::None);
                 new_tag = Some(String::new());
                 new_genre = Some(String::new());
@@ -668,20 +673,23 @@ impl QuarkApp {
             }
             for (name, count) in &genres {
                 let selected = genre.eq_ignore_ascii_case(name);
-                if widgets::chip(
-                    ui,
-                    &format!("{name}"),
-                    selected,
-                    &pal,
-                ) {
-                    new_genre = Some(if selected { String::new() } else { name.clone() });
+                if widgets::chip(ui, &format!("{name}"), selected, &pal) {
+                    new_genre = Some(if selected {
+                        String::new()
+                    } else {
+                        name.clone()
+                    });
                 }
                 let _ = count;
             }
             for (name, count) in &tags {
                 let selected = tag.eq_ignore_ascii_case(name);
                 if widgets::chip(ui, &format!("#{name} · {count}"), selected, &pal) {
-                    new_tag = Some(if selected { String::new() } else { name.clone() });
+                    new_tag = Some(if selected {
+                        String::new()
+                    } else {
+                        name.clone()
+                    });
                 }
             }
         });

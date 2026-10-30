@@ -240,7 +240,7 @@ pub struct AssetJob {
 }
 
 /// Cible du sélecteur de fichiers natif.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum PickerTarget {
     AddExe,
     AddPrefix,
@@ -250,6 +250,8 @@ pub enum PickerTarget {
     ScanFolder,
     /// Image choisie sur le disque pour un artwork du jeu personnalisé.
     CustomArtwork(AssetKind),
+    EpicInstall,
+    SaveFolder(crate::providers::ProviderGameKey),
 }
 
 /// Sélecteur de fichiers du système, exécuté dans un thread dédié pour ne pas
@@ -349,6 +351,24 @@ pub struct MetadataJob {
     pub rx: Receiver<Result<GameMetadata, String>>,
 }
 
+pub struct SaveJob {
+    pub key: crate::providers::ProviderGameKey,
+    pub title: String,
+    pub rx: Receiver<Result<SaveTaskOutput, String>>,
+}
+
+pub enum SaveTaskOutput {
+    BackupPreview(crate::saves::BackupPreview),
+    Backups(Vec<crate::saves::BackupInfo>),
+    RestorePreview(crate::saves::BackupInfo, crate::saves::BackupPreview),
+}
+
+pub struct SaveBackgroundJob {
+    pub title: String,
+    pub phase: crate::saves::BackupPhase,
+    pub rx: Receiver<Result<crate::saves::BackupRecord, String>>,
+}
+
 pub struct QuarkApp {
     pub lib: Library,
     pub pal: Palette,
@@ -413,6 +433,33 @@ pub struct QuarkApp {
     pub protondb_job: Option<ProtonDbJob>,
     /// Journal de session ouvert (bouton « Journal »).
     pub logs: Option<LogView>,
+    pub save_job: Option<SaveJob>,
+    pub save_preview: Option<(
+        crate::providers::ProviderGameKey,
+        String,
+        crate::saves::BackupPreview,
+    )>,
+    pub save_confirm: Option<(crate::providers::ProviderGameKey, String)>,
+    pub save_confirm_rx: Option<Receiver<Result<crate::saves::BackupRecord, String>>>,
+    pub save_inventory: Option<(
+        crate::providers::ProviderGameKey,
+        String,
+        Vec<crate::saves::BackupInfo>,
+    )>,
+    pub save_restore_preview: Option<(
+        crate::providers::ProviderGameKey,
+        String,
+        crate::saves::BackupInfo,
+        crate::saves::BackupPreview,
+    )>,
+    pub save_restore_confirm: Option<(
+        crate::providers::ProviderGameKey,
+        String,
+        String,
+        Vec<String>,
+    )>,
+    pub save_restore_rx: Option<Receiver<Result<(), String>>>,
+    pub save_background_jobs: Vec<SaveBackgroundJob>,
     /// Pourquoi l'icône de notification n'a pas pu démarrer (dit dans les
     /// paramètres, jamais avalé).
     pub tray_error: Option<String>,
@@ -445,6 +492,26 @@ pub struct QuarkApp {
     pub epic_sync_loading: bool,
     pub epic_sync_error: Option<String>,
     pub epic_sync_rx: Option<Receiver<Result<Vec<crate::providers::ProviderGame>, String>>>,
+    pub epic_install_sync_rx: Option<
+        Receiver<
+            Result<
+                (
+                    Vec<crate::providers::ProviderGame>,
+                    Vec<crate::providers::ProviderGame>,
+                ),
+                String,
+            >,
+        >,
+    >,
+    pub epic_owned_fallback: Option<Vec<crate::providers::ProviderGame>>,
+    pub epic_install_pending: Option<crate::providers::ProviderGameKey>,
+    pub epic_installing: Option<crate::providers::ProviderGameKey>,
+    pub epic_install_rx: Option<
+        Receiver<(
+            crate::providers::ProviderGameKey,
+            Result<crate::providers::ProviderGame, String>,
+        )>,
+    >,
     pub steam_id_draft: String,
     /// Métadonnées Steam à charger, une requête à la fois.
     pub meta_job: Option<MetadataJob>,
@@ -532,6 +599,15 @@ impl QuarkApp {
             protondb: HashMap::new(),
             protondb_job: None,
             logs: None,
+            save_job: None,
+            save_preview: None,
+            save_confirm: None,
+            save_confirm_rx: None,
+            save_inventory: None,
+            save_restore_preview: None,
+            save_restore_confirm: None,
+            save_restore_rx: None,
+            save_background_jobs: Vec::new(),
             tray_error: None,
             home: false,
             carousel: 0,
@@ -550,6 +626,11 @@ impl QuarkApp {
             epic_sync_loading: false,
             epic_sync_error: None,
             epic_sync_rx: None,
+            epic_install_sync_rx: None,
+            epic_owned_fallback: None,
+            epic_install_pending: None,
+            epic_installing: None,
+            epic_install_rx: None,
             managed_tools: std::array::from_fn(|_| None),
             tool_jobs: std::array::from_fn(|_| None),
             meta_job: None,
@@ -634,11 +715,17 @@ impl QuarkApp {
         self.poll_managed_tools(ctx);
         self.poll_steam_sync(ctx);
         self.poll_epic_sync(ctx);
+        self.poll_epic_install(ctx);
+        self.poll_save_jobs(ctx);
+        self.poll_save_background_jobs(ctx);
         self.poll_store(ctx);
         if self.tab == Tab::Store && !self.store_offline_mode {
             self.ensure_store(ctx);
         }
 
+        if self.epic_install_rx.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(120));
+        }
         if self.add.scan.running || self.add.scan.search_rx.is_some() {
             ctx.request_repaint_after(Duration::from_millis(120));
         }
@@ -704,7 +791,7 @@ impl QuarkApp {
     }
 
     fn poll_running_games(&mut self) {
-        let mut finished: Vec<(String, u64, i64)> = Vec::new();
+        let mut finished: Vec<(String, u64, i64, Option<crate::saves::SaveIdentity>)> = Vec::new();
         for (id, game) in self.running.iter_mut() {
             match game.child.try_wait() {
                 Ok(None) => {
@@ -719,16 +806,21 @@ impl QuarkApp {
                     id.clone(),
                     game.started.elapsed().as_secs(),
                     game.started_ts,
+                    game.save_identity.clone(),
                 )),
                 Err(_) => finished.push((
                     id.clone(),
                     game.started.elapsed().as_secs(),
                     game.started_ts,
+                    game.save_identity.clone(),
                 )),
             }
         }
-        for (id, secs, started_ts) in finished {
+        for (id, secs, started_ts, save_identity) in finished {
             self.running.remove(&id);
+            if let Some(identity) = save_identity {
+                self.start_background_save(identity, crate::saves::BackupPhase::AfterExit);
+            }
             if let Some(game) = self.lib.get_mut(&id) {
                 let name = game.name.clone();
                 game.record_session(started_ts, secs);
@@ -883,6 +975,7 @@ impl QuarkApp {
     ) {
         let (tx, rx) = channel();
         let ctx = ctx.clone();
+        let thread_target = target.clone();
         let start = if start.is_dir() {
             start
         } else {
@@ -896,7 +989,7 @@ impl QuarkApp {
                     "Choisir un exécutable"
                 })
                 .set_directory(&start);
-            if matches!(target, PickerTarget::CustomArtwork(_)) {
+            if matches!(&thread_target, PickerTarget::CustomArtwork(_)) {
                 dialog = dialog.add_filter(
                     "Images",
                     &["png", "PNG", "jpg", "JPG", "jpeg", "JPEG", "webp", "WEBP"],
@@ -926,7 +1019,7 @@ impl QuarkApp {
         let received = self
             .picker
             .as_ref()
-            .map(|picker| (picker.target, picker.rx.try_recv()));
+            .map(|picker| (picker.target.clone(), picker.rx.try_recv()));
         let Some((target, result)) = received else {
             return;
         };
@@ -973,6 +1066,21 @@ impl QuarkApp {
                 self.touch();
             }
             PickerTarget::CustomArtwork(kind) => self.import_artwork(kind, path),
+            PickerTarget::EpicInstall => self.start_epic_install(ctx, path),
+            PickerTarget::SaveFolder(key) => {
+                if let Some(game) = self
+                    .lib
+                    .provider_library
+                    .games
+                    .iter_mut()
+                    .find(|game| game.key == key)
+                {
+                    if !game.custom_save_paths.contains(&path) {
+                        game.custom_save_paths.push(path);
+                        self.touch();
+                    }
+                }
+            }
         }
     }
 
@@ -1510,8 +1618,16 @@ impl QuarkApp {
                         return;
                     }
                 }
+                // La sauvegarde « avant lancement » démarre *avant* le
+                // processus du jeu : lancée après le spawn, elle
+                // photographierait des fichiers déjà ouverts en écriture.
+                let save_identity = self.save_identity_for_quark_game(id);
+                if let Some(identity) = save_identity.clone() {
+                    self.start_background_save(identity, crate::saves::BackupPhase::BeforeLaunch);
+                }
                 match crate::session::start(&game, &resolved) {
-                    Ok(session) => {
+                    Ok(mut session) => {
+                        session.save_identity = save_identity;
                         self.running.insert(id.to_string(), session);
                         self.toast_info(format!("{} lancé · {}", game.name, resolved.label()));
                         // Nouvelle session : le journal ouvert repart de zéro.
@@ -1973,6 +2089,7 @@ impl QuarkApp {
         self.game_settings_dialog(ctx);
         self.confirm_remove_dialog(ctx);
         self.logs_dialog(ctx);
+        self.save_backup_dialog(ctx);
         self.toasts_ui(ctx);
     }
 
@@ -2432,6 +2549,572 @@ impl QuarkApp {
         }
     }
 
+    fn save_identity_for_key(
+        &self,
+        key: &crate::providers::ProviderGameKey,
+        title: &str,
+    ) -> Result<crate::saves::SaveIdentity, String> {
+        let game = self
+            .lib
+            .provider_library
+            .games
+            .iter()
+            .find(|game| {
+                game.key == *key && game.install_state == crate::providers::InstallState::Installed
+            })
+            .ok_or_else(|| "installation fournisseur vérifiée requise".to_string())?;
+        let install_path = game
+            .install_path
+            .clone()
+            .filter(|path| path.is_dir())
+            .ok_or_else(|| "chemin d'installation introuvable".to_string())?;
+        Ok(crate::saves::SaveIdentity {
+            provider_key: game.key.clone(),
+            install_path: Some(install_path),
+            ludusavi_title: title.to_string(),
+            custom_paths: game.custom_save_paths.clone(),
+        })
+    }
+
+    pub fn choose_save_folder(
+        &mut self,
+        ctx: &egui::Context,
+        key: &crate::providers::ProviderGameKey,
+    ) {
+        self.pick_directory(
+            ctx,
+            crate::config::home_dir(),
+            PickerTarget::SaveFolder(key.clone()),
+        );
+    }
+
+    pub fn remove_save_folder(&mut self, key: &crate::providers::ProviderGameKey, path: &PathBuf) {
+        if let Some(game) = self
+            .lib
+            .provider_library
+            .games
+            .iter_mut()
+            .find(|game| &game.key == key)
+        {
+            game.custom_save_paths.retain(|candidate| candidate != path);
+            self.touch();
+        }
+    }
+
+    pub fn open_save_inventory(
+        &mut self,
+        ctx: &egui::Context,
+        key: &crate::providers::ProviderGameKey,
+    ) {
+        if self.save_job.is_some()
+            || self.save_confirm_rx.is_some()
+            || self.save_restore_rx.is_some()
+        {
+            return;
+        }
+        let Some(game) = self
+            .lib
+            .provider_library
+            .games
+            .iter()
+            .find(|game| &game.key == key)
+            .cloned()
+        else {
+            return;
+        };
+        let identity = match self.save_identity_for_key(key, &game.title) {
+            Ok(identity) => identity,
+            Err(error) => {
+                self.toast_error(format!("Inventaire indisponible : {error}"));
+                return;
+            }
+        };
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let result = crate::saves::SaveManager::new()
+                .backups(&identity)
+                .map(SaveTaskOutput::Backups);
+            let _ = tx.send(result);
+            repaint.request_repaint();
+        });
+        self.save_job = Some(SaveJob {
+            key: game.key,
+            title: game.title,
+            rx,
+        });
+        self.toast_info("Inventaire Ludusavi en cours…");
+        ctx.request_repaint_after(Duration::from_millis(120));
+    }
+
+    pub fn preview_save_restore(&mut self, ctx: &egui::Context, backup: &crate::saves::BackupInfo) {
+        if self.save_job.is_some()
+            || self.save_confirm_rx.is_some()
+            || self.save_restore_rx.is_some()
+        {
+            return;
+        }
+        let Some((key, title, backups)) = self.save_inventory.as_ref() else {
+            return;
+        };
+        if !backups.iter().any(|item| item.id == backup.id) {
+            return;
+        }
+        let key = key.clone();
+        let title = title.clone();
+        let backup = backup.clone();
+        let identity = match self.save_identity_for_key(&key, &title) {
+            Ok(identity) => identity,
+            Err(error) => {
+                self.toast_error(format!("Aperçu de restauration indisponible : {error}"));
+                return;
+            }
+        };
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        let thread_backup = backup.clone();
+        std::thread::spawn(move || {
+            let result = crate::saves::SaveManager::new()
+                .restore_preview(&identity, &thread_backup.id)
+                .map(|preview| SaveTaskOutput::RestorePreview(thread_backup, preview));
+            let _ = tx.send(result);
+            repaint.request_repaint();
+        });
+        self.save_job = Some(SaveJob { key, title, rx });
+        ctx.request_repaint_after(Duration::from_millis(120));
+    }
+
+    pub fn confirm_save_restore(&mut self, ctx: &egui::Context) {
+        let Some((key, title, backup_id, expected_paths)) = self.save_restore_confirm.take() else {
+            return;
+        };
+        let identity = match self.save_identity_for_key(&key, &title) {
+            Ok(identity) => identity,
+            Err(error) => {
+                self.toast_error(format!("Restauration annulée : {error}"));
+                return;
+            }
+        };
+        let manager = crate::saves::SaveManager::new();
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let result = manager.restore(&identity, &backup_id, true, &expected_paths);
+            let _ = tx.send(result);
+            repaint.request_repaint();
+        });
+        self.save_restore_rx = Some(rx);
+        self.toast_info("Restauration Ludusavi en cours…");
+        ctx.request_repaint_after(Duration::from_millis(120));
+    }
+
+    pub fn preview_save_backup(
+        &mut self,
+        ctx: &egui::Context,
+        key: &crate::providers::ProviderGameKey,
+    ) {
+        if self.save_job.is_some()
+            || self.save_confirm_rx.is_some()
+            || self.save_restore_rx.is_some()
+        {
+            return;
+        }
+        let Some(game) = self
+            .lib
+            .provider_library
+            .games
+            .iter()
+            .find(|game| &game.key == key)
+            .cloned()
+        else {
+            self.toast_error("Sauvegarde indisponible : installation fournisseur vérifiée requise");
+            return;
+        };
+        let identity = match self.save_identity_for_key(key, &game.title) {
+            Ok(identity) => identity,
+            Err(error) => {
+                self.toast_error(format!("Aperçu indisponible : {error}"));
+                return;
+            }
+        };
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let result = crate::saves::SaveManager::new()
+                .preview(&identity)
+                .map(SaveTaskOutput::BackupPreview);
+            let _ = tx.send(result);
+            repaint.request_repaint();
+        });
+        self.save_job = Some(SaveJob {
+            key: game.key,
+            title: game.title,
+            rx,
+        });
+        self.toast_info("Aperçu Ludusavi en cours…");
+        ctx.request_repaint_after(Duration::from_millis(120));
+    }
+
+    pub fn confirm_save_backup(&mut self, ctx: &egui::Context) {
+        let Some((key, title)) = self.save_confirm.take() else {
+            return;
+        };
+        let identity = match self.save_identity_for_key(&key, &title) {
+            Ok(identity) => identity,
+            Err(error) => {
+                self.toast_error(format!("Sauvegarde annulée : {error}"));
+                return;
+            }
+        };
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let result = crate::saves::SaveManager::new().backup(
+                &identity,
+                crate::saves::BackupPhase::AfterExit,
+                true,
+            );
+            let _ = tx.send(result);
+            repaint.request_repaint();
+        });
+        self.save_confirm_rx = Some(rx);
+        self.toast_info("Création de la sauvegarde en cours…");
+        ctx.request_repaint_after(Duration::from_millis(120));
+    }
+
+    fn save_identity_for_quark_game(&self, game_id: &str) -> Option<crate::saves::SaveIdentity> {
+        let provider = self.lib.provider_library.games.iter().find(|provider| {
+            provider.quark_game_id.as_deref() == Some(game_id)
+                && provider.install_state == crate::providers::InstallState::Installed
+                && provider
+                    .install_path
+                    .as_ref()
+                    .is_some_and(|path| path.is_dir())
+        })?;
+        Some(crate::saves::SaveIdentity {
+            provider_key: provider.key.clone(),
+            install_path: provider.install_path.clone(),
+            ludusavi_title: provider.title.clone(),
+            custom_paths: provider.custom_save_paths.clone(),
+        })
+    }
+
+    fn start_background_save(
+        &mut self,
+        identity: crate::saves::SaveIdentity,
+        phase: crate::saves::BackupPhase,
+    ) {
+        let (tx, rx) = channel();
+        let title = identity.ludusavi_title.clone();
+        std::thread::spawn(move || {
+            let result = crate::saves::SaveManager::new().backup(&identity, phase, true);
+            let _ = tx.send(result);
+        });
+        self.save_background_jobs
+            .push(SaveBackgroundJob { title, phase, rx });
+    }
+
+    fn poll_save_background_jobs(&mut self, ctx: &egui::Context) {
+        let mut index = 0;
+        let mut pending = false;
+        while index < self.save_background_jobs.len() {
+            match self.save_background_jobs[index].rx.try_recv() {
+                Ok(Ok(record)) => {
+                    let label = match record.phase {
+                        crate::saves::BackupPhase::BeforeLaunch => "avant lancement",
+                        crate::saves::BackupPhase::AfterExit => "après session",
+                    };
+                    self.toast_info(format!(
+                        "Sauvegarde Ludusavi {label} · {} · {} octets",
+                        record.title, record.processed_bytes
+                    ));
+                    self.save_background_jobs.remove(index);
+                }
+                Ok(Err(error)) => {
+                    let job = self.save_background_jobs.remove(index);
+                    let label = match job.phase {
+                        crate::saves::BackupPhase::BeforeLaunch => "avant lancement",
+                        crate::saves::BackupPhase::AfterExit => "après session",
+                    };
+                    self.toast_error(format!(
+                        "Sauvegarde Ludusavi ignorée {label} · {} : {error}",
+                        job.title
+                    ));
+                }
+                Err(TryRecvError::Disconnected) => {
+                    let job = self.save_background_jobs.remove(index);
+                    self.toast_error(format!("Sauvegarde Ludusavi interrompue · {}", job.title));
+                }
+                Err(TryRecvError::Empty) => {
+                    pending = true;
+                    index += 1;
+                }
+            }
+        }
+        if pending {
+            ctx.request_repaint_after(Duration::from_millis(160));
+        }
+    }
+
+    fn poll_save_jobs(&mut self, ctx: &egui::Context) {
+        if let Some(job) = &self.save_job {
+            match job.rx.try_recv() {
+                Ok(Ok(SaveTaskOutput::BackupPreview(preview))) => {
+                    let key = job.key.clone();
+                    let title = job.title.clone();
+                    self.save_preview = Some((key, title, preview));
+                    self.save_job = None;
+                }
+                Ok(Ok(SaveTaskOutput::Backups(backups))) => {
+                    let key = job.key.clone();
+                    let title = job.title.clone();
+                    self.save_inventory = Some((key, title, backups));
+                    self.save_job = None;
+                }
+                Ok(Ok(SaveTaskOutput::RestorePreview(backup, preview))) => {
+                    let key = job.key.clone();
+                    let title = job.title.clone();
+                    self.save_restore_preview = Some((key, title, backup, preview));
+                    self.save_job = None;
+                }
+                Ok(Err(error)) => {
+                    self.toast_error(format!("Aperçu des sauvegardes impossible : {error}"));
+                    self.save_job = None;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    self.toast_error("Aperçu des sauvegardes interrompu");
+                    self.save_job = None;
+                }
+                Err(TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(120)),
+            }
+        }
+        if let Some(rx) = &self.save_restore_rx {
+            match rx.try_recv() {
+                Ok(Ok(())) => {
+                    self.toast_info("Restauration Ludusavi terminée");
+                    self.save_restore_rx = None;
+                    self.save_restore_confirm = None;
+                    self.save_restore_preview = None;
+                    self.save_inventory = None;
+                }
+                Ok(Err(error)) => {
+                    self.toast_error(format!("Restauration Ludusavi échouée : {error}"));
+                    self.save_restore_rx = None;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    self.toast_error("Restauration Ludusavi interrompue");
+                    self.save_restore_rx = None;
+                }
+                Err(TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(120)),
+            }
+        }
+        if let Some(rx) = &self.save_confirm_rx {
+            match rx.try_recv() {
+                Ok(Ok(record)) => {
+                    self.toast_info(format!(
+                        "Sauvegarde Ludusavi créée · {} octets traités",
+                        record.processed_bytes
+                    ));
+                    self.save_confirm_rx = None;
+                    self.save_preview = None;
+                }
+                Ok(Err(error)) => {
+                    self.toast_error(format!("Sauvegarde Ludusavi échouée : {error}"));
+                    self.save_confirm_rx = None;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    self.toast_error("Création de sauvegarde interrompue");
+                    self.save_confirm_rx = None;
+                }
+                Err(TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(120)),
+            }
+        }
+    }
+
+    pub fn save_backup_dialog(&mut self, ctx: &egui::Context) {
+        let pal = self.pal;
+        if let Some((key, title, preview)) = self.save_preview.as_ref() {
+            let key = key.clone();
+            let title = title.clone();
+            let preview = preview.clone();
+            let mut begin_confirmation = false;
+            let mut close = false;
+            egui::Modal::new(egui::Id::new("quark_save_backup_preview")).show(ctx, |ui| {
+                ui.set_min_width(460.0);
+                ui.label(RichText::new(format!("Aperçu de sauvegarde · {title}")).size(17.0).color(pal.text));
+                ui.add_space(8.0);
+                let changed = preview.changed_games.map_or_else(|| "—".to_string(), |value| value.to_string());
+                let processed = preview.processed_games.map_or_else(|| "—".to_string(), |value| value.to_string());
+                let bytes = preview.processed_bytes.map_or_else(|| "—".to_string(), |value| value.to_string());
+                ui.label(RichText::new(format!("Jeux modifiés : {changed} · traités : {processed} · données : {bytes} octets")).size(12.0).color(pal.text_dim));
+                if !preview.errors.is_empty() {
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("Ludusavi a signalé une erreur; aucune sauvegarde ne sera déclarée réussie.").size(12.0).color(pal.danger));
+                }
+                if preview.files.iter().any(|file| file.failed) {
+                    ui.label(RichText::new("Certains fichiers ont échoué; vérifie les détails via Ludusavi.").size(11.5).color(pal.danger));
+                }
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    let can_backup = preview.errors.is_empty() && !preview.files.iter().any(|file| file.failed);
+                    if ui.add_enabled(can_backup, egui::Button::new("Continuer vers la confirmation")).clicked() { begin_confirmation = true; }
+                    if ui.button("Fermer").clicked() { close = true; }
+                });
+            });
+            if begin_confirmation {
+                self.save_confirm = Some((key, title));
+                self.save_preview = None;
+            } else if close {
+                self.save_preview = None;
+            }
+        }
+
+        let Some((_, confirm_title)) = self.save_confirm.as_ref() else {
+            return;
+        };
+        let confirm_title = confirm_title.clone();
+        let mut confirm = false;
+        let mut cancel = false;
+        egui::Modal::new(egui::Id::new("quark_save_backup_confirmation")).show(ctx, |ui| {
+            ui.set_min_width(440.0);
+            ui.label(RichText::new("Confirmer la sauvegarde locale ?").size(17.0).color(pal.text));
+            ui.add_space(8.0);
+            ui.label(RichText::new(format!("Ludusavi va écrire les données de {confirm_title} dans le coffre local de cette installation. Les sauvegardes sont limitées à 10 versions complètes sans différentielles; les anciennes sauvegardes au-delà de la limite peuvent être supprimées par Ludusavi.")).size(12.0).color(pal.text_dim));
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if ui.button("Créer la sauvegarde").clicked() { confirm = true; }
+                if ui.button("Annuler").clicked() { cancel = true; }
+            });
+        });
+        if confirm {
+            self.confirm_save_backup(ctx);
+        } else if cancel {
+            self.save_confirm = None;
+        }
+
+        if let Some((key, title, backups)) = self.save_inventory.clone() {
+            let mut close = false;
+            let mut selected = None;
+            egui::Modal::new(egui::Id::new("quark_save_inventory")).show(ctx, |ui| {
+                ui.set_min_width(500.0);
+                ui.label(
+                    RichText::new(format!("Sauvegardes locales · {title}"))
+                        .size(17.0)
+                        .color(pal.text),
+                );
+                ui.add_space(8.0);
+                if backups.is_empty() {
+                    ui.label(
+                        RichText::new("Aucune sauvegarde dans le coffre de cette installation.")
+                            .size(12.0)
+                            .color(pal.text_dim),
+                    );
+                }
+                for backup in &backups {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(&backup.when).size(12.0).color(pal.text));
+                        if backup.locked {
+                            ui.label(RichText::new("Protégée").size(10.0).color(pal.accent));
+                        }
+                        if ui.small_button("Aperçu restauration…").clicked() {
+                            selected = Some(backup.clone());
+                        }
+                    });
+                }
+                if ui.button("Fermer").clicked() {
+                    close = true;
+                }
+            });
+            if let Some(backup) = selected {
+                self.preview_save_restore(ctx, &backup);
+            } else if close {
+                self.save_inventory = None;
+            }
+            let _ = key;
+        }
+
+        if let Some((key, title, backup, preview)) = self.save_restore_preview.clone() {
+            let mut confirm = false;
+            let mut close = false;
+            egui::Modal::new(egui::Id::new("quark_restore_preview")).show(ctx, |ui| {
+                ui.set_min_width(560.0);
+                ui.label(
+                    RichText::new(format!("Aperçu de restauration · {title}"))
+                        .size(17.0)
+                        .color(pal.text),
+                );
+                ui.label(
+                    RichText::new(format!(
+                        "Snapshot {} · {} fichier(s) concernés",
+                        backup.when,
+                        preview.files.len()
+                    ))
+                    .size(12.0)
+                    .color(pal.text_dim),
+                );
+                ui.add_space(8.0);
+                egui::ScrollArea::vertical()
+                    .max_height(240.0)
+                    .show(ui, |ui| {
+                        for file in &preview.files {
+                            ui.label(RichText::new(&file.path).size(10.5).color(pal.text_dim));
+                        }
+                    });
+                if !preview.errors.is_empty() || preview.files.iter().any(|file| file.failed) {
+                    ui.label(
+                        RichText::new("L'aperçu contient des erreurs; restauration désactivée.")
+                            .size(11.5)
+                            .color(pal.danger),
+                    );
+                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    let safe =
+                        preview.errors.is_empty() && !preview.files.iter().any(|file| file.failed);
+                    if ui
+                        .add_enabled(
+                            safe,
+                            egui::Button::new("Restaurer et remplacer les fichiers concernés…"),
+                        )
+                        .clicked()
+                    {
+                        confirm = true;
+                    }
+                    if ui.button("Fermer").clicked() {
+                        close = true;
+                    }
+                });
+            });
+            if confirm {
+                let expected_paths = preview.files.iter().map(|file| file.path.clone()).collect();
+                self.save_restore_confirm = Some((key, title, backup.id, expected_paths));
+            }
+            if confirm || close {
+                self.save_restore_preview = None;
+            }
+        }
+
+        if let Some((_, title, backup_id, _)) = self.save_restore_confirm.clone() {
+            let mut confirm = false;
+            let mut cancel = false;
+            egui::Modal::new(egui::Id::new("quark_restore_confirmation")).show(ctx, |ui| {
+                ui.set_min_width(440.0);
+                ui.label(RichText::new("Confirmer le remplacement des sauvegardes ?").size(17.0).color(pal.danger));
+                ui.label(RichText::new(format!("Les fichiers de {title} seront restaurés depuis le snapshot {backup_id}. Les fichiers présents aux destinations pourront être écrasés.")).size(12.0).color(pal.text_dim));
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Confirmer la restauration").clicked() { confirm = true; }
+                    if ui.button("Annuler").clicked() { cancel = true; }
+                });
+            });
+            if confirm {
+                self.confirm_save_restore(ctx);
+            } else if cancel {
+                self.save_restore_confirm = None;
+            }
+        }
+    }
+
     pub fn open_store_item(&mut self, item: &crate::steam_store::StoreItem) {
         // URL de fiche générée localement à partir de l'AppID; aucun lien reçu
         // dans la réponse storefront n'est exécuté.
@@ -2501,6 +3184,200 @@ impl QuarkApp {
         }
     }
 
+    pub fn request_epic_install(
+        &mut self,
+        ctx: &egui::Context,
+        key: &crate::providers::ProviderGameKey,
+    ) {
+        if self.epic_install_rx.is_some() || self.epic_installing.is_some() {
+            return;
+        }
+        let Some(game) = self
+            .lib
+            .provider_library
+            .games
+            .iter()
+            .find(|game| &game.key == key)
+            .cloned()
+        else {
+            return;
+        };
+        if key.provider != crate::providers::Provider::Epic || !game.owned {
+            self.toast_error("Installation Epic indisponible pour ce jeu");
+            return;
+        }
+        self.epic_install_pending = Some(key.clone());
+        self.pick_directory(ctx, crate::config::home_dir(), PickerTarget::EpicInstall);
+    }
+
+    fn start_epic_install(&mut self, ctx: &egui::Context, destination: PathBuf) {
+        let Some(key) = self.epic_install_pending.take() else {
+            return;
+        };
+        if !destination.is_dir() {
+            self.toast_error("Dossier de destination Epic invalide");
+            return;
+        }
+        let Some(game) = self
+            .lib
+            .provider_library
+            .games
+            .iter()
+            .find(|game| game.key == key)
+            .cloned()
+        else {
+            return;
+        };
+        self.epic_installing = Some(key.clone());
+        if let Some(record) = self
+            .lib
+            .provider_library
+            .games
+            .iter_mut()
+            .find(|game| game.key == key)
+        {
+            record.install_state = crate::providers::InstallState::Installing;
+        }
+        self.touch();
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let adapter = crate::providers::legendary::LegendaryAdapter::new();
+            let result = (|| {
+                std::fs::create_dir_all(&destination).map_err(|_| {
+                    "impossible de préparer la destination Epic choisie".to_string()
+                })?;
+                let mut operation = crate::providers::operations::InstallOperation::new(
+                    key.clone(),
+                    destination.clone(),
+                );
+                operation.start();
+                let mut output = adapter.run_install(
+                    crate::providers::legendary::LegendaryAdapter::install_args(
+                        &key.product_id,
+                        &destination,
+                    ),
+                    None,
+                )?;
+                if output.exit_code != Some(0) {
+                    return Err("Legendary a échoué pendant l'installation".to_string());
+                }
+                output = adapter.run(
+                    crate::providers::legendary::LegendaryAdapter::installed_args(),
+                    None,
+                )?;
+                let installed = adapter.installed_json(&output, crate::config::now_ts())?;
+                let installed = installed
+                    .into_iter()
+                    .find(|game| game.key == key)
+                    .ok_or_else(|| {
+                        "installation terminée sans manifeste local correspondant".to_string()
+                    })?;
+                let detected_path = installed
+                    .install_path
+                    .clone()
+                    .ok_or_else(|| "installation sans chemin local".to_string())?;
+                operation.complete_verified(detected_path.clone())?;
+                let mut verified = installed;
+                verified.install_path = Some(
+                    detected_path
+                        .canonicalize()
+                        .map_err(|_| "chemin d'installation Epic introuvable".to_string())?,
+                );
+                Ok(verified)
+            })();
+            let _ = tx.send((key, result));
+            repaint.request_repaint();
+        });
+        self.epic_install_rx = Some(rx);
+        self.toast_info(format!(
+            "Installation Epic de {} lancée par Legendary",
+            game.title
+        ));
+        ctx.request_repaint_after(Duration::from_millis(120));
+    }
+
+    fn poll_epic_install(&mut self, ctx: &egui::Context) {
+        let Some(result) = self.epic_install_rx.as_ref().map(Receiver::try_recv) else {
+            return;
+        };
+        match result {
+            Ok((key, Ok(installed))) => {
+                self.epic_install_rx = None;
+                self.epic_installing = None;
+                if let Some(record) = self
+                    .lib
+                    .provider_library
+                    .games
+                    .iter_mut()
+                    .find(|game| game.key == key)
+                {
+                    let group = crate::providers::legendary::merge_epic(
+                        std::slice::from_ref(record),
+                        std::slice::from_ref(&installed),
+                    );
+                    if let Some(updated) = group.into_iter().find(|game| game.key == key) {
+                        *record = updated;
+                    }
+                }
+                self.touch();
+                self.toast_info(format!(
+                    "{} installé et détecté localement",
+                    installed.title
+                ));
+            }
+            Ok((key, Err(error))) => {
+                self.epic_install_rx = None;
+                self.epic_installing = None;
+                if let Some(record) = self
+                    .lib
+                    .provider_library
+                    .games
+                    .iter_mut()
+                    .find(|game| game.key == key)
+                {
+                    if record
+                        .install_path
+                        .as_ref()
+                        .is_some_and(|path| path.is_dir())
+                    {
+                        record.install_state = crate::providers::InstallState::Installed;
+                    } else {
+                        record.install_state = crate::providers::InstallState::Failed;
+                        record.install_path = None;
+                    }
+                }
+                self.touch();
+                self.toast_error(format!("Installation Epic non confirmée : {error}"));
+            }
+            Err(TryRecvError::Disconnected) => {
+                self.epic_install_rx = None;
+                if let Some(key) = self.epic_installing.take() {
+                    if let Some(record) = self
+                        .lib
+                        .provider_library
+                        .games
+                        .iter_mut()
+                        .find(|game| game.key == key)
+                    {
+                        record.install_state = if record
+                            .install_path
+                            .as_ref()
+                            .is_some_and(|path| path.is_dir())
+                        {
+                            crate::providers::InstallState::Installed
+                        } else {
+                            crate::providers::InstallState::Unknown
+                        };
+                    }
+                    self.touch();
+                }
+                self.toast_error("Installation Epic interrompue; aucun succès n'a été enregistré");
+            }
+            Err(TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(120)),
+        }
+    }
+
     pub fn start_epic_sync(&mut self, ctx: &egui::Context) {
         if self.epic_sync_loading
             || !crate::providers::tools::ManagedToolId::Legendary
@@ -2523,7 +3400,77 @@ impl QuarkApp {
         ctx.request_repaint_after(Duration::from_millis(120));
     }
 
+    fn start_epic_install_sync(
+        &mut self,
+        ctx: &egui::Context,
+        owned: Vec<crate::providers::ProviderGame>,
+    ) {
+        if self.epic_install_sync_rx.is_some() {
+            return;
+        }
+        self.epic_owned_fallback = Some(owned.clone());
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let adapter = crate::providers::legendary::LegendaryAdapter::new();
+            let result = adapter
+                .sync_installed(crate::config::now_ts(), None)
+                .map(|installed| (owned, installed));
+            let _ = tx.send(result);
+            repaint.request_repaint();
+        });
+        self.epic_install_sync_rx = Some(rx);
+        ctx.request_repaint_after(Duration::from_millis(120));
+    }
+
     fn poll_epic_sync(&mut self, ctx: &egui::Context) {
+        if let Some(result) = self.epic_install_sync_rx.as_ref().map(Receiver::try_recv) {
+            match result {
+                Ok(Ok((owned, installed))) => {
+                    self.epic_install_sync_rx = None;
+                    self.epic_owned_fallback = None;
+                    self.lib.provider_library.games =
+                        crate::providers::legendary::merge_epic_with_verified_installs(
+                            &self.lib.provider_library.games,
+                            &owned,
+                            &installed,
+                        );
+                    // La détection locale a abouti : l'indicateur de chargement
+                    // doit retomber, sinon l'écran reste bloqué sur « en cours ».
+                    self.epic_sync_error = None;
+                    self.epic_sync_loading = false;
+                    self.touch();
+                }
+                Ok(Err(error)) => {
+                    self.epic_install_sync_rx = None;
+                    self.epic_sync_error = Some(format!(
+                        "détection locale Epic indisponible; bibliothèque connue conservée : {error}"
+                    ));
+                    if let Some(owned) = self.epic_owned_fallback.take() {
+                        self.lib.provider_library.games = crate::providers::legendary::merge_epic(
+                            &self.lib.provider_library.games,
+                            &owned,
+                        );
+                        self.touch();
+                    }
+                    self.epic_sync_loading = false;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    self.epic_install_sync_rx = None;
+                    self.epic_sync_error =
+                        Some("détection des installations Epic interrompue".into());
+                    if let Some(owned) = self.epic_owned_fallback.take() {
+                        self.lib.provider_library.games = crate::providers::legendary::merge_epic(
+                            &self.lib.provider_library.games,
+                            &owned,
+                        );
+                        self.touch();
+                    }
+                    self.epic_sync_loading = false;
+                }
+                Err(TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(120)),
+            }
+        }
         let Some(result) = self.epic_sync_rx.as_ref().map(Receiver::try_recv) else {
             return;
         };
@@ -2534,11 +3481,8 @@ impl QuarkApp {
                 if games.is_empty() {
                     self.epic_sync_error = Some("bibliothèque Epic vide ou compte Legendary indisponible; données précédentes conservées".into());
                 } else {
-                    self.lib.provider_library.games = crate::providers::legendary::merge_epic(
-                        &self.lib.provider_library.games,
-                        &games,
-                    );
-                    self.touch();
+                    self.epic_sync_loading = true;
+                    self.start_epic_install_sync(ctx, games);
                 }
             }
             Ok(Err(error)) => {

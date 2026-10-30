@@ -53,8 +53,11 @@ impl TextureCache {
             let size = [rgba.width() as usize, rgba.height() as usize];
             let color_image =
                 egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw().as_slice());
-            let texture =
-                ctx.load_texture(path.to_string_lossy(), color_image, egui::TextureOptions::LINEAR);
+            let texture = ctx.load_texture(
+                path.to_string_lossy(),
+                color_image,
+                egui::TextureOptions::LINEAR,
+            );
             self.entries.insert(
                 path.to_path_buf(),
                 CachedTexture {
@@ -143,7 +146,11 @@ impl BlurCache {
                 .round()
                 .clamp(1.0, 4096.0) as u32;
             let small = decoded
-                .resize(BLUR_WIDTH, scaled_height, image::imageops::FilterType::Triangle)
+                .resize(
+                    BLUR_WIDTH,
+                    scaled_height,
+                    image::imageops::FilterType::Triangle,
+                )
                 .to_rgba8();
             // Un rayon un peu plus large compense la résolution plus haute :
             // le fond est doux au lieu d'être une bouillie de gros pixels.
@@ -276,7 +283,10 @@ pub fn draw_cover_faded(
         painter.image(
             texture.id(),
             egui::Rect::from_min_max(egui::pos2(rect.left(), y0), egui::pos2(rect.right(), y1)),
-            egui::Rect::from_min_max(egui::pos2(uv.min.x, v_at(y0)), egui::pos2(uv.max.x, v_at(y1))),
+            egui::Rect::from_min_max(
+                egui::pos2(uv.min.x, v_at(y0)),
+                egui::pos2(uv.max.x, v_at(y1)),
+            ),
             Color32::from_white_alpha(alpha),
         );
     }
@@ -554,7 +564,12 @@ mod tests {
     #[test]
     fn le_cache_de_textures_libere_les_plus_anciennes() {
         let used: Vec<(PathBuf, u64)> = (0..5)
-            .map(|index| (PathBuf::from(format!("/jeu/{index}.png")), 100 - index as u64))
+            .map(|index| {
+                (
+                    PathBuf::from(format!("/jeu/{index}.png")),
+                    100 - index as u64,
+                )
+            })
             .collect();
         // Rien à libérer tant qu'on reste sous le plafond.
         assert!(evict_candidates(&used, 5).is_empty());

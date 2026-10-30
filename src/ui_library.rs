@@ -8,7 +8,9 @@ use crate::proton::{self, LaunchKind};
 use crate::theme::{self, Palette};
 use crate::ui_home::linux_chip;
 use crate::widgets::{self, Icon};
-use eframe::egui::{self, Align, Align2, Color32, FontId, Layout, Pos2, Rect, RichText, Sense, Vec2};
+use eframe::egui::{
+    self, Align, Align2, Color32, FontId, Layout, Pos2, Rect, RichText, Sense, Vec2,
+};
 use std::path::PathBuf;
 
 impl QuarkApp {
@@ -118,8 +120,9 @@ impl QuarkApp {
                 let columns = ((available + gap) / 172.0).floor().clamp(2.0, 8.0) as usize;
                 // Arrondi vers le bas : les fractions de pixel s'accumulaient
                 // de colonne en colonne et poussaient la dernière hors écran.
-                let tile_w =
-                    ((available - gap * (columns as f32 - 1.0)) / columns as f32).floor().max(110.0);
+                let tile_w = ((available - gap * (columns as f32 - 1.0)) / columns as f32)
+                    .floor()
+                    .max(110.0);
                 let cover_h = tile_w * theme::COVER_RATIO;
                 let row_h = cover_h + 36.0;
                 let mut index = 0usize;
@@ -139,8 +142,8 @@ impl QuarkApp {
                             if slot > 0 {
                                 ui.add_space(gap);
                             }
-                            let (tile, response) = ui
-                                .allocate_exact_size(Vec2::new(tile_w, row_h), Sense::click());
+                            let (tile, response) =
+                                ui.allocate_exact_size(Vec2::new(tile_w, row_h), Sense::click());
                             let painter = ui.painter_at(tile);
                             let anim = ui.ctx().animate_bool_with_time(
                                 egui::Id::new(("quark_grid_tile", id.as_str())),
@@ -201,7 +204,10 @@ impl QuarkApp {
                             let job = single_line(&game.name, 12.5, title_color, tile_w);
                             let galley = painter.layout_job(job);
                             painter.galley(
-                                Pos2::new(tile.left(), cover.bottom() + if missing { 21.0 } else { 7.0 }),
+                                Pos2::new(
+                                    tile.left(),
+                                    cover.bottom() + if missing { 21.0 } else { 7.0 },
+                                ),
                                 galley,
                                 title_color,
                             );
@@ -265,11 +271,7 @@ impl QuarkApp {
                 ui.set_max_size(size);
                 ui.horizontal(|ui| {
                     ui.add_space(16.0);
-                    ui.label(
-                        RichText::new(&name)
-                            .size(13.0)
-                            .color(pal.text_dim),
-                    );
+                    ui.label(RichText::new(&name).size(13.0).color(pal.text_dim));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.add_space(10.0);
                         if widgets::icon_button(ui, 30.0, Icon::Close, &pal, "Fermer (Échap)")
@@ -613,11 +615,7 @@ impl QuarkApp {
                     .map(|(r, g, b)| Color32::from_rgb(r, g, b))
                     .unwrap_or(pal.surface_hover);
                 if widgets::chip_colored(ui, option.label(), selected, &pal, color) {
-                    new_status = Some(if selected {
-                        GameStatus::None
-                    } else {
-                        option
-                    });
+                    new_status = Some(if selected { GameStatus::None } else { option });
                 }
                 ui.add_space(4.0);
             }
@@ -629,7 +627,11 @@ impl QuarkApp {
                 for (name, count) in tags {
                     let selected = tag.eq_ignore_ascii_case(&name);
                     if widgets::chip(ui, &format!("{name} · {count}"), selected, &pal) {
-                        new_tag = Some(if selected { String::new() } else { name.clone() });
+                        new_tag = Some(if selected {
+                            String::new()
+                        } else {
+                            name.clone()
+                        });
                     }
                     ui.add_space(4.0);
                 }
@@ -733,10 +735,7 @@ impl QuarkApp {
                     let y0 = area.top() + area.height() * band as f32 / VOILE as f32;
                     let y1 = area.top() + area.height() * (band + 1) as f32 / VOILE as f32;
                     painter.rect_filled(
-                        Rect::from_min_max(
-                            Pos2::new(area.left(), y0),
-                            Pos2::new(area.right(), y1),
-                        ),
+                        Rect::from_min_max(Pos2::new(area.left(), y0), Pos2::new(area.right(), y1)),
                         0.0,
                         Color32::from_black_alpha(alpha),
                     );
@@ -925,7 +924,11 @@ impl QuarkApp {
                         // bleu (configurer), crayon vert (personnaliser),
                         // poubelle rouge (retirer), puis le journal et les
                         // informations du jeu.
-                        let action = |ui: &mut egui::Ui, slot: f32, icon: Icon, color: Color32, tip: &str| {
+                        let action = |ui: &mut egui::Ui,
+                                      slot: f32,
+                                      icon: Icon,
+                                      color: Color32,
+                                      tip: &str| {
                             let rect = Rect::from_min_size(
                                 Pos2::new(hero.right() - slot, hero.top() + 14.0),
                                 Vec2::splat(34.0),
@@ -1031,7 +1034,11 @@ impl QuarkApp {
                     ui.add_space(22.0);
                     ui.horizontal(|ui| {
                         ui.add_space(32.0);
-                        ui.label(RichText::new("INFORMATIONS").size(11.0).color(pal.text_faint));
+                        ui.label(
+                            RichText::new("INFORMATIONS")
+                                .size(11.0)
+                                .color(pal.text_faint),
+                        );
                     });
                     ui.add_space(12.0);
 
@@ -1117,7 +1124,11 @@ impl QuarkApp {
                             ui.add_space(32.0);
                             ui.vertical(|ui| {
                                 ui.set_max_width((width - 64.0).max(200.0));
-                                ui.label(RichText::new(&game.description).size(12.5).color(pal.text_dim));
+                                ui.label(
+                                    RichText::new(&game.description)
+                                        .size(12.5)
+                                        .color(pal.text_dim),
+                                );
                                 ui.add_space(8.0);
                             });
                         });
@@ -1136,7 +1147,8 @@ impl QuarkApp {
                     if let Some(app_id) = game.steam_app_id {
                         ui.horizontal(|ui| {
                             ui.add_space(32.0);
-                            if widgets::ghost_button(ui, "Page ProtonDB", &pal, Icon::Info).clicked()
+                            if widgets::ghost_button(ui, "Page ProtonDB", &pal, Icon::Info)
+                                .clicked()
                             {
                                 open_url = Some(crate::protondb::Tier::url(app_id));
                             }
@@ -1185,8 +1197,13 @@ impl QuarkApp {
                             self.editing = Some(game.clone());
                         }
                         if game.steam_app_id.is_some() || game.sgdb_id.is_some() {
-                            if widgets::ghost_button(ui, "Rafraîchir les artworks", &pal, Icon::Refresh)
-                                .clicked()
+                            if widgets::ghost_button(
+                                ui,
+                                "Rafraîchir les artworks",
+                                &pal,
+                                Icon::Refresh,
+                            )
+                            .clicked()
                             {
                                 let hit = crate::artwork::SearchHit::from_game(&game);
                                 self.start_asset_job(ui.ctx(), &id, hit);
@@ -1218,7 +1235,11 @@ impl QuarkApp {
         let pal = self.pal;
         ui.vertical_centered(|ui| {
             ui.add_space(140.0);
-            ui.label(RichText::new("Aucun jeu sélectionné").size(18.0).color(pal.text_dim));
+            ui.label(
+                RichText::new("Aucun jeu sélectionné")
+                    .size(18.0)
+                    .color(pal.text_dim),
+            );
             ui.add_space(8.0);
             ui.label(
                 RichText::new("Choisis un jeu dans la liste, ou ajoute-en un nouveau.")
@@ -1226,7 +1247,15 @@ impl QuarkApp {
                     .color(pal.text_faint),
             );
             ui.add_space(18.0);
-            if widgets::accent_button(ui, Vec2::new(190.0, 40.0), "Ajouter un jeu", &pal, true, Icon::Plus)                    .clicked()
+            if widgets::accent_button(
+                ui,
+                Vec2::new(190.0, 40.0),
+                "Ajouter un jeu",
+                &pal,
+                true,
+                Icon::Plus,
+            )
+            .clicked()
             {
                 self.open_add_dialog();
             }
@@ -1257,7 +1286,11 @@ impl QuarkApp {
             if linked {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.add_space(32.0);
-                    let label = if failure.is_some() { "Réessayer" } else { "Actualiser" };
+                    let label = if failure.is_some() {
+                        "Réessayer"
+                    } else {
+                        "Actualiser"
+                    };
                     if widgets::ghost_button(ui, label, pal, Icon::Refresh).clicked() {
                         reload = true;
                     }
@@ -1373,12 +1406,12 @@ impl QuarkApp {
                                 // `usize::MAX` = aucune limite de lignes : le
                                 // texte entier, dans l'application. (`0`
                                 // tronquerait à zéro ligne, donc à rien.)
-                                ui
-                                    .label(paragraph(&item.body, 12.5, pal.text_dim, usize::MAX));
+                                ui.label(paragraph(&item.body, 12.5, pal.text_dim, usize::MAX));
                             }
                             ui.add_space(8.0);
                             ui.horizontal(|ui| {
-                                if widgets::ghost_button(ui, "Réduire", pal, Icon::None).clicked() {
+                                if widgets::ghost_button(ui, "Réduire", pal, Icon::None).clicked()
+                                {
                                     expanded_change = Some((id.with("open"), false));
                                 }
                                 ui.add_space(6.0);
@@ -1437,7 +1470,6 @@ impl QuarkApp {
             }
         }
     }
-
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1533,11 +1565,9 @@ fn status_section(
             Sense::click(),
         );
         let painter = ui.painter_at(rect);
-        let hover = ui.ctx().animate_bool_with_time(
-            state_id.with("hover"),
-            response.hovered(),
-            0.12,
-        );
+        let hover =
+            ui.ctx()
+                .animate_bool_with_time(state_id.with("hover"), response.hovered(), 0.12);
         if hover > 0.0 {
             painter.rect_filled(rect, 4.0, pal.surface_hover.gamma_multiply(hover));
         }
@@ -1570,7 +1600,15 @@ fn status_section(
             );
         }
         painter.text(
-            Pos2::new(rect.left() + if status == GameStatus::None { 22.0 } else { 32.0 }, rect.center().y),
+            Pos2::new(
+                rect.left()
+                    + if status == GameStatus::None {
+                        22.0
+                    } else {
+                        32.0
+                    },
+                rect.center().y,
+            ),
             Align2::LEFT_CENTER,
             status.column_label().to_uppercase(),
             FontId::proportional(10.5),
@@ -1609,7 +1647,8 @@ fn game_row(
     running: bool,
     textures: &mut crate::images::TextureCache,
 ) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 46.0), Sense::click());
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 46.0), Sense::click());
     let painter = ui.painter_at(rect);
     let id = egui::Id::new(("quark_row", game.id.as_str()));
     let hover = ui
@@ -1711,7 +1750,11 @@ fn game_row(
         );
     }
     if running {
-        painter.circle_filled(Pos2::new(rect.right() - 18.0, rect.center().y), 4.0, pal.accent);
+        painter.circle_filled(
+            Pos2::new(rect.right() - 18.0, rect.center().y),
+            4.0,
+            pal.accent,
+        );
     }
 
     let response = if missing {
@@ -1860,7 +1903,12 @@ pub(crate) fn danger_chip(ui: &mut egui::Ui, pal: &Palette, label: &str) {
 }
 
 /// Texte sur une seule ligne, coupé par une ellipsis s'il dépasse `max_width`.
-pub(crate) fn single_line(text: &str, size: f32, color: Color32, max_width: f32) -> egui::text::LayoutJob {
+pub(crate) fn single_line(
+    text: &str,
+    size: f32,
+    color: Color32,
+    max_width: f32,
+) -> egui::text::LayoutJob {
     let mut job = paragraph(text, size, color, 1);
     job.wrap.max_width = max_width;
     job
@@ -1882,7 +1930,6 @@ fn paragraph(text: &str, size: f32, color: Color32, max_rows: usize) -> egui::te
     );
     job
 }
-
 
 /// Pastille de la note ProtonDB : couleur officielle, texte qui la contraste.
 pub(crate) fn protondb_badge(

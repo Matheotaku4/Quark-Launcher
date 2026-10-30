@@ -130,6 +130,7 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
                     install_path: Some(std::path::PathBuf::from(
                         "/home/demo/.steam/steamapps/common/Portal 2",
                     )),
+                    custom_save_paths: Vec::new(),
                     install_state: crate::providers::InstallState::Installed,
                     quark_game_id: Some(app.lib.games[0].id.clone()),
                     capabilities: Default::default(),
@@ -143,6 +144,7 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
                     title: "Portal".into(),
                     owned: true,
                     install_path: None,
+                    custom_save_paths: Vec::new(),
                     install_state: crate::providers::InstallState::Unknown,
                     quark_game_id: None,
                     capabilities: Default::default(),
@@ -757,6 +759,7 @@ fn mark_running(app: &mut QuarkApp) {
                 prefix: None,
                 wineserver: None,
                 stopping: None,
+                save_identity: None,
             },
         );
     }

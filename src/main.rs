@@ -13,6 +13,7 @@ mod news;
 mod proton;
 mod protondb;
 mod providers;
+mod saves;
 mod scan;
 mod session;
 mod snapshot;

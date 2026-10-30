@@ -3,14 +3,18 @@
 //! Les artworks sont téléchargés une fois dans `~/.local/share/quark/artwork/<id>/`
 //! puis affichés depuis le disque : aucune requête réseau à l'affichage.
 
-use crate::config::{AssetKind, Artwork, Game, Settings, artwork_root};
+use crate::config::{Artwork, AssetKind, Game, Settings, artwork_root};
 use reqwest::blocking::Client;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub fn user_agent() -> String {
-    format!("{}/{} (Linux)", crate::config::APP_NAME, env!("CARGO_PKG_VERSION"))
+    format!(
+        "{}/{} (Linux)",
+        crate::config::APP_NAME,
+        env!("CARGO_PKG_VERSION")
+    )
 }
 
 pub fn http() -> Client {
@@ -49,7 +53,17 @@ pub fn image_size(bytes: &[u8]) -> Option<(u32, u32)> {
             let len = u16::from_be_bytes([bytes[i + 2], bytes[i + 3]]) as usize;
             let is_sof = matches!(
                 marker,
-                0xC0 | 0xC1 | 0xC2 | 0xC3 | 0xC5 | 0xC6 | 0xC7 | 0xC9 | 0xCA | 0xCB | 0xCD | 0xCE
+                0xC0 | 0xC1
+                    | 0xC2
+                    | 0xC3
+                    | 0xC5
+                    | 0xC6
+                    | 0xC7
+                    | 0xC9
+                    | 0xCA
+                    | 0xCB
+                    | 0xCD
+                    | 0xCE
                     | 0xCF
             );
             if is_sof && i + 9 < bytes.len() {
@@ -451,7 +465,10 @@ pub fn build_plan(client: &Client, hit: &SearchHit, s: &Settings) -> AssetPlan {
                 &["library_600x900_2x.jpg", "library_600x900.jpg"][..],
             ),
             (AssetKind::Hero, &["library_hero.jpg"][..]),
-            (AssetKind::Logo, &["logo.png", "logo_2x.png", "logo.jpg"][..]),
+            (
+                AssetKind::Logo,
+                &["logo.png", "logo_2x.png", "logo.jpg"][..],
+            ),
             (
                 AssetKind::Icon,
                 &["header.jpg", "capsule_231x87.jpg", "capsule_sm_120.jpg"][..],
@@ -608,7 +625,9 @@ pub fn best_hit(outcome: &SearchOutcome, title: &str) -> Option<SearchHit> {
 fn steam_cdn(appid: u32, file: &str) -> Vec<String> {
     vec![
         format!("https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/{file}"),
-        format!("https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/{appid}/{file}"),
+        format!(
+            "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/{appid}/{file}"
+        ),
     ]
 }
 
@@ -740,7 +759,12 @@ pub fn apply_plan(client: &Client, dir: &Path, plan: &AssetPlan) -> (Artwork, Ve
 }
 
 /// Recherche + téléchargement complets pour un jeu (bloquant : à lancer dans un thread).
-pub fn fetch(client: &Client, game_id: &str, hit: &SearchHit, s: &Settings) -> (Artwork, Vec<String>) {
+pub fn fetch(
+    client: &Client,
+    game_id: &str,
+    hit: &SearchHit,
+    s: &Settings,
+) -> (Artwork, Vec<String>) {
     let dir = artwork_root().join(game_id);
     let plan = build_plan(client, hit, s);
     apply_plan(client, &dir, &plan)

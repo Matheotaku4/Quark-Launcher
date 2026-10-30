@@ -60,6 +60,8 @@ pub struct ProviderGame {
     pub title: String,
     pub owned: bool,
     pub install_path: Option<PathBuf>,
+    #[serde(default)]
+    pub custom_save_paths: Vec<PathBuf>,
     pub install_state: InstallState,
     /// Identifiant de la fiche Quark associée, si elle existe.
     pub quark_game_id: Option<String>,
@@ -77,6 +79,7 @@ impl Default for ProviderGame {
             title: String::new(),
             owned: false,
             install_path: None,
+            custom_save_paths: Vec::new(),
             install_state: InstallState::Unknown,
             quark_game_id: None,
             capabilities: GameCapabilities::default(),

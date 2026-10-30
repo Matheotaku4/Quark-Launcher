@@ -51,6 +51,8 @@ jobs:
             "list:--view list" \
             "grid:--view grid" \
             "store:--tab store" \
+            "my-games:--tab my-games --providers-demo" \
+            "dialog-settings-providers:--dialog settings-providers" \
             "info:--view list --info" \
             "running:--view list --running" \
             "hover-row:--view list --hover 160,340" \
@@ -93,39 +95,38 @@ jobs:
           tag_name: v${{ steps.version.outputs.value }}
           name: Quark v${{ steps.version.outputs.value }}
           body: |
-            ## Nouveautés de la 0.9.2
+            ## Quark 1.0 — boutique Steam, bibliothèques unifiées, sauvegardes
 
-            - **Sections par statut** dans la vue liste, comme les colonnes Steam : *En cours*,
-              *À jouer*, *Terminé*, *Abandonné*, puis *Sans statut*. Chaque titre porte sa
-              pastille de couleur et son nombre de jeux, un filet sépare les sections, et un
-              clic sur le titre replie la section.
-            - **Bannière fondue dans le fond flouté** : ses derniers 34 % se dissolvent au lieu
-              de s'arrêter net, avec un voile progressif qui garde le texte lisible jusqu'en
-              bas de la fiche.
-            - **Menu du clic droit à icônes colorées** : lancer, personnaliser, paramètres et
-              retirer, sur des pastilles sombres lisibles même sur une bannière claire.
-            - **Icônes d'action plus contrastées** : poubelle rouge, crayon vert et engrenage
-              bleu sont posés sur un disque sombre cerclé de leur couleur ; ils restent nets
-              sur fond clair.
-            - **Grille corrigée** : les affiches ne débordent plus à droite (espacement d'egui
-              compté en trop), et les jeux sans couverture affichent un monogramme plein cadre,
-              à la même place que les autres couvertures.
-            - **Commandes regroupées en haut à droite** : l'ajout et le basculement liste/grille
-              n'existent plus qu'à cet endroit ; le bouton Accueil reste au-dessus de la liste.
-            - **Import de la bibliothèque Steam déplacé dans les paramètres** (Apparence), au
-              lieu d'un bouton à côté de `+` qui prêtait à confusion.
-            - **Onglet Proton supprimé** : runtimes détectés, bouton *Redétecter* et résumé
-              anti-triche sont dans « Par défaut », juste sous le choix du runtime.
-            - **Mémoire bornée** : le cache de textures est plafonné à 96 entrées (les plus
-              anciennes sont libérées), celui des bannières floutées à 32. Parcourir la
-              bibliothèque ne fait plus grimper la consommation ; « À propos » affiche la
-              mémoire résidente et le nombre de textures en cache.
-            - **Fenêtres de réglages** : le pied de page ne recouvre plus le contenu quand une
-              page est longue ; le journal s'ouvre sur un fond opaque et ne déborde plus de
-              l'écran avec ses longues lignes.
+            - **Boutique Steam** : offres régionales, recherche, prix dans votre devise, cache
+              local réutilisé hors ligne (et signalé comme potentiellement périmé),
+              recommandations calculées sur votre machine à partir de votre bibliothèque. Aucun
+              achat dans Quark : la fiche s'ouvre sur le site officiel.
+            - **Mes jeux** : les jeux Steam (manifestes locaux) et Epic (via Legendary) réunis
+              sur une page, filtrables par boutique, avec l'état d'installation réel. Les
+              doublons d'un même titre peuvent être fusionnés puis séparés.
+            - **Installations déléguées** : « Installer via Steam » passe l'AppID au client puis
+              rescanne ; « Installer via Legendary » installe dans le dossier choisi et ne
+              déclare un jeu installé qu'après avoir trouvé son dossier local.
+            - **Outils gérés** : Legendary et Ludusavi (et gogdl, pas encore branché) sont
+              téléchargés depuis leurs releases officielles avec digest SHA-256 obligatoire,
+              version comparée au tag et remplacement atomique — un échec laisse l'outil
+              précédent en place.
+            - **Sauvegardes locales (Ludusavi)** : dossiers de sauvegarde personnalisés fusionnés
+              dans une configuration isolée sans perdre les réglages existants, aperçu avant
+              écriture, confirmation explicite, un coffre par installation (10 sauvegardes
+              complètes, aucune différentielle), instantanés automatiques au lancement et à la
+              sortie sans jamais bloquer un jeu, restauration par inventaire + aperçu +
+              confirmation avec revalidation des chemins.
+            - **Identifiants séparés** : `credentials.json` en mode 0600, non chiffré et
+              explicitement signalé comme tel, secrets expurgés des sorties ; une réponse Steam
+              vide reste ambiguë et n'efface jamais la bibliothèque connue.
+            - **README anglais** couvrant les fournisseurs, les outils gérés, les sauvegardes et
+              la procédure de vérification (`docs/verification/ludusavi-config.md`).
 
-            Archives Linux x86_64 et sommes SHA-256 ci-dessous. Les aperçus de l'interface
-            sont produits par le rendu hors écran (workflow Actions).
+            Limites assumées de cette version : GOG n'est pas encore branché, les achievements
+            et la synchronisation cloud ne sont pas proposés faute de source vérifiée, cible
+            Linux x86_64 uniquement. Archives et sommes SHA-256 ci-dessous ; les aperçus de
+            l'interface sont produits par le rendu hors écran.
           fail_on_unmatched_files: true
           files: |
             quark-${{ steps.version.outputs.value }}-linux-x86_64.tar.gz

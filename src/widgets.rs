@@ -49,7 +49,10 @@ pub fn border_rect(painter: &egui::Painter, rect: Rect, width: f32, color: Color
         color,
     );
     painter.rect_filled(
-        Rect::from_min_size(Pos2::new(rect.left(), rect.bottom() - w), Vec2::new(rect.width(), w)),
+        Rect::from_min_size(
+            Pos2::new(rect.left(), rect.bottom() - w),
+            Vec2::new(rect.width(), w),
+        ),
         0.0,
         color,
     );
@@ -59,13 +62,24 @@ pub fn border_rect(painter: &egui::Painter, rect: Rect, width: f32, color: Color
         color,
     );
     painter.rect_filled(
-        Rect::from_min_size(Pos2::new(rect.right() - w, rect.top()), Vec2::new(w, rect.height())),
+        Rect::from_min_size(
+            Pos2::new(rect.right() - w, rect.top()),
+            Vec2::new(w, rect.height()),
+        ),
         0.0,
         color,
     );
 }
 
-fn ring(painter: &egui::Painter, center: Pos2, r_out: f32, r_in: f32, color: Color32, from: f32, to: f32) {
+fn ring(
+    painter: &egui::Painter,
+    center: Pos2,
+    r_out: f32,
+    r_in: f32,
+    color: Color32,
+    from: f32,
+    to: f32,
+) {
     let segments = 48;
     let step = (to - from) / segments as f32;
     for i in 0..segments {
@@ -118,7 +132,10 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
                 color,
             );
             painter.rect_filled(
-                Rect::from_center_size(Pos2::new(c.x, c.y - s * 0.32), Vec2::new(s * 0.78, s * 0.12)),
+                Rect::from_center_size(
+                    Pos2::new(c.x, c.y - s * 0.32),
+                    Vec2::new(s * 0.78, s * 0.12),
+                ),
                 1.0,
                 color,
             );
@@ -132,26 +149,34 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
                 let l = r * 0.3;
                 let wi = r * 0.17;
                 let pt = |radial: f32, tan: f32| {
-                    Pos2::new(
-                        c.x + ca * radial - sa * tan,
-                        c.y + sa * radial + ca * tan,
-                    )
+                    Pos2::new(c.x + ca * radial - sa * tan, c.y + sa * radial + ca * tan)
                 };
                 painter.add(Shape::convex_polygon(
-                    vec![
-                        pt(d - l, -wi),
-                        pt(d + l, -wi),
-                        pt(d + l, wi),
-                        pt(d - l, wi),
-                    ],
+                    vec![pt(d - l, -wi), pt(d + l, -wi), pt(d + l, wi), pt(d - l, wi)],
                     color,
                     Stroke::NONE,
                 ));
             }
-            ring(painter, c, r * 0.66, r * 0.30, color, 0.0, std::f32::consts::TAU);
+            ring(
+                painter,
+                c,
+                r * 0.66,
+                r * 0.30,
+                color,
+                0.0,
+                std::f32::consts::TAU,
+            );
         }
         Icon::Info => {
-            ring(painter, c, s * 0.40, s * 0.31, color, 0.0, std::f32::consts::TAU);
+            ring(
+                painter,
+                c,
+                s * 0.40,
+                s * 0.31,
+                color,
+                0.0,
+                std::f32::consts::TAU,
+            );
             painter.circle_filled(Pos2::new(c.x, c.y - s * 0.17), s * 0.055, color);
             painter.rect_filled(
                 Rect::from_center_size(
@@ -181,7 +206,10 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
             for i in 0..3 {
                 let y = c.y - s * 0.28 + i as f32 * s * 0.28;
                 painter.rect_filled(
-                    Rect::from_min_size(Pos2::new(c.x - s * 0.36, y - s * 0.05), Vec2::splat(s * 0.12)),
+                    Rect::from_min_size(
+                        Pos2::new(c.x - s * 0.36, y - s * 0.05),
+                        Vec2::splat(s * 0.12),
+                    ),
                     1.0,
                     color,
                 );
@@ -235,7 +263,12 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
                 )
             };
             painter.add(Shape::convex_polygon(
-                vec![body(0.30, 0.13), body(-0.16, 0.13), body(-0.16, -0.13), body(0.30, -0.13)],
+                vec![
+                    body(0.30, 0.13),
+                    body(-0.16, 0.13),
+                    body(-0.16, -0.13),
+                    body(0.30, -0.13),
+                ],
                 color,
                 Stroke::NONE,
             ));
@@ -252,7 +285,15 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
             );
         }
         Icon::Steam => {
-            ring(painter, c, s * 0.40, s * 0.30, color, 0.0, std::f32::consts::TAU);
+            ring(
+                painter,
+                c,
+                s * 0.40,
+                s * 0.30,
+                color,
+                0.0,
+                std::f32::consts::TAU,
+            );
             // Petit cercle en bas à droite et le trait qui le relie au centre.
             let dot = Pos2::new(c.x + s * 0.14, c.y + s * 0.14);
             painter.circle_filled(dot, s * 0.11, color);
@@ -344,7 +385,11 @@ pub fn accent_button(
     enabled: bool,
     icon: Icon,
 ) -> Response {
-    let sense = if enabled { Sense::click() } else { Sense::hover() };
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
     let (rect, resp) = ui.allocate_exact_size(size, sense);
     let pressed = enabled && resp.is_pointer_button_down_on();
     // Transition douce vers l'état survolé. egui ne redemande une image que
@@ -361,7 +406,11 @@ pub fn accent_button(
         theme::lerp_color(base, pal.accent_hover, hover)
     };
     // Texte noir sur un accent clair, blanc sur un accent sombre.
-    let fg = if enabled { theme::on_accent(bg) } else { pal.text_faint };
+    let fg = if enabled {
+        theme::on_accent(bg)
+    } else {
+        pal.text_faint
+    };
     let painter = ui.painter_at(rect);
     // L'enfoncement est peint, jamais alloué : la mise en page ne bouge pas.
     painter.rect_filled(rect.shrink(if pressed { 1.0 } else { 0.0 }), 4.0, bg);
@@ -382,7 +431,10 @@ pub fn accent_button(
     if icon != Icon::None {
         paint_icon(
             &painter,
-            Rect::from_center_size(Pos2::new(x0 + icon_w / 2.0, rect.center().y), Vec2::splat(icon_w)),
+            Rect::from_center_size(
+                Pos2::new(x0 + icon_w / 2.0, rect.center().y),
+                Vec2::splat(icon_w),
+            ),
             icon,
             fg,
         );
@@ -404,7 +456,11 @@ pub fn danger_button(
     enabled: bool,
     icon: Icon,
 ) -> Response {
-    let sense = if enabled { Sense::click() } else { Sense::hover() };
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
     let (rect, resp) = ui.allocate_exact_size(size, sense);
     let fg = Color32::WHITE;
     let pressed = enabled && resp.is_pointer_button_down_on();
@@ -429,7 +485,10 @@ pub fn danger_button(
     if icon != Icon::None {
         paint_icon(
             &painter,
-            Rect::from_center_size(Pos2::new(x0 + icon_w / 2.0, rect.center().y), Vec2::splat(icon_w)),
+            Rect::from_center_size(
+                Pos2::new(x0 + icon_w / 2.0, rect.center().y),
+                Vec2::splat(icon_w),
+            ),
             icon,
             fg,
         );
@@ -453,11 +512,9 @@ pub fn ghost_button(ui: &mut egui::Ui, label: &str, pal: &Palette, icon: Icon) -
     let size = Vec2::new(galley.size().x + icon_w + gap + 22.0, 30.0);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let painter = ui.painter_at(rect);
-    let hover = ui.ctx().animate_bool_with_time(
-        control_id(ui, rect, label, "ghost"),
-        resp.hovered(),
-        0.12,
-    );
+    let hover =
+        ui.ctx()
+            .animate_bool_with_time(control_id(ui, rect, label, "ghost"), resp.hovered(), 0.12);
     if hover > 0.0 {
         painter.rect_filled(rect, 4.0, pal.surface_hover.gamma_multiply(hover));
         border_rect(&painter, rect, 1.0, pal.border.gamma_multiply(hover));
@@ -467,7 +524,10 @@ pub fn ghost_button(ui: &mut egui::Ui, label: &str, pal: &Palette, icon: Icon) -
     if icon != Icon::None {
         paint_icon(
             &painter,
-            Rect::from_center_size(Pos2::new(x0 + icon_w / 2.0, rect.center().y), Vec2::splat(icon_w)),
+            Rect::from_center_size(
+                Pos2::new(x0 + icon_w / 2.0, rect.center().y),
+                Vec2::splat(icon_w),
+            ),
             icon,
             color,
         );
@@ -481,7 +541,13 @@ pub fn ghost_button(ui: &mut egui::Ui, label: &str, pal: &Palette, icon: Icon) -
 }
 
 /// Bouton icône carré (engrenage, +, corbeille…).
-pub fn icon_button(ui: &mut egui::Ui, size: f32, icon: Icon, pal: &Palette, tooltip: &str) -> Response {
+pub fn icon_button(
+    ui: &mut egui::Ui,
+    size: f32,
+    icon: Icon,
+    pal: &Palette,
+    tooltip: &str,
+) -> Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
     let painter = ui.painter_at(rect);
     let hover = ui.ctx().animate_bool_with_time(
@@ -555,33 +621,21 @@ pub fn tinted_icon_button(
 /// Un menu egui standard ne porte que du texte ; ces lignes donnent au clic
 /// droit les mêmes icônes que la fiche. La pastille sombre garde le symbole
 /// lisible même quand la fenêtre est posée sur une bannière claire.
-pub fn menu_row(
-    ui: &mut egui::Ui,
-    pal: &Palette,
-    icon: Icon,
-    color: Color32,
-    label: &str,
-) -> bool {
+pub fn menu_row(ui: &mut egui::Ui, pal: &Palette, icon: Icon, color: Color32, label: &str) -> bool {
     let (rect, resp) = ui.allocate_exact_size(
         Vec2::new(ui.available_width().max(206.0), 28.0),
         Sense::click(),
     );
     let painter = ui.painter_at(rect);
-    let hover = ui.ctx().animate_bool_with_time(
-        ui.id().with(("quark_menu", label)),
-        resp.hovered(),
-        0.10,
-    );
+    let hover =
+        ui.ctx()
+            .animate_bool_with_time(ui.id().with(("quark_menu", label)), resp.hovered(), 0.10);
     if hover > 0.0 {
         painter.rect_filled(rect, 5.0, pal.surface_hover.gamma_multiply(hover));
     }
     let center = Pos2::new(rect.left() + 18.0, rect.center().y);
     painter.circle_filled(center, 10.0, Color32::from_black_alpha(130));
-    painter.circle_stroke(
-        center,
-        9.5,
-        Stroke::new(1.0_f32, color.gamma_multiply(0.6)),
-    );
+    painter.circle_stroke(center, 9.5, Stroke::new(1.0_f32, color.gamma_multiply(0.6)));
     paint_icon(
         &painter,
         Rect::from_center_size(center, Vec2::splat(12.0)),
@@ -615,9 +669,9 @@ pub fn tab(ui: &mut egui::Ui, label: &str, selected: bool, pal: &Palette) -> Res
         0.12,
     );
     // Le trait d'onglet s'étire depuis le centre quand l'onglet est choisi.
-    let mark = ui
-        .ctx()
-        .animate_bool_with_time(ui.id().with(("quark-tab-mark", label)), selected, 0.16);
+    let mark =
+        ui.ctx()
+            .animate_bool_with_time(ui.id().with(("quark-tab-mark", label)), selected, 0.16);
     let color = if selected {
         pal.text
     } else {
@@ -695,11 +749,9 @@ pub fn chip_colored(
 pub fn home_button(ui: &mut egui::Ui, selected: bool, pal: &Palette) -> Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(112.0, 30.0), Sense::click());
     let painter = ui.painter_at(rect);
-    let hover = ui.ctx().animate_bool_with_time(
-        ui.id().with("quark-home-hover"),
-        resp.hovered(),
-        0.12,
-    );
+    let hover =
+        ui.ctx()
+            .animate_bool_with_time(ui.id().with("quark-home-hover"), resp.hovered(), 0.12);
     let mark = ui
         .ctx()
         .animate_bool_with_time(ui.id().with("quark-home-mark"), selected, 0.16);

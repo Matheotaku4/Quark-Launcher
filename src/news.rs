@@ -15,7 +15,6 @@ const EXCERPT_CHARS: usize = 260;
 /// Longueur du texte intégré : le billet se lit dans Quark, sans navigateur.
 const BODY_CHARS: usize = 900;
 
-
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct NewsItem {
     pub title: String,
@@ -59,16 +58,14 @@ pub fn fetch(
         .newsitems
         .into_iter()
         .filter(|raw| !raw.title.trim().is_empty() && !raw.gid.trim().is_empty())
-        .map(|raw| {
-            NewsItem {
-                title: clean(&raw.title),
-                url: item_url(app_id, &raw.gid, &raw.url),
-                feed: clean(&raw.feedlabel),
-                author: clean(&raw.author),
-                date: raw.date,
-                excerpt: excerpt(&raw.contents, EXCERPT_CHARS),
-                body: excerpt(&raw.contents, BODY_CHARS),
-            }
+        .map(|raw| NewsItem {
+            title: clean(&raw.title),
+            url: item_url(app_id, &raw.gid, &raw.url),
+            feed: clean(&raw.feedlabel),
+            author: clean(&raw.author),
+            date: raw.date,
+            excerpt: excerpt(&raw.contents, EXCERPT_CHARS),
+            body: excerpt(&raw.contents, BODY_CHARS),
         })
         .collect();
     items.sort_by(|a, b| b.date.cmp(&a.date));
@@ -91,11 +88,7 @@ pub fn open_in_browser(url: &str) -> Result<(), String> {
     }
     // Plusieurs bureaux possibles : on essaie les lanceurs dans l'ordre courant
     // sur Linux et on retient le premier réellement installé.
-    let candidates: [&[&str]; 3] = [
-        &["xdg-open"],
-        &["gio", "open"],
-        &["sensible-browser"],
-    ];
+    let candidates: [&[&str]; 3] = [&["xdg-open"], &["gio", "open"], &["sensible-browser"]];
     for args in candidates {
         let mut cmd = std::process::Command::new(args[0]);
         cmd.args(&args[1..])
@@ -217,7 +210,11 @@ fn decode_entities(text: &str) -> String {
         }
         let rest = &text[index..];
         let end = rest.find(';').unwrap_or(0);
-        let entity = if end > 1 && end <= 10 { &rest[1..end] } else { "" };
+        let entity = if end > 1 && end <= 10 {
+            &rest[1..end]
+        } else {
+            ""
+        };
         let decoded = match entity {
             "amp" => Some('&'),
             "quot" => Some('"'),
@@ -336,18 +333,25 @@ mod tests {
 
     #[test]
     fn retire_le_balisage_steam() {
-        assert_eq!(clean("Patch [b]1.2[/b] [img]x.png[/img]"), "Patch 1.2 x.png");
+        assert_eq!(
+            clean("Patch [b]1.2[/b] [img]x.png[/img]"),
+            "Patch 1.2 x.png"
+        );
     }
 
     #[test]
     fn garde_le_texte_entre_crochets() {
-        assert_eq!(clean("Version [1.2] disponible"), "Version [1.2] disponible");
+        assert_eq!(
+            clean("Version [1.2] disponible"),
+            "Version [1.2] disponible"
+        );
         assert_eq!(clean("Notes [non publiées"), "Notes [non publiées");
     }
 
     #[test]
     fn retire_les_images_internes_de_steam() {
-        let raw = "{STEAM_CLAN_IMAGE}/28424520/913f4104e25e335cbfc6f5e9cdb40891e50d512a.png Hey there!";
+        let raw =
+            "{STEAM_CLAN_IMAGE}/28424520/913f4104e25e335cbfc6f5e9cdb40891e50d512a.png Hey there!";
         assert_eq!(clean(raw), "Hey there!");
     }
 

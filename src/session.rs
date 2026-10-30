@@ -39,6 +39,8 @@ pub struct Session {
     pub wineserver: Option<PathBuf>,
     /// Arrêt demandé : au-delà de [`KILL_AFTER`], le groupe est tué.
     pub stopping: Option<Instant>,
+    /// Sauvegarde locale détectée à partir d'une installation fournisseur liée.
+    pub save_identity: Option<crate::saves::SaveIdentity>,
 }
 
 impl Session {
@@ -129,6 +131,7 @@ pub fn start(game: &Game, resolved: &Resolved) -> Result<Session, String> {
         prefix: resolved.prefix.clone(),
         wineserver: wineserver_for(resolved),
         stopping: None,
+        save_identity: None,
     })
 }
 
@@ -202,7 +205,8 @@ pub fn read_log_tail(path: &Path, max_lines: usize) -> Result<(Vec<String>, bool
             .map_err(|err| err.to_string())?;
     }
     let mut bytes: Vec<u8> = Vec::new();
-    file.read_to_end(&mut bytes).map_err(|err| err.to_string())?;
+    file.read_to_end(&mut bytes)
+        .map_err(|err| err.to_string())?;
     let text = String::from_utf8_lossy(&bytes);
     let mut lines: Vec<String> = text.lines().map(|line| line.to_string()).collect();
     if truncated && !lines.is_empty() {

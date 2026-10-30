@@ -10,6 +10,17 @@ impl QuarkApp {
         let mut sync = false;
         let mut sync_epic = false;
         let mut install: Option<u32> = None;
+        let mut preview_save: Option<crate::providers::ProviderGameKey> = None;
+        let mut inventory_save: Option<crate::providers::ProviderGameKey> = None;
+        let mut choose_save_folder: Option<crate::providers::ProviderGameKey> = None;
+        let mut remove_save_folder: Option<(
+            crate::providers::ProviderGameKey,
+            std::path::PathBuf,
+        )> = None;
+        let mut merge_keys: Vec<crate::providers::ProviderGameKey> = Vec::new();
+        let mut split_key: Option<crate::providers::ProviderGameKey> = None;
+        let mut install_epic: Option<crate::providers::ProviderGameKey> = None;
+        let mut sync_after_handoff = false;
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(pal.bg))
             .show(ctx, |ui| {
@@ -62,14 +73,29 @@ impl QuarkApp {
                                 ui.label(RichText::new("Lance une synchronisation Steam ou Epic si Legendary est installé. gogdl ne fournit pas de commande de liste de bibliothèque GOG.").size(12.0).color(pal.text_dim));
                             });
                         });
-                    } else {                        for game in games {
+                    } else {
+                        for game in &games {
                             if game.key.provider == Provider::Steam {
                                 let app_id = game.key.product_id.parse::<u32>().ok();
                                 let can_install = game.owned && game.install_state != InstallState::Installed && app_id.is_some();
-                                provider_game_row(ui, &pal, &game, can_install, app_id, &mut install);
+                                provider_game_row(ui, &pal, game, can_install, app_id, &mut install, &mut install_epic, &mut preview_save, &mut inventory_save, &mut choose_save_folder, &mut remove_save_folder);
                             } else {
-                                provider_game_row(ui, &pal, &game, false, None, &mut install);
+                                provider_game_row(ui, &pal, game, false, None, &mut install, &mut install_epic, &mut preview_save, &mut inventory_save, &mut choose_save_folder, &mut remove_save_folder);
                             }
+                        }
+                        for candidate in crate::providers::operations::match_candidates(&games) {
+                            let labels: Vec<String> = candidate.members.iter().filter_map(|key| games.iter().find(|game| &game.key == key).map(|game| format!("{} ({})", game.title, provider_name(game.key.provider)))).collect();
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(format!("Correspondance exacte : {}", labels.join(" · "))).size(11.0).color(pal.text_dim));
+                                if ui.small_button("Fusionner l’affichage").clicked() { merge_keys = candidate.members.clone(); }
+                            });
+                        }
+                        for group in &self.lib.provider_library.manual_groups {
+                            ui.horizontal(|ui| {
+                                let labels: Vec<String> = group.members.iter().filter_map(|key| games.iter().find(|game| &game.key == key).map(|game| game.title.clone())).collect();
+                                ui.label(RichText::new(format!("Groupe manuel : {}", labels.join(" · "))).size(11.0).color(pal.text_dim));
+                                for key in &group.members { if ui.small_button(format!("Séparer {}", key.product_id)).clicked() { split_key = Some(key.clone()); } }
+                            });
                         }
                     }
                 });
@@ -80,11 +106,59 @@ impl QuarkApp {
         if sync_epic {
             self.start_epic_sync(ctx);
         }
+        if let Some(key) = preview_save {
+            self.preview_save_backup(ctx, &key);
+        }
+        if let Some(key) = inventory_save {
+            self.open_save_inventory(ctx, &key);
+        }
+        if let Some(key) = choose_save_folder {
+            self.choose_save_folder(ctx, &key);
+        }
+        if let Some((key, path)) = remove_save_folder {
+            self.remove_save_folder(&key, &path);
+        }
+        if let Some(key) = install_epic {
+            self.request_epic_install(ctx, &key);
+        }
+        if merge_keys.len() >= 2 {
+            match crate::providers::operations::merge_group(&merge_keys) {
+                Ok(group) => {
+                    self.lib.provider_library.manual_groups.retain(|existing| {
+                        !existing
+                            .members
+                            .iter()
+                            .any(|member| merge_keys.contains(member))
+                    });
+                    self.lib.provider_library.manual_groups.push(group);
+                    self.touch();
+                }
+                Err(error) => self.toast_error(error),
+            }
+        }
+        if let Some(key) = split_key {
+            for group in &mut self.lib.provider_library.manual_groups {
+                crate::providers::operations::split_member(group, &key);
+            }
+            self.lib
+                .provider_library
+                .manual_groups
+                .retain(|group| group.members.len() > 1);
+            self.touch();
+        }
         if let Some(app_id) = install {
             match crate::providers::steam::request_install(app_id) {
-                Ok(()) => self.toast_info("Demande envoyée au client Steam · l'installation sera confirmée après resynchronisation"),
+                Ok(()) => {
+                    self.toast_info("Demande envoyée au client Steam · vérifie ensuite l'installation avec « Synchroniser Steam »");
+                    sync_after_handoff = true;
+                }
                 Err(error) => self.toast_error(format!("Installation Steam impossible : {error}")),
             }
+        }
+        if sync_after_handoff {
+            // L'ouverture de l'URI n'étant pas une preuve, cette synchronisation
+            // détecte seulement les manifestes déjà présents et ne force aucun état.
+            self.start_steam_sync(ctx);
         }
     }
 }
@@ -96,6 +170,11 @@ fn provider_game_row(
     can_install: bool,
     app_id: Option<u32>,
     install: &mut Option<u32>,
+    install_epic: &mut Option<crate::providers::ProviderGameKey>,
+    preview_save: &mut Option<crate::providers::ProviderGameKey>,
+    inventory_save: &mut Option<crate::providers::ProviderGameKey>,
+    choose_save_folder: &mut Option<crate::providers::ProviderGameKey>,
+    remove_save_folder: &mut Option<(crate::providers::ProviderGameKey, std::path::PathBuf)>,
 ) {
     egui::Frame::new()
         .fill(pal.panel)
@@ -119,8 +198,42 @@ fn provider_game_row(
                     );
                 });
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if can_install && ui.small_button("Installer via Steam").clicked() {
+                    if can_install
+                        && game.key.provider == Provider::Steam
+                        && ui.small_button("Installer via Steam").clicked()
+                    {
                         *install = app_id;
+                    }
+                    if game.owned
+                        && game.key.provider == Provider::Epic
+                        && game.install_state != InstallState::Installed
+                        && crate::providers::tools::ManagedToolId::Legendary
+                            .installed_path()
+                            .is_file()
+                        && ui.small_button("Installer via Legendary").clicked()
+                    {
+                        *install_epic = Some(game.key.clone());
+                    }
+                    if game.install_state == InstallState::Installed
+                        && crate::providers::tools::ManagedToolId::Ludusavi
+                            .installed_path()
+                            .is_file()
+                        && ui.small_button("Aperçu sauvegarde").clicked()
+                    {
+                        *preview_save = Some(game.key.clone());
+                    }
+                    if game.install_state == InstallState::Installed
+                        && crate::providers::tools::ManagedToolId::Ludusavi
+                            .installed_path()
+                            .is_file()
+                        && ui.small_button("Restaurer…").clicked()
+                    {
+                        *inventory_save = Some(game.key.clone());
+                    }
+                    if game.install_state == InstallState::Installed
+                        && ui.small_button("Dossiers de sauvegarde…").clicked()
+                    {
+                        *choose_save_folder = Some(game.key.clone());
                     }
                     let status = match game.install_state {
                         InstallState::Installed => "Installé",
@@ -132,6 +245,18 @@ fn provider_game_row(
                         InstallState::Failed => "Échec",
                         InstallState::Unknown => "État inconnu",
                     };
+                    for path in &game.custom_save_paths {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(format!("Dossier sauvegarde · {}", path.display()))
+                                    .size(10.0)
+                                    .color(pal.text_faint),
+                            );
+                            if ui.small_button("Retirer").clicked() {
+                                *remove_save_folder = Some((game.key.clone(), path.clone()));
+                            }
+                        });
+                    }
                     ui.label(RichText::new(status).size(11.0).color(
                         if game.install_state == InstallState::Installed {
                             pal.accent

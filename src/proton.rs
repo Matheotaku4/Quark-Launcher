@@ -81,9 +81,9 @@ pub fn steam_root_candidates() -> Vec<PathBuf> {
 
 /// Première racine Steam plausible (contient `steamapps` ou `compatibilitytools.d`).
 pub fn steam_root() -> Option<PathBuf> {
-    steam_root_candidates().into_iter().find(|p| {
-        p.join("steamapps").is_dir() || p.join("compatibilitytools.d").is_dir()
-    })
+    steam_root_candidates()
+        .into_iter()
+        .find(|p| p.join("steamapps").is_dir() || p.join("compatibilitytools.d").is_dir())
 }
 
 /// Vrai pour un dossier de runtime anti-triche installé par Steam
@@ -98,9 +98,9 @@ pub fn anticheat_runtime<'a>(
     runtimes: &'a [ProtonRuntime],
     keyword: &str,
 ) -> Option<&'a ProtonRuntime> {
-    runtimes
-        .iter()
-        .find(|runtime| runtime.kind == RuntimeKind::AntiCheat && runtime.name.to_lowercase().contains(keyword))
+    runtimes.iter().find(|runtime| {
+        runtime.kind == RuntimeKind::AntiCheat && runtime.name.to_lowercase().contains(keyword)
+    })
 }
 
 /// Résumé lisible des runtimes anti-triche détectés (chemins compris), pour
@@ -125,7 +125,10 @@ pub fn anticheat_summary(runtimes: &[ProtonRuntime]) -> String {
 /// partie : ils ne remplacent pas Proton, mais un jeu peut les demander.
 pub fn detect_in(root: &Path) -> Vec<ProtonRuntime> {
     let mut out: Vec<ProtonRuntime> = Vec::new();
-    for base in [root.join("compatibilitytools.d"), root.join("steamapps/common")] {
+    for base in [
+        root.join("compatibilitytools.d"),
+        root.join("steamapps/common"),
+    ] {
         let Ok(entries) = std::fs::read_dir(&base) else {
             continue;
         };
@@ -158,7 +161,11 @@ pub fn detect_in(root: &Path) -> Vec<ProtonRuntime> {
                 key: name.clone(),
                 name,
                 version,
-                path: if has_proton_script { script } else { dir.clone() },
+                path: if has_proton_script {
+                    script
+                } else {
+                    dir.clone()
+                },
                 steam_root: root.to_path_buf(),
                 kind: if anticheat {
                     RuntimeKind::AntiCheat
@@ -611,15 +618,19 @@ pub fn resolve_with(
             .iter()
             .find(|r| &r.key == key)
             .cloned()
-            .ok_or_else(|| format!("Runtime Proton « {key} » introuvable. Vérifie les paramètres."))?,
+            .ok_or_else(|| {
+                format!("Runtime Proton « {key} » introuvable. Vérifie les paramètres.")
+            })?,
         _ => {
             let chosen = settings
                 .default_proton
                 .as_ref()
                 .and_then(|k| runtimes.iter().find(|r| &r.key == k).cloned());
-            chosen.or_else(|| suggested_default(runtimes).cloned()).ok_or_else(|| {
-                "Aucun runtime Proton détecté (ni Steam, ni compatibilitytools.d).".to_string()
-            })?
+            chosen
+                .or_else(|| suggested_default(runtimes).cloned())
+                .ok_or_else(|| {
+                    "Aucun runtime Proton détecté (ni Steam, ni compatibilitytools.d).".to_string()
+                })?
         }
     };
 
@@ -666,10 +677,7 @@ pub fn resolve_with(
                     .to_string(),
             );
         }
-        env.push((
-            "WINEPREFIX".to_string(),
-            prefix.display().to_string(),
-        ));
+        env.push(("WINEPREFIX".to_string(), prefix.display().to_string()));
         let game_id = if game.umu_game_id.trim().is_empty() {
             "0".to_string()
         } else {
@@ -678,8 +686,8 @@ pub fn resolve_with(
         env.push(("GAMEID".to_string(), game_id));
         // Un Proton choisi explicitement est transmis à umu ; sinon umu prend
         // son propre build (UMU-Proton), comme il le fait sans Steam.
-        let pinned = matches!(game.proton, ProtonMode::Runtime(_))
-            || settings.default_proton.is_some();
+        let pinned =
+            matches!(game.proton, ProtonMode::Runtime(_)) || settings.default_proton.is_some();
         if pinned && runtime.kind == RuntimeKind::Proton {
             env.push((
                 "PROTONPATH".to_string(),
@@ -815,13 +823,8 @@ mod tests {
         game.launch.gamescope_fps = 60;
         game.launch.gamemode = true;
 
-        let resolu = resolve_with(
-            &game,
-            &Settings::default(),
-            &[],
-            outils(true, true, false),
-        )
-        .unwrap();
+        let resolu =
+            resolve_with(&game, &Settings::default(), &[], outils(true, true, false)).unwrap();
         // gamescope enveloppe gamemoderun, qui enveloppe le jeu.
         assert_eq!(resolu.spec.program, PathBuf::from("gamescope"));
         let args: Vec<&str> = resolu.spec.args.iter().map(String::as_str).collect();
@@ -861,10 +864,7 @@ mod tests {
         // Une ligne de wrapper passe par sh, comme dans Steam.
         assert_eq!(resolu.spec.program, PathBuf::from("sh"));
         assert_eq!(resolu.spec.args[0], "-c");
-        assert_eq!(
-            resolu.spec.args[1],
-            format!("env FOO=1 {}", game.exe)
-        );
+        assert_eq!(resolu.spec.args[1], format!("env FOO=1 {}", game.exe));
 
         // Sans joker, la commande est préfixée par le wrapper.
         game.launch.wrapper = "prime-run".to_string();
@@ -960,7 +960,10 @@ mod tests {
             valeur(&resolu.spec.env, "WINEPREFIX"),
             Some(game.prefix_path(&Settings::default()).display().to_string())
         );
-        assert_eq!(valeur(&resolu.spec.env, "GAMEID").as_deref(), Some("367520"));
+        assert_eq!(
+            valeur(&resolu.spec.env, "GAMEID").as_deref(),
+            Some("367520")
+        );
         assert_eq!(
             valeur(&resolu.spec.env, "PROTONPATH"),
             Some(root.join("GE-Proton9-20").display().to_string())
@@ -1104,11 +1107,13 @@ mod tests {
         // Sans l'option, aucune variable anti-triche n'est ajoutée.
         game.anticheat = AnticheatMode::None;
         let resolu = resolve(&game, &Settings::default(), &runtimes).unwrap();
-        assert!(resolu
-            .spec
-            .env
-            .iter()
-            .all(|(key, _)| !key.contains("ANTICHEAT") && !key.contains("_RUNTIME")));
+        assert!(
+            resolu
+                .spec
+                .env
+                .iter()
+                .all(|(key, _)| !key.contains("ANTICHEAT") && !key.contains("_RUNTIME"))
+        );
 
         // Option cochée mais runtime absent : message clair, pas de lancement.
         let seul_proton: Vec<ProtonRuntime> = runtimes
@@ -1160,7 +1165,9 @@ mod tests {
             EnvVar::new("WINEDEBUG", "-all"),
         ]));
         assert_eq!(
-            env.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(),
+            env.iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
             ["PROTON_LOG", "WINEDEBUG"]
         );
     }
