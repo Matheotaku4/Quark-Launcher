@@ -57,6 +57,11 @@ pub fn config_path() -> PathBuf {
     config_dir().join("config.json")
 }
 
+/// Fichier séparé des identifiants boutiques (droits privés, non chiffré).
+pub fn credentials_path() -> PathBuf {
+    config_dir().join("credentials.json")
+}
+
 /// Dossier racine des artworks téléchargés.
 pub fn artwork_root() -> PathBuf {
     data_dir().join("artwork")
@@ -221,7 +226,6 @@ impl EnvVar {
         let name = self.name.trim();
         !name.is_empty() && !name.contains(char::is_whitespace)
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -748,7 +752,6 @@ impl Game {
         }
     }
 
-
     pub fn last_played_label(&self) -> String {
         match self.last_played {
             Some(t) => human_ago(t),
@@ -764,8 +767,8 @@ impl Game {
 
 /// Articles ignorés pour choisir la lettre d'un jeu sans icône.
 const ARTICLES: [&str; 16] = [
-    "the", "a", "an", "le", "la", "les", "l", "un", "une", "des", "el", "los", "las", "il",
-    "lo", "der",
+    "the", "a", "an", "le", "la", "les", "l", "un", "une", "des", "el", "los", "las", "il", "lo",
+    "der",
 ];
 
 /// Première lettre d'un titre, articles initiaux ignorés : « The Witcher 3 »
@@ -850,6 +853,8 @@ pub fn human_ago(ts: i64) -> String {
 pub struct Library {
     pub games: Vec<Game>,
     pub settings: Settings,
+    /// Installations des boutiques externes, séparées des fiches Quark.
+    pub provider_library: crate::providers::ProviderLibrary,
 }
 
 impl Library {
@@ -951,7 +956,11 @@ impl Library {
                 .cmp(&a_time)
                 .then_with(|| b.playtime_secs.cmp(&a.playtime_secs))
         });
-        games.into_iter().take(limit).map(|g| g.id.clone()).collect()
+        games
+            .into_iter()
+            .take(limit)
+            .map(|g| g.id.clone())
+            .collect()
     }
 
     /// Tags personnels de la bibliothèque, avec leur nombre de jeux.
@@ -1064,7 +1073,10 @@ mod tests {
     fn prefix_sans_reglage_est_propre_au_jeu() {
         let mut settings = Settings::default();
         settings.default_prefix = None;
-        assert_eq!(game("abc").prefix_path(&settings), prefix_root().join("abc"));
+        assert_eq!(
+            game("abc").prefix_path(&settings),
+            prefix_root().join("abc")
+        );
     }
 
     #[test]
@@ -1118,7 +1130,9 @@ mod tests {
         assert_eq!(lib.get("a").unwrap().env[0].name, "MANGOHUD");
         assert_eq!(lib.get("b").unwrap().env[0].name, "DXVK_HUD");
         // La migration ne s'applique qu'une fois.
-        lib.settings.default_env.push(EnvVar::new("PROTON_LOG", "1"));
+        lib.settings
+            .default_env
+            .push(EnvVar::new("PROTON_LOG", "1"));
         lib.migrate_defaults();
         assert_eq!(lib.get("a").unwrap().env.len(), 1);
     }
@@ -1126,14 +1140,14 @@ mod tests {
     #[test]
     fn les_options_de_lancement_ont_des_valeurs_par_defaut() {
         // Config d'une version précédente : ni `launch` ni `umu`.
-        let game: Game = serde_json::from_str(r#"{ "name": "Vieux", "exe": "/tmp/v.exe" }"#).unwrap();
+        let game: Game =
+            serde_json::from_str(r#"{ "name": "Vieux", "exe": "/tmp/v.exe" }"#).unwrap();
         assert!(!game.launch.any());
         assert_eq!(game.launch.gamescope_size(), (1920, 1080));
         assert!(!game.umu);
         assert!(!game.proton_log);
         // Ancienne clé d'overlay : ignorée sans erreur de lecture.
-        let old: Game =
-            serde_json::from_str(r#"{ "name": "V", "steam_launch_id": 42 }"#).unwrap();
+        let old: Game = serde_json::from_str(r#"{ "name": "V", "steam_launch_id": 42 }"#).unwrap();
         assert_eq!(old.name, "V");
     }
 
@@ -1225,7 +1239,13 @@ mod tests {
         lib.games = vec![a, b];
         let tags = lib.all_tags();
         // La casse ne crée pas deux catégories.
-        assert_eq!(tags.iter().find(|(name, _)| name.eq_ignore_ascii_case("coop")).unwrap().1, 2);
+        assert_eq!(
+            tags.iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("coop"))
+                .unwrap()
+                .1,
+            2
+        );
         assert_eq!(lib.all_genres()[0], ("RPG".to_string(), 2));
     }
 
@@ -1247,6 +1267,64 @@ mod tests {
         settings.default_prefix = Some("/tmp/quark-tests/defaut".to_string());
         let mut g = game("abc");
         g.prefix = Some("/tmp/quark-tests/mon-jeu".to_string());
-        assert_eq!(g.prefix_path(&settings), PathBuf::from("/tmp/quark-tests/mon-jeu"));
+        assert_eq!(
+            g.prefix_path(&settings),
+            PathBuf::from("/tmp/quark-tests/mon-jeu")
+        );
+    }
+
+    #[test]
+    fn bibliotheque_existante_preserve_les_jeux_et_ajoute_les_comptes_boutiques() {
+        let old = r#"{
+            "games": [{ "id": "quark-game", "name": "Celeste", "playtime_secs": 3600 }],
+            "settings": { "language": "english", "country": "US" }
+        }"#;
+        let mut library: Library = serde_json::from_str(old).unwrap();
+        assert_eq!(library.games[0].id, "quark-game");
+        assert_eq!(library.games[0].playtime_secs, 3600);
+        assert_eq!(library.settings.language, "english");
+        assert!(library.provider_library.games.is_empty());
+
+        library
+            .provider_library
+            .games
+            .push(crate::providers::ProviderGame {
+                key: crate::providers::ProviderGameKey {
+                    provider: crate::providers::Provider::Epic,
+                    product_id: "celeste-epic-id".to_string(),
+                },
+                title: "Celeste".to_string(),
+                owned: true,
+                install_path: Some(PathBuf::from("/games/Celeste")),
+                install_state: crate::providers::InstallState::Installed,
+                quark_game_id: Some("quark-game".to_string()),
+                capabilities: crate::providers::GameCapabilities {
+                    achievements: crate::providers::CapabilityState::Supported,
+                    cloud_saves: crate::providers::CapabilityState::RequiresSetup(
+                        "choose a save directory".to_string(),
+                    ),
+                },
+                last_synced: Some(1_793_110_500),
+            });
+
+        let encoded = serde_json::to_string(&library).unwrap();
+        let restored: Library = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(restored.games[0].id, "quark-game");
+        assert_eq!(restored.games[0].playtime_secs, 3600);
+        let provider_game = &restored.provider_library.games[0];
+        assert_eq!(provider_game.key.provider, crate::providers::Provider::Epic);
+        assert_eq!(provider_game.key.product_id, "celeste-epic-id");
+        assert_eq!(
+            provider_game.install_state,
+            crate::providers::InstallState::Installed
+        );
+        assert_eq!(
+            provider_game.capabilities.achievements,
+            crate::providers::CapabilityState::Supported
+        );
+        assert_eq!(
+            provider_game.capabilities.cloud_saves,
+            crate::providers::CapabilityState::RequiresSetup("choose a save directory".to_string())
+        );
     }
 }

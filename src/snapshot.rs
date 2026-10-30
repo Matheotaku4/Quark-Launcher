@@ -14,9 +14,9 @@
 
 use crate::app::{AddStep, NewsState, QuarkApp, ScanCandidate, SearchState, Tab};
 use crate::artwork::{AssetPlan, SearchHit, Source};
-use crate::config::{AssetKind, Artwork, Game, Library, ThemeMode, ViewMode, now_ts};
-use crate::proton::{ProtonRuntime, RuntimeKind};
+use crate::config::{Artwork, AssetKind, Game, Library, ThemeMode, ViewMode, now_ts};
 use crate::news::NewsItem;
+use crate::proton::{ProtonRuntime, RuntimeKind};
 use eframe::egui::epaint::textures::TexturesDelta;
 use eframe::egui::epaint::{ImageData, Primitive};
 use eframe::egui::{
@@ -49,6 +49,8 @@ pub struct SnapshotOptions {
     pub home: bool,
     /// Clic avec le bouton droit : ouvre un menu contextuel.
     pub right_click: bool,
+    pub providers_demo: bool,
+    pub providers_error: bool,
 }
 
 impl Default for SnapshotOptions {
@@ -72,6 +74,8 @@ impl Default for SnapshotOptions {
             marked: false,
             home: false,
             right_click: false,
+            providers_demo: false,
+            providers_error: false,
         }
     }
 }
@@ -113,6 +117,54 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
             gamemoderun: true,
             umu_run: false,
         };
+        app.store_offline_mode = true;
+        if opts.providers_demo {
+            app.lib.provider_library.games = vec![
+                crate::providers::ProviderGame {
+                    key: crate::providers::ProviderGameKey {
+                        provider: crate::providers::Provider::Steam,
+                        product_id: "620".into(),
+                    },
+                    title: "Portal 2".into(),
+                    owned: true,
+                    install_path: Some(std::path::PathBuf::from(
+                        "/home/demo/.steam/steamapps/common/Portal 2",
+                    )),
+                    install_state: crate::providers::InstallState::Installed,
+                    quark_game_id: Some(app.lib.games[0].id.clone()),
+                    capabilities: Default::default(),
+                    last_synced: Some(crate::config::now_ts()),
+                },
+                crate::providers::ProviderGame {
+                    key: crate::providers::ProviderGameKey {
+                        provider: crate::providers::Provider::Steam,
+                        product_id: "400".into(),
+                    },
+                    title: "Portal".into(),
+                    owned: true,
+                    install_path: None,
+                    install_state: crate::providers::InstallState::Unknown,
+                    quark_game_id: None,
+                    capabilities: Default::default(),
+                    last_synced: Some(crate::config::now_ts()),
+                },
+            ];
+            app.credentials.steam_web_api_key = Some("[stored secret]".into());
+            app.credentials.steam_id = Some("76561198000000000".into());
+            if opts.providers_error {
+                app.steam_sync_error = Some("API possédée indisponible : bibliothèque privée ou détails invisibles · données précédentes conservées".into());
+            }
+        }
+        app.store_snapshot = crate::steam_store::parse_featured(r#"{"specials":{"items":[
+            {"id":620,"name":"Portal 2","currency":"EUR","original_price":1999,"final_price":499,"discount_percent":75,"large_capsule_image":"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/620/header.jpg","linux_available":true},
+            {"id":400,"name":"Portal","currency":"EUR","original_price":999,"final_price":199,"discount_percent":80,"large_capsule_image":"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/400/header.jpg","linux_available":true},
+            {"id":292030,"name":"The Witcher 3: Wild Hunt","currency":"EUR","original_price":3999,"final_price":799,"discount_percent":80,"large_capsule_image":"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/292030/header.jpg","linux_available":false},
+            {"id":1091500,"name":"Cyberpunk 2077","currency":"EUR","original_price":5999,"final_price":2999,"discount_percent":50,"large_capsule_image":"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1091500/header.jpg","linux_available":false}
+        ]}}"#).ok();
+        app.store_search_results = Some(vec![
+            crate::steam_store::StoreItem { app_id: 620, name: "Portal 2".into(), price: Some(crate::steam_store::StorePrice { currency: "EUR".into(), initial: 1999, final_price: 499, discount_percent: Some(75) }), artwork_url: Some("https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/620/header.jpg".into()), store_url: "https://store.steampowered.com/app/620".into(), linux_available: Some(true) },
+            crate::steam_store::StoreItem { app_id: 400, name: "Portal".into(), price: Some(crate::steam_store::StorePrice { currency: "EUR".into(), initial: 999, final_price: 199, discount_percent: Some(80) }), artwork_url: Some("https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/400/header.jpg".into()), store_url: "https://store.steampowered.com/app/400".into(), linux_available: Some(true) },
+        ]);
         // Note ProtonDB factice pour le jeu de démonstration (aucun réseau).
         app.protondb.insert(
             292_030,
@@ -260,6 +312,7 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
         match app.tab {
             Tab::Store => "boutique",
             Tab::Library => "bibliothèque",
+            Tab::MyGames => "mes jeux",
         },
         match app.lib.settings.view {
             ViewMode::List => "liste",
@@ -320,6 +373,10 @@ fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
             app.settings_open = true;
             app.settings_tab = crate::app::SettingsTab::Defaults;
         }
+        "settings-providers" => {
+            app.settings_open = true;
+            app.settings_tab = crate::app::SettingsTab::Providers;
+        }
         "settings-artworks" => {
             app.settings_open = true;
             app.settings_tab = crate::app::SettingsTab::Artworks;
@@ -348,10 +405,18 @@ fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
             let mut import = crate::app::SteamImport::new();
             import.loading = false;
             for (index, (app_id, name, exe)) in [
-                (292_030, "The Witcher 3: Wild Hunt", "/jeux/witcher3/bin/x64_dx12/witcher3.exe"),
+                (
+                    292_030,
+                    "The Witcher 3: Wild Hunt",
+                    "/jeux/witcher3/bin/x64_dx12/witcher3.exe",
+                ),
                 (251_570, "7 Days to Die", "/jeux/7dtd/7DaysToDie.exe"),
                 (391_540, "Celeste", "/jeux/Celeste/Celeste.exe"),
-                (367_520, "Hollow Knight", "/jeux/Hollow Knight/hollow_knight.exe"),
+                (
+                    367_520,
+                    "Hollow Knight",
+                    "/jeux/Hollow Knight/hollow_knight.exe",
+                ),
                 (620, "Portal 2", "/jeux/Portal 2/portal2.exe"),
             ]
             .into_iter()
@@ -360,7 +425,10 @@ fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
                 import.games.push(crate::app::SteamCandidate {
                     app_id,
                     name: name.to_string(),
-                    dir: PathBuf::from(exe).parent().unwrap_or(Path::new("/")).to_path_buf(),
+                    dir: PathBuf::from(exe)
+                        .parent()
+                        .unwrap_or(Path::new("/"))
+                        .to_path_buf(),
                     exe: Some(PathBuf::from(exe)),
                     include: index < 2,
                     owned: index >= 3,
@@ -765,7 +833,8 @@ impl DemoArt {
             save_demo_png(&logo, 588, 360, |x, y| {
                 let dx = x as f32 - 294.0;
                 let dy = y as f32 - 180.0;
-                if (x > 60 && x < 528 && y > 210 && y < 260) || (dx * dx) / 4.0 + dy * dy < 4_800.0 {
+                if (x > 60 && x < 528 && y > 210 && y < 260) || (dx * dx) / 4.0 + dy * dy < 4_800.0
+                {
                     [245, 245, 250, 255]
                 } else {
                     [0, 0, 0, 0]
@@ -826,7 +895,12 @@ fn demo_library() -> Result<Library, String> {
     let mut game = demo_game(
         "The Witcher 3: Wild Hunt",
         "/jeux/witcher3/bin/x64_dx12/witcher3.exe",
-        &[AssetKind::Hero, AssetKind::Cover, AssetKind::Logo, AssetKind::Icon],
+        &[
+            AssetKind::Hero,
+            AssetKind::Cover,
+            AssetKind::Logo,
+            AssetKind::Icon,
+        ],
         &art,
         Some(292030),
     );
@@ -924,7 +998,13 @@ fn demo_library() -> Result<Library, String> {
     game.tags = vec!["aventure".to_string(), "classique".to_string()];
     games.push(game);
     // Exécutable absent du disque : la ligne et la tuile passent en rouge.
-    games.push(demo_game("Another World", "/jeux/another/another", &[], &art, None));
+    games.push(demo_game(
+        "Another World",
+        "/jeux/another/another",
+        &[],
+        &art,
+        None,
+    ));
 
     // Historique de sessions : alimente les semaines, le calendrier et la série
     // de jours consécutifs de la page Statistiques.
@@ -998,7 +1078,11 @@ fn demo_library() -> Result<Library, String> {
     for (index, game) in games.iter_mut().enumerate() {
         game.added_at = now - index as i64 * 86_400;
     }
-    Ok(Library { games, settings })
+    Ok(Library {
+        games,
+        settings,
+        provider_library: crate::providers::ProviderLibrary::default(),
+    })
 }
 
 /// Mesure d'espace disque factice, pour le rendu de la page correspondante.
@@ -1226,19 +1310,44 @@ fn rasterize(
                 mesh.vertices[triangle[2] as usize],
             ];
             let points = [
-                Pos2::new(vertices[0].pos.x * pixels_per_point, vertices[0].pos.y * pixels_per_point),
-                Pos2::new(vertices[1].pos.x * pixels_per_point, vertices[1].pos.y * pixels_per_point),
-                Pos2::new(vertices[2].pos.x * pixels_per_point, vertices[2].pos.y * pixels_per_point),
+                Pos2::new(
+                    vertices[0].pos.x * pixels_per_point,
+                    vertices[0].pos.y * pixels_per_point,
+                ),
+                Pos2::new(
+                    vertices[1].pos.x * pixels_per_point,
+                    vertices[1].pos.y * pixels_per_point,
+                ),
+                Pos2::new(
+                    vertices[2].pos.x * pixels_per_point,
+                    vertices[2].pos.y * pixels_per_point,
+                ),
             ];
             let area = edge(points[0], points[1], points[2]);
             if area.abs() < 1e-6 {
                 continue;
             }
 
-            let min_x = points.iter().map(|p| p.x).fold(f32::INFINITY, f32::min).floor();
-            let max_x = points.iter().map(|p| p.x).fold(f32::NEG_INFINITY, f32::max).ceil();
-            let min_y = points.iter().map(|p| p.y).fold(f32::INFINITY, f32::min).floor();
-            let max_y = points.iter().map(|p| p.y).fold(f32::NEG_INFINITY, f32::max).ceil();
+            let min_x = points
+                .iter()
+                .map(|p| p.x)
+                .fold(f32::INFINITY, f32::min)
+                .floor();
+            let max_x = points
+                .iter()
+                .map(|p| p.x)
+                .fold(f32::NEG_INFINITY, f32::max)
+                .ceil();
+            let min_y = points
+                .iter()
+                .map(|p| p.y)
+                .fold(f32::INFINITY, f32::min)
+                .floor();
+            let max_y = points
+                .iter()
+                .map(|p| p.y)
+                .fold(f32::NEG_INFINITY, f32::max)
+                .ceil();
             let x_start = (min_x.max(clip_x0 as f32).max(0.0)) as usize;
             let x_end = (max_x.min(clip_x1 as f32)).min(width as f32) as usize;
             let y_start = (min_y.max(clip_y0 as f32).max(0.0)) as usize;
@@ -1264,7 +1373,8 @@ fn rasterize(
                         if weights[i] > 0.0 {
                             continue;
                         }
-                        if weights[i] < 0.0 || !is_top_left(points[i], points[(i + 1) % 3], clockwise)
+                        if weights[i] < 0.0
+                            || !is_top_left(points[i], points[(i + 1) % 3], clockwise)
                         {
                             inside = false;
                             break;
@@ -1284,7 +1394,8 @@ fn rasterize(
                         let value = colors[0][channel] as f32 * weights[0]
                             + colors[1][channel] as f32 * weights[1]
                             + colors[2][channel] as f32 * weights[2];
-                        source[channel] = multiply(value.round().clamp(0.0, 255.0) as u8, texel[channel]);
+                        source[channel] =
+                            multiply(value.round().clamp(0.0, 255.0) as u8, texel[channel]);
                     }
                     let index = y * width + x;
                     framebuffer[index] = blend(framebuffer[index], source);
@@ -1322,7 +1433,12 @@ fn blend(dst: Color32, src: [u8; 4]) -> Color32 {
     Color32::from_rgba_premultiplied(out[0], out[1], out[2], out[3])
 }
 
-fn save_png(path: &Path, width: usize, height: usize, framebuffer: &[Color32]) -> Result<(), String> {
+fn save_png(
+    path: &Path,
+    width: usize,
+    height: usize,
+    framebuffer: &[Color32],
+) -> Result<(), String> {
     let mut bytes = Vec::with_capacity(width * height * 4);
     for color in framebuffer {
         let [r, g, b, a] = color.to_array();

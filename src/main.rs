@@ -10,20 +10,23 @@ mod disk;
 mod icon;
 mod images;
 mod news;
-mod protondb;
 mod proton;
+mod protondb;
+mod providers;
 mod scan;
 mod session;
 mod snapshot;
 mod stats;
+mod steam_store;
 mod steamlib;
 mod theme;
 mod tray;
-mod update;
 mod ui_dialogs;
 mod ui_home;
 mod ui_library;
+mod ui_my_games;
 mod ui_store;
+mod update;
 mod widgets;
 
 use app::QuarkApp;
@@ -169,6 +172,17 @@ fn cli(args: &[String]) -> Option<i32> {
                         index += 1;
                         continue;
                     }
+                    "--providers-demo" => {
+                        opts.providers_demo = true;
+                        index += 1;
+                        continue;
+                    }
+                    "--providers-error" => {
+                        opts.providers_demo = true;
+                        opts.providers_error = true;
+                        index += 1;
+                        continue;
+                    }
                     _ => {}
                 }
                 match key.as_str() {
@@ -224,8 +238,9 @@ fn cli(args: &[String]) -> Option<i32> {
                         opts.tab = match value.as_deref() {
                             Some("library") => Some(app::Tab::Library),
                             Some("store") => Some(app::Tab::Store),
+                            Some("my-games") => Some(app::Tab::MyGames),
                             _ => {
-                                eprintln!("--tab attend library ou store");
+                                eprintln!("--tab attend library, store ou my-games");
                                 return Some(2);
                             }
                         }
@@ -258,7 +273,9 @@ fn cli(args: &[String]) -> Option<i32> {
                     "--key" => match value {
                         Some(key) => opts.key = Some(key),
                         None => {
-                            eprintln!("--key attend une touche (up, down, left, right, enter, escape)");
+                            eprintln!(
+                                "--key attend une touche (up, down, left, right, enter, escape)"
+                            );
                             return Some(2);
                         }
                     },
@@ -379,12 +396,7 @@ fn cli(args: &[String]) -> Option<i32> {
                         item.exe.display(),
                         hit.source.label()
                     ),
-                    None => println!(
-                        "  - {:<28} {:<10} {}",
-                        item.title,
-                        "?",
-                        item.exe.display()
-                    ),
+                    None => println!("  - {:<28} {:<10} {}", item.title, "?", item.exe.display()),
                 }
             }
             Some(0)

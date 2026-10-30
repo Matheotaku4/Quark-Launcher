@@ -1,17 +1,17 @@
 //! État de l'application et assemblage de l'interface.
 
 use crate::artwork::{self, AssetPlan, GameMetadata, SearchHit, SearchOutcome};
-use crate::disk::{self, DiskReport};
 use crate::config::{
     Artwork, AssetKind, Game, Library, ProtonMode, ThemeMode, ViewMode, human_playtime,
 };
-use crate::steamlib::{self, SteamGame};
+use crate::disk::{self, DiskReport};
 use crate::news::{self, NewsItem};
-use crate::protondb::{self, Report};
 use crate::proton::{self, ProtonRuntime};
+use crate::protondb::{self, Report};
 use crate::session::Session;
-use crate::tray;
+use crate::steamlib::{self, SteamGame};
 use crate::theme::{self, Palette};
+use crate::tray;
 use crate::update::{self, Release};
 use crate::widgets::{self, Icon};
 use eframe::egui::{self, Align, Align2, FontId, Layout, RichText, Sense, Stroke, Vec2};
@@ -24,6 +24,21 @@ use std::time::{Duration, Instant};
 pub enum Tab {
     Store,
     Library,
+    MyGames,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StoreLoadState {
+    Idle,
+    Loading,
+    Ready,
+    Failed,
+}
+
+pub struct SteamSyncOutcome {
+    local: Vec<SteamGame>,
+    local_error: Option<String>,
+    owned: Option<Result<Vec<crate::providers::ProviderGame>, String>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -257,16 +272,18 @@ pub enum SettingsTab {
     /// Poids des préfixes, du cache, des journaux et des jeux.
     Disk,
     About,
+    Providers,
 }
 
 impl SettingsTab {
-    pub const ALL: [(SettingsTab, &'static str); 6] = [
+    pub const ALL: [(SettingsTab, &'static str); 7] = [
         (SettingsTab::Appearance, "Apparence"),
         (SettingsTab::Defaults, "Par défaut"),
         (SettingsTab::Artworks, "Artworks"),
         (SettingsTab::Stats, "Statistiques"),
         (SettingsTab::Disk, "Espace disque"),
         (SettingsTab::About, "À propos"),
+        (SettingsTab::Providers, "Boutiques & outils"),
     ];
 }
 
@@ -339,6 +356,17 @@ pub struct QuarkApp {
     pub selected: Option<String>,
     pub filter: String,
     pub store_query: String,
+    pub store_snapshot: Option<crate::steam_store::StoreSnapshot>,
+    pub store_stale: bool,
+    pub store_loading: bool,
+    pub store_error: Option<String>,
+    pub store_search_results: Option<Vec<crate::steam_store::StoreItem>>,
+    pub store_search_loading: bool,
+    pub store_search_error: Option<String>,
+    pub store_featured_rx: Option<Receiver<Result<crate::steam_store::StoreSnapshot, String>>>,
+    pub store_search_rx: Option<Receiver<Result<Vec<crate::steam_store::StoreItem>, String>>>,
+    pub store_offline_mode: bool,
+    store_state: StoreLoadState,
     pub add: AddGame,
     pub settings_open: bool,
     pub settings_tab: SettingsTab,
@@ -402,6 +430,22 @@ pub struct QuarkApp {
     pub overlay: Option<String>,
     /// Import de la bibliothèque Steam installée.
     pub steam_import: Option<SteamImport>,
+    /// Identifiants de boutiques lus depuis le fichier local privé.
+    pub credentials: crate::providers::credentials::Credentials,
+    /// Erreur de chargement des identifiants, sans contenu sensible.
+    pub credentials_error: Option<String>,
+    /// Champ temporaire Steam : jamais écrit dans la bibliothèque Quark.
+    pub steam_key_draft: String,
+    /// État d'installation/vérification des outils gérés, par outil.
+    pub managed_tools: [Option<String>; 3],
+    pub tool_jobs: [Option<Receiver<Result<String, String>>>; 3],
+    pub steam_sync_loading: bool,
+    pub steam_sync_error: Option<String>,
+    pub steam_sync_rx: Option<Receiver<SteamSyncOutcome>>,
+    pub epic_sync_loading: bool,
+    pub epic_sync_error: Option<String>,
+    pub epic_sync_rx: Option<Receiver<Result<Vec<crate::providers::ProviderGame>, String>>>,
+    pub steam_id_draft: String,
     /// Métadonnées Steam à charger, une requête à la fois.
     pub meta_job: Option<MetadataJob>,
     pub meta_queue: VecDeque<(String, u32)>,
@@ -420,6 +464,20 @@ impl QuarkApp {
     /// de la fenêtre réelle ou du rendu hors écran (`quark --ui`).
     pub fn new(ctx: &egui::Context) -> Self {
         let lib = Library::load();
+        let store_snapshot = crate::steam_store::load_cache(&crate::steam_store::cache_path())
+            .ok()
+            .flatten();
+        let store_stale = store_snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.is_stale(crate::config::now_ts()));
+        let (credentials, credentials_error) =
+            match crate::providers::credentials::load(&crate::config::credentials_path()) {
+                Ok(credentials) => (credentials, None),
+                Err(error) => (
+                    crate::providers::credentials::Credentials::default(),
+                    Some(error),
+                ),
+            };
         let runtimes = proton::detect_runtimes();
         let selected = lib.games.first().map(|g| g.id.clone());
         theme::apply(ctx, lib.settings.theme);
@@ -434,6 +492,17 @@ impl QuarkApp {
             tab: Tab::Library,
             filter: String::new(),
             store_query: String::new(),
+            store_snapshot,
+            store_stale,
+            store_loading: false,
+            store_error: None,
+            store_search_results: None,
+            store_search_loading: false,
+            store_search_error: None,
+            store_featured_rx: None,
+            store_search_rx: None,
+            store_offline_mode: false,
+            store_state: StoreLoadState::Idle,
             add: AddGame {
                 open: false,
                 ..AddGame::reset()
@@ -471,6 +540,18 @@ impl QuarkApp {
             blurs: crate::images::BlurCache::default(),
             overlay: None,
             steam_import: None,
+            credentials,
+            credentials_error,
+            steam_key_draft: String::new(),
+            steam_id_draft: String::new(),
+            steam_sync_loading: false,
+            steam_sync_error: None,
+            steam_sync_rx: None,
+            epic_sync_loading: false,
+            epic_sync_error: None,
+            epic_sync_rx: None,
+            managed_tools: std::array::from_fn(|_| None),
+            tool_jobs: std::array::from_fn(|_| None),
             meta_job: None,
             meta_queue: VecDeque::new(),
             disk_job: None,
@@ -550,6 +631,13 @@ impl QuarkApp {
         self.poll_metadata(ctx);
         self.poll_disk(ctx);
         self.poll_steam_import(ctx);
+        self.poll_managed_tools(ctx);
+        self.poll_steam_sync(ctx);
+        self.poll_epic_sync(ctx);
+        self.poll_store(ctx);
+        if self.tab == Tab::Store && !self.store_offline_mode {
+            self.ensure_store(ctx);
+        }
 
         if self.add.scan.running || self.add.scan.search_rx.is_some() {
             ctx.request_repaint_after(Duration::from_millis(120));
@@ -644,7 +732,10 @@ impl QuarkApp {
             if let Some(game) = self.lib.get_mut(&id) {
                 let name = game.name.clone();
                 game.record_session(started_ts, secs);
-                self.toast_info(format!("{name} : session de {}", human_playtime(secs.max(1))));
+                self.toast_info(format!(
+                    "{name} : session de {}",
+                    human_playtime(secs.max(1))
+                ));
             }
             self.touch();
         }
@@ -814,7 +905,9 @@ impl QuarkApp {
                 dialog = dialog
                     .add_filter(
                         "Programmes",
-                        &["exe", "EXE", "sh", "bat", "run", "desktop", "AppImage", "appimage"],
+                        &[
+                            "exe", "EXE", "sh", "bat", "run", "desktop", "AppImage", "appimage",
+                        ],
                     )
                     .add_filter("Tous les fichiers", &["*"]);
             }
@@ -1090,7 +1183,10 @@ impl QuarkApp {
                 let outcome = artwork::search(&client, &item.title, &settings);
                 let hit = artwork::best_hit(&outcome, &item.title);
                 let (title, detail) = match &hit {
-                    Some(h) => (h.title.clone(), format!("{} · {}", h.source.label(), h.detail)),
+                    Some(h) => (
+                        h.title.clone(),
+                        format!("{} · {}", h.source.label(), h.detail),
+                    ),
                     None => (item.title.clone(), "aucune correspondance".to_string()),
                 };
                 candidates.push(ScanCandidate {
@@ -1302,7 +1398,11 @@ impl QuarkApp {
                 }
             }
             Some(Err(TryRecvError::Empty)) | None => {
-                if self.customize.as_ref().is_some_and(|customize| customize.loading) {
+                if self
+                    .customize
+                    .as_ref()
+                    .is_some_and(|customize| customize.loading)
+                {
                     ctx.request_repaint_after(Duration::from_millis(120));
                 }
             }
@@ -1496,11 +1596,7 @@ impl QuarkApp {
         let Some(id) = self.selected.clone() else {
             return;
         };
-        let Some(app_id) = self
-            .lib
-            .get(&id)
-            .and_then(|game| game.steam_app_id)
-        else {
+        let Some(app_id) = self.lib.get(&id).and_then(|game| game.steam_app_id) else {
             return;
         };
         if self.protondb.contains_key(&app_id) {
@@ -1541,8 +1637,7 @@ impl QuarkApp {
             }
             Some((app_id, Ok(Err(message)))) => {
                 self.protondb_job = None;
-                self.protondb
-                    .insert(app_id, ProtonDbState::Failed(message));
+                self.protondb.insert(app_id, ProtonDbState::Failed(message));
             }
             Some((app_id, Err(TryRecvError::Disconnected))) => {
                 self.protondb_job = None;
@@ -1600,8 +1695,16 @@ impl QuarkApp {
                     ui.add_space(18.0);
                     let (mark_rect, _) = ui.allocate_exact_size(Vec2::splat(24.0), Sense::hover());
                     let painter = ui.painter_at(mark_rect);
-                    painter.circle_stroke(mark_rect.center(), 8.0, Stroke::new(2.0_f32, pal.accent));
-                    painter.circle_stroke(mark_rect.center(), 3.0, Stroke::new(2.0_f32, pal.text_dim));
+                    painter.circle_stroke(
+                        mark_rect.center(),
+                        8.0,
+                        Stroke::new(2.0_f32, pal.accent),
+                    );
+                    painter.circle_stroke(
+                        mark_rect.center(),
+                        3.0,
+                        Stroke::new(2.0_f32, pal.text_dim),
+                    );
                     painter.circle_filled(
                         mark_rect.center() + Vec2::new(7.0, 4.0),
                         2.5,
@@ -1614,14 +1717,23 @@ impl QuarkApp {
                     if widgets::tab(ui, "Boutique", self.tab == Tab::Store, &pal).clicked() {
                         self.tab = Tab::Store;
                     }
+                    if widgets::tab(ui, "Mes jeux", self.tab == Tab::MyGames, &pal).clicked() {
+                        self.tab = Tab::MyGames;
+                    }
                     if widgets::tab(ui, "Bibliothèque", self.tab == Tab::Library, &pal).clicked() {
                         self.tab = Tab::Library;
                     }
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.add_space(16.0);
-                        if widgets::icon_button(ui, 32.0, Icon::Gear, &pal, "Paramètres · Ctrl+Q pour quitter")
-                            .clicked()
+                        if widgets::icon_button(
+                            ui,
+                            32.0,
+                            Icon::Gear,
+                            &pal,
+                            "Paramètres · Ctrl+Q pour quitter",
+                        )
+                        .clicked()
                         {
                             self.settings_open = true;
                         }
@@ -1630,7 +1742,9 @@ impl QuarkApp {
                         // gauche et la page grille ne les dupliquent plus.
                         if self.tab == Tab::Library {
                             ui.add_space(4.0);
-                            if widgets::icon_button(ui, 28.0, Icon::Grid, &pal, "Vue grille").clicked() {
+                            if widgets::icon_button(ui, 28.0, Icon::Grid, &pal, "Vue grille")
+                                .clicked()
+                            {
                                 self.set_view(ViewMode::Grid);
                             }
                             if widgets::icon_button(ui, 28.0, Icon::List, &pal, "Vue liste (Steam)")
@@ -1653,9 +1767,9 @@ impl QuarkApp {
                                     .hint_text("Rechercher dans la bibliothèque  ·  Ctrl+F")
                                     .font(FontId::proportional(12.5)),
                             );
-                        } else {
+                        } else if self.tab == Tab::Store {
                             ui.label(
-                                RichText::new("Boutique bientôt disponible")
+                                RichText::new("Catalogue Steam")
                                     .size(11.5)
                                     .color(pal.text_faint),
                             );
@@ -1740,7 +1854,10 @@ impl QuarkApp {
                 }
                 game.name.to_lowercase().contains(&needle)
                     || game.developer.to_lowercase().contains(&needle)
-                    || game.tags.iter().any(|tag| tag.to_lowercase().contains(&needle))
+                    || game
+                        .tags
+                        .iter()
+                        .any(|tag| tag.to_lowercase().contains(&needle))
                     || game
                         .genres
                         .iter()
@@ -1846,6 +1963,7 @@ impl QuarkApp {
         match self.tab {
             Tab::Store => self.store_tab(ctx),
             Tab::Library => self.library_tab(ctx),
+            Tab::MyGames => self.my_games_tab(ctx),
         }
 
         self.add_dialog(ctx);
@@ -2182,7 +2300,11 @@ impl QuarkApp {
             }
             _ => {}
         }
-        if self.steam_import.as_ref().is_some_and(|import| import.loading) {
+        if self
+            .steam_import
+            .as_ref()
+            .is_some_and(|import| import.loading)
+        {
             // Le thread de lecture ne peut pas réveiller egui : on demande une
             // image de temps en temps pendant l'analyse des manifestes.
             ctx.request_repaint_after(Duration::from_millis(150));
@@ -2190,6 +2312,365 @@ impl QuarkApp {
     }
 
     /// Ajoute les jeux Steam cochés (jamais deux fois le même AppID).
+    fn ensure_store(&mut self, ctx: &egui::Context) {
+        if self.store_loading || self.store_state != StoreLoadState::Idle {
+            return;
+        }
+        if self.store_snapshot.is_none() || self.store_stale {
+            self.refresh_store(ctx);
+        } else {
+            self.store_state = StoreLoadState::Ready;
+        }
+    }
+
+    pub fn refresh_store(&mut self, ctx: &egui::Context) {
+        if self.store_loading || self.store_offline_mode {
+            return;
+        }
+        self.store_state = StoreLoadState::Loading;
+        self.store_loading = true;
+        self.store_error = None;
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        let language = self.lib.settings.language.clone();
+        let country = self.lib.settings.country.clone();
+        std::thread::spawn(move || {
+            let result = crate::steam_store::featured(&artwork::http(), &language, &country);
+            let _ = tx.send(result);
+            repaint.request_repaint();
+        });
+        self.store_featured_rx = Some(rx);
+        ctx.request_repaint_after(Duration::from_millis(120));
+    }
+
+    pub fn search_store(&mut self, ctx: &egui::Context) {
+        let query = self.store_query.trim().to_string();
+        if query.len() < 2 || self.store_search_loading || self.store_offline_mode {
+            return;
+        }
+        self.store_search_loading = true;
+        self.store_search_error = None;
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        let language = self.lib.settings.language.clone();
+        let country = self.lib.settings.country.clone();
+        std::thread::spawn(move || {
+            let result = crate::steam_store::search(&artwork::http(), &query, &language, &country);
+            let _ = tx.send(result);
+            repaint.request_repaint();
+        });
+        self.store_search_rx = Some(rx);
+        ctx.request_repaint_after(Duration::from_millis(120));
+    }
+
+    fn poll_store(&mut self, ctx: &egui::Context) {
+        if let Some(result) = self.store_featured_rx.as_ref().map(Receiver::try_recv) {
+            match result {
+                Ok(Ok(snapshot)) => {
+                    let _ = crate::steam_store::save_cache_atomic(
+                        &crate::steam_store::cache_path(),
+                        &snapshot,
+                    );
+                    self.store_snapshot = Some(snapshot);
+                    self.store_stale = false;
+                    self.store_error = None;
+                    self.store_state = StoreLoadState::Ready;
+                    self.store_loading = false;
+                    self.store_featured_rx = None;
+                }
+                Ok(Err(error)) => {
+                    self.store_error = Some(error);
+                    self.store_loading = false;
+                    self.store_stale = self
+                        .store_snapshot
+                        .as_ref()
+                        .is_some_and(|cache| cache.is_stale(crate::config::now_ts()));
+                    self.store_state = if self.store_snapshot.is_some() {
+                        StoreLoadState::Ready
+                    } else {
+                        StoreLoadState::Failed
+                    };
+                    self.store_featured_rx = None;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    self.store_error = Some("chargement des offres interrompu".to_string());
+                    self.store_loading = false;
+                    self.store_stale = self
+                        .store_snapshot
+                        .as_ref()
+                        .is_some_and(|cache| cache.is_stale(crate::config::now_ts()));
+                    self.store_state = if self.store_snapshot.is_some() {
+                        StoreLoadState::Ready
+                    } else {
+                        StoreLoadState::Failed
+                    };
+                    self.store_featured_rx = None;
+                }
+                Err(TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(120)),
+            }
+        }
+        if let Some(result) = self.store_search_rx.as_ref().map(Receiver::try_recv) {
+            match result {
+                Ok(Ok(items)) => {
+                    self.store_search_results = Some(items);
+                    self.store_search_error = None;
+                    self.store_search_loading = false;
+                    self.store_search_rx = None;
+                }
+                Ok(Err(error)) => {
+                    self.store_search_error = Some(error);
+                    self.store_search_loading = false;
+                    self.store_search_rx = None;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    self.store_search_error = Some("recherche interrompue".to_string());
+                    self.store_search_loading = false;
+                    self.store_search_rx = None;
+                }
+                Err(TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(120)),
+            }
+        }
+    }
+
+    pub fn open_store_item(&mut self, item: &crate::steam_store::StoreItem) {
+        // URL de fiche générée localement à partir de l'AppID; aucun lien reçu
+        // dans la réponse storefront n'est exécuté.
+        let url = format!("https://store.steampowered.com/app/{}", item.app_id);
+        if let Err(error) = crate::news::open_in_browser(&url) {
+            self.toast_error(format!("Ouverture de Steam impossible : {error}"));
+        }
+    }
+
+    pub fn start_managed_tool(
+        &mut self,
+        ctx: &egui::Context,
+        tool: crate::providers::tools::ManagedToolId,
+    ) {
+        let index = tool.index();
+        if self.tool_jobs[index].is_some() {
+            return;
+        }
+        self.managed_tools[index] = Some("Recherche d'une release officielle…".to_string());
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let result = (|| {
+                let client = artwork::http();
+                let release = crate::providers::tools::latest_release(&client, tool)?;
+                let tag = release.tag.clone();
+                let asset = release.asset(tool)?.clone();
+                let path = crate::providers::tools::install_verified(
+                    &client,
+                    tool,
+                    &asset,
+                    &crate::config::data_dir().join("tools"),
+                )?;
+                Ok(format!("{tag} · {}", path.display()))
+            })();
+            let _ = tx.send(result);
+            repaint.request_repaint();
+        });
+        self.tool_jobs[index] = Some(rx);
+        self.managed_tools[index] = Some("Téléchargement et vérification…".to_string());
+        ctx.request_repaint_after(Duration::from_millis(150));
+    }
+
+    fn poll_managed_tools(&mut self, ctx: &egui::Context) {
+        let mut pending = false;
+        for index in 0..self.tool_jobs.len() {
+            let result = self.tool_jobs[index].as_ref().map(|rx| rx.try_recv());
+            match result {
+                Some(Ok(Ok(message))) => {
+                    self.tool_jobs[index] = None;
+                    self.managed_tools[index] = Some(message);
+                }
+                Some(Ok(Err(error))) => {
+                    self.tool_jobs[index] = None;
+                    self.managed_tools[index] = Some(format!("Échec : {error}"));
+                }
+                Some(Err(TryRecvError::Disconnected)) => {
+                    self.tool_jobs[index] = None;
+                    self.managed_tools[index] = Some("Échec : opération interrompue".to_string());
+                }
+                Some(Err(TryRecvError::Empty)) => pending = true,
+                None => {}
+            }
+        }
+        if pending {
+            ctx.request_repaint_after(Duration::from_millis(120));
+        }
+    }
+
+    pub fn start_epic_sync(&mut self, ctx: &egui::Context) {
+        if self.epic_sync_loading
+            || !crate::providers::tools::ManagedToolId::Legendary
+                .installed_path()
+                .is_file()
+        {
+            return;
+        }
+        self.epic_sync_loading = true;
+        self.epic_sync_error = None;
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let result = crate::providers::legendary::LegendaryAdapter::new()
+                .sync_owned(crate::config::now_ts(), None);
+            let _ = tx.send(result);
+            repaint.request_repaint();
+        });
+        self.epic_sync_rx = Some(rx);
+        ctx.request_repaint_after(Duration::from_millis(120));
+    }
+
+    fn poll_epic_sync(&mut self, ctx: &egui::Context) {
+        let Some(result) = self.epic_sync_rx.as_ref().map(Receiver::try_recv) else {
+            return;
+        };
+        match result {
+            Ok(Ok(games)) => {
+                self.epic_sync_rx = None;
+                self.epic_sync_loading = false;
+                if games.is_empty() {
+                    self.epic_sync_error = Some("bibliothèque Epic vide ou compte Legendary indisponible; données précédentes conservées".into());
+                } else {
+                    self.lib.provider_library.games = crate::providers::legendary::merge_epic(
+                        &self.lib.provider_library.games,
+                        &games,
+                    );
+                    self.touch();
+                }
+            }
+            Ok(Err(error)) => {
+                self.epic_sync_rx = None;
+                self.epic_sync_loading = false;
+                self.epic_sync_error = Some(error);
+            }
+            Err(TryRecvError::Disconnected) => {
+                self.epic_sync_rx = None;
+                self.epic_sync_loading = false;
+                self.epic_sync_error =
+                    Some("synchronisation Epic interrompue; données précédentes conservées".into());
+            }
+            Err(TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(120)),
+        }
+    }
+
+    pub fn start_steam_sync(&mut self, ctx: &egui::Context) {
+        if self.steam_sync_loading {
+            return;
+        }
+        self.steam_sync_loading = true;
+        self.steam_sync_error = None;
+        let key = self.credentials.steam_web_api_key.clone();
+        let steam_id = self.credentials.steam_id.clone();
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let local_result = steamlib::installed();
+            let (local, local_error) = match local_result {
+                Ok(games) => (games, None),
+                Err(error) => (Vec::new(), Some(error)),
+            };
+            let owned = match (key, steam_id) {
+                (Some(key), Some(id))
+                    if !key.trim().is_empty() && crate::providers::steam::valid_steam_id(&id) =>
+                {
+                    Some(crate::providers::steam::owned(&artwork::http(), &id, &key))
+                }
+                _ => None,
+            };
+            let _ = tx.send(SteamSyncOutcome {
+                local,
+                local_error,
+                owned,
+            });
+            repaint.request_repaint();
+        });
+        self.steam_sync_rx = Some(rx);
+        ctx.request_repaint_after(Duration::from_millis(120));
+    }
+
+    fn poll_steam_sync(&mut self, ctx: &egui::Context) {
+        let Some(result) = self.steam_sync_rx.as_ref().map(Receiver::try_recv) else {
+            return;
+        };
+        match result {
+            Ok(outcome) => {
+                self.steam_sync_rx = None;
+                self.steam_sync_loading = false;
+                let local =
+                    crate::providers::steam::installed_games(&outcome.local, &self.lib.games);
+                let owned = match outcome.owned {
+                    Some(Ok(records)) => Some(records),
+                    Some(Err(error)) => {
+                        self.steam_sync_error = Some(format!(
+                            "API possédée indisponible : {error} · données précédentes conservées"
+                        ));
+                        None
+                    }
+                    None => None,
+                };
+                self.lib.provider_library.games = crate::providers::steam::merge_sync(
+                    &self.lib.provider_library.games,
+                    &local,
+                    owned.as_deref(),
+                    &self.lib.games,
+                );
+                self.touch();
+                if let Some(error) = outcome.local_error {
+                    if self.steam_sync_error.is_none() {
+                        self.steam_sync_error = Some(error);
+                    }
+                }
+            }
+            Err(TryRecvError::Disconnected) => {
+                self.steam_sync_rx = None;
+                self.steam_sync_loading = false;
+                self.steam_sync_error = Some("synchronisation Steam interrompue".to_string());
+            }
+            Err(TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(120)),
+        }
+    }
+
+    pub fn save_steam_api_key(&mut self) {
+        let key = self.steam_key_draft.trim().to_string();
+        let steam_id = self.steam_id_draft.trim().to_string();
+        if key.is_empty() && steam_id.is_empty() {
+            return;
+        }
+        if !steam_id.is_empty() && !crate::providers::steam::valid_steam_id(&steam_id) {
+            self.toast_error(
+                "SteamID64 invalide : il doit contenir 17 chiffres commençant par 7656119",
+            );
+            return;
+        }
+        let mut updated = self.credentials.clone();
+        if !key.is_empty() {
+            updated.steam_web_api_key = Some(key);
+        }
+        if !steam_id.is_empty() {
+            updated.steam_id = Some(steam_id);
+        }
+        match crate::providers::credentials::save_atomic(
+            &crate::config::credentials_path(),
+            &updated,
+        ) {
+            Ok(()) => {
+                self.credentials = updated;
+                self.steam_key_draft.clear();
+                self.steam_id_draft.clear();
+                self.credentials_error = None;
+                self.toast_info(
+                    "Identifiants Steam enregistrés dans le coffre local (non chiffré)",
+                );
+            }
+            Err(error) => self.toast_error(format!(
+                "Enregistrement des identifiants impossible : {error}"
+            )),
+        }
+    }
+
     pub fn import_steam(&mut self, ctx: &egui::Context) {
         let Some(import) = self.steam_import.as_ref() else {
             return;
@@ -2198,7 +2679,13 @@ impl QuarkApp {
             .games
             .iter()
             .filter(|candidate| candidate.include && !candidate.owned)
-            .map(|candidate| (candidate.app_id, candidate.name.clone(), candidate.exe.clone()))
+            .map(|candidate| {
+                (
+                    candidate.app_id,
+                    candidate.name.clone(),
+                    candidate.exe.clone(),
+                )
+            })
             .collect();
         if picked.is_empty() {
             self.toast_error("Aucun jeu à importer");
@@ -2257,11 +2744,7 @@ impl QuarkApp {
 
     /// Demande la fiche Steam d'un jeu (une requête à la fois).
     pub fn queue_metadata(&mut self, ctx: &egui::Context, game_id: &str) {
-        let Some(app_id) = self
-            .lib
-            .get(game_id)
-            .and_then(|game| game.steam_app_id)
-        else {
+        let Some(app_id) = self.lib.get(game_id).and_then(|game| game.steam_app_id) else {
             return;
         };
         if self.meta_job.is_some() {
@@ -2368,7 +2851,6 @@ impl QuarkApp {
             Err(TryRecvError::Disconnected) => self.disk_job = None,
         }
     }
-
 }
 
 #[cfg(test)]

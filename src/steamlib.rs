@@ -345,7 +345,10 @@ mod tests {
 }
 "#;
         let values = key_values(text);
-        assert_eq!(values.get("path").map(String::as_str), Some("/home/matheo/.local/share/Steam"));
+        assert_eq!(
+            values.get("path").map(String::as_str),
+            Some("/home/matheo/.local/share/Steam")
+        );
     }
 
     #[test]
@@ -365,7 +368,10 @@ mod tests {
 }
 "#;
         let paths = vdf_paths(vdf);
-        assert_eq!(paths, ["/home/matheo/.local/share/Steam", "/mnt/jeux/SteamLibrary"]);
+        assert_eq!(
+            paths,
+            ["/home/matheo/.local/share/Steam", "/mnt/jeux/SteamLibrary"]
+        );
         // Ancien format : clés numériques et chemins nus.
         let old = r#"{ "libraryfolders" { "1" "/mnt/a/Steam" "2" "/mnt/b/Steam" } }"#;
         assert_eq!(vdf_paths(old), ["/mnt/a/Steam", "/mnt/b/Steam"]);

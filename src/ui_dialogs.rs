@@ -5,8 +5,8 @@
 use crate::app::{AddStep, PickerTarget, QuarkApp, SearchState, SettingsTab, UpdateState};
 use crate::config::{self, AssetKind, EnvVar, GameStatus, ProtonMode, ThemeMode, ViewMode};
 use crate::disk;
-use crate::stats;
 use crate::proton::{self, ProtonRuntime, RuntimeKind};
+use crate::stats;
 use crate::theme::{self, Palette};
 use crate::update;
 use crate::widgets::{self, Icon};
@@ -50,321 +50,337 @@ impl QuarkApp {
         };
 
         let modal = egui::Modal::new(egui::Id::new("quark_add_game")).show(ctx, |ui| {
-                ui.set_min_width(660.0);
-                ui.label(RichText::new(title).size(17.0).color(pal.text));
-                ui.add_space(10.0);
+            ui.set_min_width(660.0);
+            ui.label(RichText::new(title).size(17.0).color(pal.text));
+            ui.add_space(10.0);
 
-                match step {
-                    AddStep::Name => {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("Nom du jeu").size(12.0).color(pal.text_dim));
-                            widgets::info_button(
-                                ui,
-                                &pal,
-                                "Quark cherche le jeu sur Steam puis sur SteamGridDB pour \
+            match step {
+                AddStep::Name => {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Nom du jeu").size(12.0).color(pal.text_dim));
+                        widgets::info_button(
+                            ui,
+                            &pal,
+                            "Quark cherche le jeu sur Steam puis sur SteamGridDB pour \
                                  récupérer les artworks originaux (bannière, logo, couverture, \
                                  icône). La recherche part dès 2 lettres.",
-                            );
-                        });
-                        ui.add_space(4.0);
-                        let response = ui.add(
-                            egui::TextEdit::singleline(&mut self.add.name)
-                                .hint_text("Ex. Hollow Knight")
-                                .font(FontId::proportional(15.0))
-                                .desired_width(f32::INFINITY),
                         );
-                        if response.changed() {
-                            // On garde les résultats affichés : ils sont remplacés
-                            // dès que la nouvelle requête part.
-                            self.add.last_typed = Some(Instant::now());
-                        }
-                        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                            self.start_search(ui.ctx());
-                        }
-                        ui.add_space(12.0);
-
-                        let mut warnings: Vec<String> = Vec::new();
-                        match &self.add.state {
-                            SearchState::Idle => {
-                                ui.label(
-                                    RichText::new("Tape au moins 2 lettres, la recherche est automatique.")
-                                        .size(11.5)
-                                        .color(pal.text_faint),
-                                );
-                            }
-                            SearchState::Loading => {
-                                ui.horizontal(|ui| {
-                                    ui.spinner();
-                                    ui.label(RichText::new("Recherche en cours…").size(12.5).color(pal.text_dim));
-                                });
-                            }
-                            SearchState::Done(hits, warns) => {
-                                warnings = warns.clone();
-                                if hits.is_empty() {
-                                    ui.label(
-                                        RichText::new("Aucun résultat. Tu peux continuer sans artwork.")
-                                            .size(12.5)
-                                            .color(pal.text_dim),
-                                    );
-                                }
-                                let list_height = (hits.len().min(6) as f32) * 46.0;
-                                egui::ScrollArea::vertical()
-                                    .id_salt("quark_search_results")
-                                    .max_height(list_height.max(46.0))
-                                    .auto_shrink([false, false])
-                                    .show(ui, |ui| {
-                                        for (index, hit) in hits.iter().enumerate() {
-                                            if search_result_row(ui, &pal, hit).clicked() {
-                                                pick_hit = Some(index);
-                                            }
-                                        }
-                                    });
-                            }
-                        }
-                        for warning in warnings {
-                            ui.add_space(2.0);
-                            ui.label(RichText::new(warning).size(11.0).color(pal.text_faint));
-                        }
-
-                        ui.add_space(14.0);
-                        ui.horizontal(|ui| {
-                            let ready = !self.add.name.trim().is_empty();
-                            if widgets::accent_button(
-                                ui,
-                                Vec2::new(230.0, 36.0),
-                                "Choisir l'exécutable",
-                                &pal,
-                                ready,
-                                Icon::Plus,
-                            )
-                            .clicked()
-                                && ready
-                            {
-                                continue_to_exe = true;
-                            }
-                            ui.add_space(10.0);
-                            if widgets::ghost_button(ui, "Annuler", &pal, Icon::None).clicked() {
-                                close = true;
-                            }
-                        });
-                        ui.add_space(10.0);
-                        ui.horizontal(|ui| {
-                            if widgets::ghost_button(ui, "Choisir un dossier…", &pal, Icon::Folder)
-                                .clicked()
-                            {
-                                browse_folder = true;
-                            }
-                            widgets::info_button(
-                                ui,
-                                &pal,
-                                "Analyse un dossier, propose les jeux qu'il contient et te laisse \
-                                 confirmer chaque titre (ou dire que ce n'est pas un jeu).",
-                            );
-                        });
+                    });
+                    ui.add_space(4.0);
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut self.add.name)
+                            .hint_text("Ex. Hollow Knight")
+                            .font(FontId::proportional(15.0))
+                            .desired_width(f32::INFINITY),
+                    );
+                    if response.changed() {
+                        // On garde les résultats affichés : ils sont remplacés
+                        // dès que la nouvelle requête part.
+                        self.add.last_typed = Some(Instant::now());
                     }
-                    AddStep::Artwork => {
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                RichText::new("Images du jeu").size(12.0).color(pal.text_dim),
-                            );
-                            widgets::info_button(
-                                ui,
-                                &pal,
-                                "La première proposition de chaque type est choisie par défaut : \
-                                 clique une vignette pour en prendre une autre.",
-                            );
-                        });
-                        ui.add_space(10.0);
+                    if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        self.start_search(ui.ctx());
+                    }
+                    ui.add_space(12.0);
 
-                        let plan = self.add.artwork.plan.clone();
-                        if self.add.artwork.loading {
+                    let mut warnings: Vec<String> = Vec::new();
+                    match &self.add.state {
+                        SearchState::Idle => {
+                            ui.label(
+                                RichText::new(
+                                    "Tape au moins 2 lettres, la recherche est automatique.",
+                                )
+                                .size(11.5)
+                                .color(pal.text_faint),
+                            );
+                        }
+                        SearchState::Loading => {
                             ui.horizontal(|ui| {
                                 ui.spinner();
                                 ui.label(
-                                    RichText::new("Recherche des artworks\u{2026}")
+                                    RichText::new("Recherche en cours…")
                                         .size(12.5)
                                         .color(pal.text_dim),
                                 );
                             });
-                        } else if let Some(plan) = &plan {
+                        }
+                        SearchState::Done(hits, warns) => {
+                            warnings = warns.clone();
+                            if hits.is_empty() {
+                                ui.label(
+                                    RichText::new(
+                                        "Aucun résultat. Tu peux continuer sans artwork.",
+                                    )
+                                    .size(12.5)
+                                    .color(pal.text_dim),
+                                );
+                            }
+                            let list_height = (hits.len().min(6) as f32) * 46.0;
                             egui::ScrollArea::vertical()
-                                .id_salt("quark_artwork_choices")
-                                .max_height(330.0)
+                                .id_salt("quark_search_results")
+                                .max_height(list_height.max(46.0))
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
-                                    for kind in AssetKind::ALL {
-                                        let urls = plan.candidates(kind);
-                                        ui.label(
-                                            RichText::new(kind.label().to_uppercase())
-                                                .size(11.0)
-                                                .color(pal.text_faint),
-                                        );
-                                        ui.add_space(3.0);
-                                        if urls.is_empty() {
-                                            ui.label(
-                                                RichText::new("aucune proposition")
-                                                    .size(11.5)
-                                                    .color(pal.text_faint),
-                                            );
-                                        } else {
-                                            let selected = self
-                                                .add
-                                                .artwork
-                                                .chosen
-                                                .get(&kind)
-                                                .copied()
-                                                .unwrap_or(0);
-                                            ui.horizontal_wrapped(|ui| {
-                                                for (index, url) in urls.iter().enumerate() {
-                                                    if artwork_choice(
-                                                        ui,
-                                                        &pal,
-                                                        url,
-                                                        index == selected,
-                                                    )
-                                                    .clicked()
-                                                    {
-                                                        pick_artwork = Some((kind, index));
-                                                    }
-                                                }
-                                            });
+                                    for (index, hit) in hits.iter().enumerate() {
+                                        if search_result_row(ui, &pal, hit).clicked() {
+                                            pick_hit = Some(index);
                                         }
-                                        ui.add_space(10.0);
                                     }
                                 });
-                        } else {
+                        }
+                    }
+                    for warning in warnings {
+                        ui.add_space(2.0);
+                        ui.label(RichText::new(warning).size(11.0).color(pal.text_faint));
+                    }
+
+                    ui.add_space(14.0);
+                    ui.horizontal(|ui| {
+                        let ready = !self.add.name.trim().is_empty();
+                        if widgets::accent_button(
+                            ui,
+                            Vec2::new(230.0, 36.0),
+                            "Choisir l'exécutable",
+                            &pal,
+                            ready,
+                            Icon::Plus,
+                        )
+                        .clicked()
+                            && ready
+                        {
+                            continue_to_exe = true;
+                        }
+                        ui.add_space(10.0);
+                        if widgets::ghost_button(ui, "Annuler", &pal, Icon::None).clicked() {
+                            close = true;
+                        }
+                    });
+                    ui.add_space(10.0);
+                    ui.horizontal(|ui| {
+                        if widgets::ghost_button(ui, "Choisir un dossier…", &pal, Icon::Folder)
+                            .clicked()
+                        {
+                            browse_folder = true;
+                        }
+                        widgets::info_button(
+                            ui,
+                            &pal,
+                            "Analyse un dossier, propose les jeux qu'il contient et te laisse \
+                                 confirmer chaque titre (ou dire que ce n'est pas un jeu).",
+                        );
+                    });
+                }
+                AddStep::Artwork => {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Images du jeu")
+                                .size(12.0)
+                                .color(pal.text_dim),
+                        );
+                        widgets::info_button(
+                            ui,
+                            &pal,
+                            "La première proposition de chaque type est choisie par défaut : \
+                                 clique une vignette pour en prendre une autre.",
+                        );
+                    });
+                    ui.add_space(10.0);
+
+                    let plan = self.add.artwork.plan.clone();
+                    if self.add.artwork.loading {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
                             ui.label(
-                                RichText::new("Aucun artwork proposé : tu peux continuer sans.")
-                                    .size(12.0)
+                                RichText::new("Recherche des artworks\u{2026}")
+                                    .size(12.5)
                                     .color(pal.text_dim),
                             );
-                        }
-                        if let Some(error) = self.add.artwork.error.clone() {
-                            ui.add_space(4.0);
-                            ui.label(RichText::new(error).size(11.0).color(pal.text_faint));
-                        }
-
-                        ui.add_space(14.0);
-                        ui.horizontal(|ui| {
-                            if widgets::ghost_button(ui, "← Retour", &pal, Icon::None).clicked() {
-                                back = true;
-                            }
-                            ui.add_space(10.0);
-                            if widgets::accent_button(
-                                ui,
-                                Vec2::new(230.0, 36.0),
-                                "Choisir l'exécutable",
-                                &pal,
-                                true,
-                                Icon::Plus,
-                            )
-                            .clicked()
-                            {
-                                finish_artwork = true;
-                            }
                         });
-                    }
-                    AddStep::Scan => {
-                        scan_action = self.scan_step(ui, &pal);
-                    }
-                    AddStep::Exe => {
-                        ui.label(RichText::new("Nom affiché").size(12.0).color(pal.text_dim));
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.add.name)
-                                .font(FontId::proportional(15.0))
-                                .desired_width(f32::INFINITY),
+                    } else if let Some(plan) = &plan {
+                        egui::ScrollArea::vertical()
+                            .id_salt("quark_artwork_choices")
+                            .max_height(330.0)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                for kind in AssetKind::ALL {
+                                    let urls = plan.candidates(kind);
+                                    ui.label(
+                                        RichText::new(kind.label().to_uppercase())
+                                            .size(11.0)
+                                            .color(pal.text_faint),
+                                    );
+                                    ui.add_space(3.0);
+                                    if urls.is_empty() {
+                                        ui.label(
+                                            RichText::new("aucune proposition")
+                                                .size(11.5)
+                                                .color(pal.text_faint),
+                                        );
+                                    } else {
+                                        let selected = self
+                                            .add
+                                            .artwork
+                                            .chosen
+                                            .get(&kind)
+                                            .copied()
+                                            .unwrap_or(0);
+                                        ui.horizontal_wrapped(|ui| {
+                                            for (index, url) in urls.iter().enumerate() {
+                                                if artwork_choice(ui, &pal, url, index == selected)
+                                                    .clicked()
+                                                {
+                                                    pick_artwork = Some((kind, index));
+                                                }
+                                            }
+                                        });
+                                    }
+                                    ui.add_space(10.0);
+                                }
+                            });
+                    } else {
+                        ui.label(
+                            RichText::new("Aucun artwork proposé : tu peux continuer sans.")
+                                .size(12.0)
+                                .color(pal.text_dim),
                         );
-                        ui.add_space(10.0);
+                    }
+                    if let Some(error) = self.add.artwork.error.clone() {
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(error).size(11.0).color(pal.text_faint));
+                    }
 
-                        ui.label(RichText::new("Exécutable du jeu").size(12.0).color(pal.text_dim));
+                    ui.add_space(14.0);
+                    ui.horizontal(|ui| {
+                        if widgets::ghost_button(ui, "← Retour", &pal, Icon::None).clicked() {
+                            back = true;
+                        }
+                        ui.add_space(10.0);
+                        if widgets::accent_button(
+                            ui,
+                            Vec2::new(230.0, 36.0),
+                            "Choisir l'exécutable",
+                            &pal,
+                            true,
+                            Icon::Plus,
+                        )
+                        .clicked()
+                        {
+                            finish_artwork = true;
+                        }
+                    });
+                }
+                AddStep::Scan => {
+                    scan_action = self.scan_step(ui, &pal);
+                }
+                AddStep::Exe => {
+                    ui.label(RichText::new("Nom affiché").size(12.0).color(pal.text_dim));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.add.name)
+                            .font(FontId::proportional(15.0))
+                            .desired_width(f32::INFINITY),
+                    );
+                    ui.add_space(10.0);
+
+                    ui.label(
+                        RichText::new("Exécutable du jeu")
+                            .size(12.0)
+                            .color(pal.text_dim),
+                    );
+                    ui.horizontal(|ui| {
+                        let field = (ui.available_width() - 130.0).max(200.0);
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.add.exe)
+                                .hint_text("/chemin/vers/jeu.exe ou jeu.sh")
+                                .desired_width(field),
+                        );
+                        if widgets::ghost_button(ui, "Parcourir…", &pal, Icon::Folder).clicked() {
+                            browse_exe = true;
+                        }
+                    });
+                    if let Some(hit) = self.add.hit.as_ref() {
+                        let info = match (hit.steam_app_id, hit.sgdb_id) {
+                            (Some(appid), _) => format!("Artworks : Steam AppID {appid}"),
+                            (None, Some(id)) => format!("Artworks : SteamGridDB #{id}"),
+                            _ => "Artworks : aucun".to_string(),
+                        };
+                        ui.label(RichText::new(info).size(11.0).color(pal.text_faint));
+                    }
+                    ui.add_space(12.0);
+
+                    ui.label(
+                        RichText::new("Arguments (optionnel)")
+                            .size(12.0)
+                            .color(pal.text_dim),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.add.args)
+                            .hint_text("--fullscreen")
+                            .desired_width(f32::INFINITY),
+                    );
+                    ui.add_space(12.0);
+
+                    ui.label(RichText::new("Lancement").size(12.0).color(pal.text_dim));
+                    runtime_combo(
+                        ui,
+                        &pal,
+                        "add_runtime",
+                        &mut self.add.proton,
+                        &self.runtimes,
+                        true,
+                    );
+                    ui.add_space(10.0);
+
+                    ui.checkbox(
+                        &mut self.add.custom_prefix,
+                        "Préfixe Proton personnalisé pour ce jeu",
+                    );
+                    if self.add.custom_prefix {
                         ui.horizontal(|ui| {
                             let field = (ui.available_width() - 130.0).max(200.0);
                             ui.add(
-                                egui::TextEdit::singleline(&mut self.add.exe)
-                                    .hint_text("/chemin/vers/jeu.exe ou jeu.sh")
+                                egui::TextEdit::singleline(&mut self.add.prefix)
+                                    .hint_text("~/Games/prefixes/mon-jeu")
                                     .desired_width(field),
                             );
-                            if widgets::ghost_button(ui, "Parcourir…", &pal, Icon::Folder).clicked() {
-                                browse_exe = true;
-                            }
-                        });
-                        if let Some(hit) = self.add.hit.as_ref() {
-                            let info = match (hit.steam_app_id, hit.sgdb_id) {
-                                (Some(appid), _) => format!("Artworks : Steam AppID {appid}"),
-                                (None, Some(id)) => format!("Artworks : SteamGridDB #{id}"),
-                                _ => "Artworks : aucun".to_string(),
-                            };
-                            ui.label(RichText::new(info).size(11.0).color(pal.text_faint));
-                        }
-                        ui.add_space(12.0);
-
-                        ui.label(RichText::new("Arguments (optionnel)").size(12.0).color(pal.text_dim));
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.add.args)
-                                .hint_text("--fullscreen")
-                                .desired_width(f32::INFINITY),
-                        );
-                        ui.add_space(12.0);
-
-                        ui.label(RichText::new("Lancement").size(12.0).color(pal.text_dim));
-                        runtime_combo(
-                            ui,
-                            &pal,
-                            "add_runtime",
-                            &mut self.add.proton,
-                            &self.runtimes,
-                            true,
-                        );
-                        ui.add_space(10.0);
-
-                        ui.checkbox(&mut self.add.custom_prefix, "Préfixe Proton personnalisé pour ce jeu");
-                        if self.add.custom_prefix {
-                            ui.horizontal(|ui| {
-                                let field = (ui.available_width() - 130.0).max(200.0);
-                                ui.add(
-                                    egui::TextEdit::singleline(&mut self.add.prefix)
-                                        .hint_text("~/Games/prefixes/mon-jeu")
-                                        .desired_width(field),
-                                );
-                                if widgets::ghost_button(ui, "Parcourir…", &pal, Icon::Folder).clicked()
-                                {
-                                    browse_prefix = true;
-                                }
-                            });
-                        }
-
-                        ui.add_space(14.0);
-                        ui.horizontal(|ui| {
-                            if widgets::ghost_button(ui, "← Retour", &pal, Icon::None).clicked() {
-                                back = true;
-                            }
-                            ui.add_space(10.0);
-                            let ready = !self.add.exe.trim().is_empty();
-                            if widgets::accent_button(
-                                ui,
-                                Vec2::new(200.0, 36.0),
-                                "Ajouter le jeu",
-                                &pal,
-                                ready,
-                                Icon::Plus,
-                            )
-                            .clicked()
-                                && ready
+                            if widgets::ghost_button(ui, "Parcourir…", &pal, Icon::Folder).clicked()
                             {
-                                submit = true;
-                            }
-                            if !ready {
-                                ui.add_space(8.0);
-                                ui.label(
-                                    RichText::new("indique l'exécutable pour valider")
-                                        .size(11.0)
-                                        .color(pal.text_faint),
-                                );
+                                browse_prefix = true;
                             }
                         });
                     }
+
+                    ui.add_space(14.0);
+                    ui.horizontal(|ui| {
+                        if widgets::ghost_button(ui, "← Retour", &pal, Icon::None).clicked() {
+                            back = true;
+                        }
+                        ui.add_space(10.0);
+                        let ready = !self.add.exe.trim().is_empty();
+                        if widgets::accent_button(
+                            ui,
+                            Vec2::new(200.0, 36.0),
+                            "Ajouter le jeu",
+                            &pal,
+                            ready,
+                            Icon::Plus,
+                        )
+                        .clicked()
+                            && ready
+                        {
+                            submit = true;
+                        }
+                        if !ready {
+                            ui.add_space(8.0);
+                            ui.label(
+                                RichText::new("indique l'exécutable pour valider")
+                                    .size(11.0)
+                                    .color(pal.text_faint),
+                            );
+                        }
+                    });
                 }
-            });
+            }
+        });
         if modal.should_close() {
             close = true;
         }
@@ -499,6 +515,7 @@ impl QuarkApp {
         let mut redetect = false;
         let mut check_updates = false;
         let mut open_steam_import = false;
+        let mut save_steam_key = false;
         let mut download_update = false;
         let mut open_url: Option<String> = None;
 
@@ -980,6 +997,84 @@ impl QuarkApp {
                     }
                     SettingsTab::Stats => self.stats_page(ui, &pal),
                     SettingsTab::Disk => self.disk_page(ui, &pal, ctx),
+                    SettingsTab::Providers => {
+                        section(ui, "CONFIDENTIALITÉ DES COMPTES", &pal);
+                        ui.label(
+                            RichText::new(
+                                "Les identifiants restent sur cet ordinateur dans un fichier séparé, protégé par les permissions de ton compte. Ils ne sont pas chiffrés et Quark ne les envoie jamais à un serveur Quark.",
+                            )
+                            .size(12.0)
+                            .color(pal.text_dim),
+                        );
+                        ui.add_space(8.0);
+                        if let Some(error) = &self.credentials_error {
+                            ui.label(RichText::new(error).size(11.5).color(pal.danger));
+                        }
+                        ui.label(
+                            RichText::new(if self.credentials.steam_web_api_key.is_some() {
+                                "Steam Web API : clé enregistrée (masquée)"
+                            } else {
+                                "Steam Web API : clé facultative non configurée"
+                            })
+                            .size(12.0)
+                            .color(pal.text),
+                        );
+                        ui.horizontal_wrapped(|ui| {
+                            ui.add_sized(
+                                Vec2::new(330.0, 28.0),
+                                egui::TextEdit::singleline(&mut self.steam_key_draft)
+                                    .password(true)
+                                    .hint_text("Clé Web API Steam personnelle · laisser vide pour garder l'actuelle"),
+                            );
+                            ui.add_sized(
+                                Vec2::new(220.0, 28.0),
+                                egui::TextEdit::singleline(&mut self.steam_id_draft)
+                                    .password(true)
+                                    .hint_text(if self.credentials.steam_id.is_some() { "SteamID64 enregistré · remplacement facultatif" } else { "SteamID64 (17 chiffres)" }),
+                            );
+                            if widgets::ghost_button(ui, "Enregistrer", &pal, Icon::Info).clicked() {
+                                save_steam_key = true;
+                            }
+                            widgets::info_button(
+                                ui,
+                                &pal,
+                                "La clé personnelle et le SteamID64 sont enregistrés dans credentials.json avec permissions privées. GetOwnedGames peut rester inaccessible si les détails Steam sont privés. Une réponse vide est signalée comme ambiguë, jamais interprétée comme une bibliothèque vérifiée vide.",
+                            );
+                        });
+                        ui.add_space(10.0);
+                        section(ui, "BOUTIQUES", &pal);
+                        provider_status_line(ui, "Steam", "Jeux installés détectés localement ; bibliothèque possédée facultative via clé API.", &pal);
+                        provider_status_line(ui, "Epic", if self.credentials.epic.is_some() { "Identifiants locaux présents · état de compte à confirmer par Legendary." } else { "Non connecté · la connexion Legendary sera ajoutée avec l'intégration Epic." }, &pal);
+                        provider_status_line(ui, "GOG", if self.credentials.gog.is_some() { "Identifiants locaux présents · état de compte à confirmer par gogdl." } else { "Non connecté · la connexion gogdl sera ajoutée avec l'intégration GOG." }, &pal);
+                        ui.label(
+                            RichText::new("Heroic sera détecté et sa configuration ne sera lue qu'après ton accord explicite.")
+                                .size(11.5)
+                                .color(pal.text_faint),
+                        );
+
+                        ui.add_space(10.0);
+                        section(ui, "OUTILS GÉRÉS PAR QUARK", &pal);
+                        for tool in crate::providers::tools::ManagedToolId::ALL {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(RichText::new(tool.label()).size(12.0).color(pal.text));
+                                if let Some(state) = &self.managed_tools[tool.index()] {
+                                    ui.label(RichText::new(state).size(11.0).color(pal.text_dim));
+                                } else if tool.installed_path().is_file() {
+                                    ui.label(RichText::new("Binaire présent · version non vérifiée à cette session").size(10.5).color(pal.text_faint));
+                                } else {
+                                    ui.label(RichText::new("Non installé").size(10.5).color(pal.text_faint));
+                                }
+                                if widgets::ghost_button(ui, "Installer / actualiser", &pal, Icon::Refresh).clicked() {
+                                    self.start_managed_tool(ctx, tool);
+                                }
+                            });
+                        }
+                        ui.label(
+                            RichText::new("Téléchargements depuis les releases officielles Linux x86_64 ; le digest SHA-256 GitHub est vérifié avant exécution (il ne s'agit pas d'une signature indépendante). Les licences et avis de distribution seront inclus dans le paquet.")
+                                .size(11.0)
+                                .color(pal.text_faint),
+                        );
+                    }
                     SettingsTab::About => {
                         section(ui, "VERSION", &pal);
                         ui.horizontal(|ui| {
@@ -1170,7 +1265,10 @@ impl QuarkApp {
 
         if redetect {
             self.runtimes = proton::detect_runtimes();
-            self.toast_info(format!("{} runtime(s) Proton détecté(s)", self.runtimes.len()));
+            self.toast_info(format!(
+                "{} runtime(s) Proton détecté(s)",
+                self.runtimes.len()
+            ));
             self.touch();
         }
         if check_updates {
@@ -1186,6 +1284,9 @@ impl QuarkApp {
         }
         if open_steam_import {
             self.open_steam_import(ctx);
+        }
+        if save_steam_key {
+            self.save_steam_api_key();
         }
         if browse_prefix {
             let start = self
@@ -1225,7 +1326,12 @@ impl QuarkApp {
 
         section(ui, "RÉSUMÉ", pal);
         ui.horizontal(|ui| {
-            metric(ui, pal, "Temps de jeu total", &config::human_playtime(total));
+            metric(
+                ui,
+                pal,
+                "Temps de jeu total",
+                &config::human_playtime(total),
+            );
             ui.add_space(22.0);
             metric(ui, pal, "Cette semaine", &config::human_playtime(this_week));
             ui.add_space(22.0);
@@ -1233,10 +1339,7 @@ impl QuarkApp {
                 ui,
                 pal,
                 "Série en cours",
-                &format!(
-                    "{streak} jour{}",
-                    if streak > 1 { "s" } else { "" }
-                ),
+                &format!("{streak} jour{}", if streak > 1 { "s" } else { "" }),
             );
             ui.add_space(22.0);
             metric(ui, pal, "Sessions", &format!("{}", sessions.len()));
@@ -1301,10 +1404,13 @@ impl QuarkApp {
             if let Some(report) = &self.disk_report {
                 ui.add_space(14.0);
                 ui.label(
-                    RichText::new(format!("Total mesuré : {}", disk::format_bytes(report.total)))
-                        .size(13.0)
-                        .strong()
-                        .color(pal.text),
+                    RichText::new(format!(
+                        "Total mesuré : {}",
+                        disk::format_bytes(report.total)
+                    ))
+                    .size(13.0)
+                    .strong()
+                    .color(pal.text),
                 );
             }
         });
@@ -1367,8 +1473,7 @@ impl QuarkApp {
                     }
                     ui.add_space(10.0);
                     let width = 170.0;
-                    let (rect, _) = ui
-                        .allocate_exact_size(Vec2::new(width, 8.0), Sense::hover());
+                    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 8.0), Sense::hover());
                     ui.painter().rect_filled(rect, 4.0, pal.surface);
                     ui.painter().rect_filled(
                         Rect::from_min_size(
@@ -2090,8 +2195,15 @@ impl QuarkApp {
 
             ui.add_space(14.0);
             ui.horizontal(|ui| {
-                if widgets::accent_button(ui, Vec2::new(140.0, 34.0), "Fermer", &pal, true, Icon::None)
-                    .clicked()
+                if widgets::accent_button(
+                    ui,
+                    Vec2::new(140.0, 34.0),
+                    "Fermer",
+                    &pal,
+                    true,
+                    Icon::None,
+                )
+                .clicked()
                 {
                     close = true;
                 }
@@ -2272,7 +2384,8 @@ fn env_editor(ui: &mut egui::Ui, pal: &Palette, vars: &mut Vec<EnvVar>) -> bool 
             if value.changed() {
                 changed = true;
             }
-            if widgets::icon_button(ui, 24.0, Icon::Trash, pal, "Retirer cette variable").clicked() {
+            if widgets::icon_button(ui, 24.0, Icon::Trash, pal, "Retirer cette variable").clicked()
+            {
                 remove = Some(index);
             }
         });
@@ -2314,9 +2427,13 @@ fn metric(ui: &mut egui::Ui, pal: &Palette, label: &str, value: &str) {
 /// Histogramme des douze dernières semaines.
 fn week_chart(ui: &mut egui::Ui, pal: &Palette, sessions: &[config::PlaySession]) {
     let weeks = stats::weeks(sessions, 12);
-    let max = weeks.iter().map(|(_, secs)| *secs).max().unwrap_or(0).max(1);
-    let (rect, _) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 150.0), Sense::hover());
+    let max = weeks
+        .iter()
+        .map(|(_, secs)| *secs)
+        .max()
+        .unwrap_or(0)
+        .max(1);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 150.0), Sense::hover());
     let painter = ui.painter_at(rect);
     let base = rect.bottom() - 22.0;
     painter.rect_filled(
@@ -2330,7 +2447,10 @@ fn week_chart(ui: &mut egui::Ui, pal: &Palette, sessions: &[config::PlaySession]
         let width = (slot * 0.64).max(6.0);
         let bar_height = (base - rect.top() - 18.0) * (*secs as f32 / max as f32);
         let bar_height = if *secs > 0 { bar_height.max(3.0) } else { 0.0 };
-        let bar = Rect::from_min_size(Pos2::new(x, base - bar_height), Vec2::new(width, bar_height));
+        let bar = Rect::from_min_size(
+            Pos2::new(x, base - bar_height),
+            Vec2::new(width, bar_height),
+        );
         let hovered = ui.rect_contains_pointer(bar);
         painter.rect_filled(
             bar,
@@ -2399,7 +2519,10 @@ fn heatmap_chart(ui: &mut egui::Ui, pal: &Palette, sessions: &[config::PlaySessi
         if month != last_month {
             if week as i64 - last_label_week >= 4 {
                 painter.text(
-                    Pos2::new(rect.left() + label_width + week as f32 * (cell + gap), rect.top()),
+                    Pos2::new(
+                        rect.left() + label_width + week as f32 * (cell + gap),
+                        rect.top(),
+                    ),
                     Align2::LEFT_TOP,
                     &month,
                     FontId::proportional(9.0),
@@ -2484,7 +2607,11 @@ fn tags_editor(ui: &mut egui::Ui, pal: &Palette, tags: &mut Vec<String>) {
         .unwrap_or_default();
 
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Tags personnels").size(12.5).color(pal.text_dim));
+        ui.label(
+            RichText::new("Tags personnels")
+                .size(12.5)
+                .color(pal.text_dim),
+        );
         widgets::info_button(
             ui,
             pal,
@@ -2494,11 +2621,7 @@ fn tags_editor(ui: &mut egui::Ui, pal: &Palette, tags: &mut Vec<String>) {
     });
     let mut remove: Option<usize> = None;
     if tags.is_empty() {
-        ui.label(
-            RichText::new("aucun tag")
-                .size(11.0)
-                .color(pal.text_faint),
-        );
+        ui.label(RichText::new("aucun tag").size(11.0).color(pal.text_faint));
     } else {
         ui.horizontal_wrapped(|ui| {
             for (index, tag) in tags.iter().enumerate() {
@@ -2520,13 +2643,24 @@ fn tags_editor(ui: &mut egui::Ui, pal: &Palette, tags: &mut Vec<String>) {
         let enter = response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
         if widgets::ghost_button(ui, "Ajouter", pal, Icon::Plus).clicked() || enter {
             let tag = buffer.trim().to_string();
-            if !tag.is_empty() && !tags.iter().any(|existing| existing.eq_ignore_ascii_case(&tag)) {
+            if !tag.is_empty()
+                && !tags
+                    .iter()
+                    .any(|existing| existing.eq_ignore_ascii_case(&tag))
+            {
                 tags.push(tag);
             }
             buffer.clear();
         }
     });
     ui.data_mut(|data| data.insert_temp(buffer_id, buffer));
+}
+
+fn provider_status_line(ui: &mut egui::Ui, provider: &str, status: &str, pal: &Palette) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(provider).size(12.0).color(pal.text));
+        ui.label(RichText::new(status).size(11.0).color(pal.text_dim));
+    });
 }
 
 fn section(ui: &mut egui::Ui, title: &str, pal: &Palette) {
@@ -2650,8 +2784,7 @@ fn runtime_combo(
 
 /// Proposition d'artwork : miniature distante, sélection au clic.
 fn artwork_choice(ui: &mut egui::Ui, pal: &Palette, url: &str, selected: bool) -> egui::Response {
-    let (rect, response) =
-        ui.allocate_exact_size(Vec2::new(132.0, 76.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(132.0, 76.0), Sense::click());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 4.0, pal.surface);
     // Chargement explicite : egui affiche une icône d'avertissement rouge quand
@@ -2684,7 +2817,8 @@ fn artwork_choice(ui: &mut egui::Ui, pal: &Palette, url: &str, selected: bool) -
                 FontId::proportional(10.5),
                 pal.text_faint,
             );
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(120));
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(120));
         }
         Err(_) => {
             painter.text(
@@ -2705,7 +2839,11 @@ fn artwork_choice(ui: &mut egui::Ui, pal: &Palette, url: &str, selected: bool) -
         );
     }
     if selected {
-        painter.circle_filled(Pos2::new(rect.right() - 13.0, rect.top() + 13.0), 7.0, pal.accent);
+        painter.circle_filled(
+            Pos2::new(rect.right() - 13.0, rect.top() + 13.0),
+            7.0,
+            pal.accent,
+        );
     }
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
@@ -2716,7 +2854,8 @@ fn search_result_row(
     pal: &Palette,
     hit: &crate::artwork::SearchHit,
 ) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 46.0), Sense::click());
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 46.0), Sense::click());
     let painter = ui.painter_at(rect);
     if response.hovered() {
         painter.rect_filled(rect, 4.0, pal.surface_hover);
@@ -2730,13 +2869,18 @@ fn search_result_row(
         Some(thumb) => {
             ui.put(
                 thumb_rect,
-                egui::Image::new(thumb).max_size(thumb_rect.size()).maintain_aspect_ratio(true),
+                egui::Image::new(thumb)
+                    .max_size(thumb_rect.size())
+                    .maintain_aspect_ratio(true),
             );
         }
         None => {
             widgets::monogram(
                 &painter,
-                Rect::from_min_size(Pos2::new(thumb_rect.left(), rect.center().y - 14.0), Vec2::splat(28.0)),
+                Rect::from_min_size(
+                    Pos2::new(thumb_rect.left(), rect.center().y - 14.0),
+                    Vec2::splat(28.0),
+                ),
                 &config::monogram_letter(&hit.title),
                 theme::monogram_color(&hit.title),
                 pal,
@@ -2821,7 +2965,10 @@ fn scan_row(ui: &mut egui::Ui, pal: &Palette, candidate: &mut crate::app::ScanCa
                     if ui.selectable_label(is_game, "C'est un jeu").clicked() {
                         is_game = true;
                     }
-                    if ui.selectable_label(!candidate.include, "Pas un jeu").clicked() {
+                    if ui
+                        .selectable_label(!candidate.include, "Pas un jeu")
+                        .clicked()
+                    {
                         is_game = false;
                     }
                     candidate.include = is_game;
@@ -2901,7 +3048,13 @@ impl QuarkApp {
                 action.back = true;
             }
             ui.add_space(10.0);
-            let selected = self.add.scan.candidates.iter().filter(|c| c.include).count();
+            let selected = self
+                .add
+                .scan
+                .candidates
+                .iter()
+                .filter(|c| c.include)
+                .count();
             let ready = selected > 0 && !self.add.scan.running;
             let label = format!("Ajouter {selected} jeu(x)");
             if widgets::accent_button(ui, Vec2::new(230.0, 36.0), &label, pal, ready, Icon::Plus)
@@ -2915,7 +3068,6 @@ impl QuarkApp {
         action
     }
 }
-
 
 impl QuarkApp {
     // -----------------------------------------------------------------------
@@ -3146,7 +3298,11 @@ fn launch_options_editor(
     });
     ui.add_space(6.0);
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Commande wrapper").size(12.5).color(pal.text_dim));
+        ui.label(
+            RichText::new("Commande wrapper")
+                .size(12.5)
+                .color(pal.text_dim),
+        );
         widgets::info_button(
             ui,
             pal,
@@ -3177,7 +3333,11 @@ fn launch_options_editor(
     ui.horizontal(|ui| {
         changed |= ui.checkbox(umu, "Lancer via umu-launcher").changed();
         if !tools.umu_run {
-            ui.label(RichText::new("(umu-run absent)").size(10.5).color(pal.danger));
+            ui.label(
+                RichText::new("(umu-run absent)")
+                    .size(10.5)
+                    .color(pal.danger),
+            );
         }
         widgets::info_button(
             ui,

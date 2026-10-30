@@ -5,3 +5,4 @@ artifacts/
 
 # Outils de travail locaux
 __pycache__/
+.quark-toolchain/

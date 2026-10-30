@@ -2524,11 +2524,13 @@ dependencies = [
  "dirs",
  "eframe",
  "egui_extras",
+ "flate2",
  "image",
  "ksni",
  "libc",
  "reqwest",
  "rfd",
+ "ring",
  "serde",
  "serde_json",
 ]
