@@ -1043,9 +1043,7 @@ impl QuarkApp {
                         });
                         ui.add_space(10.0);
                         section(ui, "BOUTIQUES", &pal);
-                        provider_status_line(ui, "Steam", "Jeux installés détectés localement ; bibliothèque possédée facultative via clé API.", &pal);
-                        provider_status_line(ui, "Epic", if self.credentials.epic.is_some() { "Identifiants locaux présents · état de compte à confirmer par Legendary." } else { "Non connecté · la connexion Legendary sera ajoutée avec l'intégration Epic." }, &pal);
-                        provider_status_line(ui, "GOG", if self.credentials.gog.is_some() { "Identifiants locaux présents · état de compte à confirmer par gogdl." } else { "Non connecté · la connexion gogdl sera ajoutée avec l'intégration GOG." }, &pal);
+                        self.provider_accounts(ui, ctx, &pal);
                         ui.label(
                             RichText::new("Heroic sera détecté et sa configuration ne sera lue qu'après ton accord explicite.")
                                 .size(11.5)
@@ -2654,13 +2652,6 @@ fn tags_editor(ui: &mut egui::Ui, pal: &Palette, tags: &mut Vec<String>) {
         }
     });
     ui.data_mut(|data| data.insert_temp(buffer_id, buffer));
-}
-
-fn provider_status_line(ui: &mut egui::Ui, provider: &str, status: &str, pal: &Palette) {
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(provider).size(12.0).color(pal.text));
-        ui.label(RichText::new(status).size(11.0).color(pal.text_dim));
-    });
 }
 
 fn section(ui: &mut egui::Ui, title: &str, pal: &Palette) {

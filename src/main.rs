@@ -26,6 +26,7 @@ mod ui_dialogs;
 mod ui_home;
 mod ui_library;
 mod ui_my_games;
+mod ui_providers;
 mod ui_store;
 mod update;
 mod widgets;

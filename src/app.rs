@@ -345,6 +345,16 @@ impl SteamImport {
     }
 }
 
+/// Connexion d'une boutique depuis le launcher : le code d'autorisation est
+/// copié depuis le navigateur, puis échangé par l'outil officiel.
+pub struct ProviderLogin {
+    pub provider: crate::providers::Provider,
+    pub code: String,
+    pub status: Option<String>,
+    pub error: Option<String>,
+    pub rx: Option<Receiver<Result<String, String>>>,
+}
+
 /// Lecture de la fiche Steam (développeur, genres, date, description).
 pub struct MetadataJob {
     pub game_id: String,
@@ -383,9 +393,16 @@ pub struct QuarkApp {
     pub store_search_results: Option<Vec<crate::steam_store::StoreItem>>,
     pub store_search_loading: bool,
     pub store_search_error: Option<String>,
-    pub store_featured_rx: Option<Receiver<Result<crate::steam_store::StoreSnapshot, String>>>,
+    pub store_featured_rx: Option<Receiver<Result<crate::steam_store::StoreFetch, String>>>,
     pub store_search_rx: Option<Receiver<Result<Vec<crate::steam_store::StoreItem>, String>>>,
     pub store_offline_mode: bool,
+    /// Recommandations recalculées depuis le catalogue et la meilleure
+    /// bibliothèque disponible (Steam Web API si configurée, sinon Quark).
+    pub store_recommendations: Vec<crate::steam_store::StoreItem>,
+    pub store_recommendation_source: Option<String>,
+    pub store_steam_library: Option<Vec<crate::steam_store::OwnedSteamGame>>,
+    /// Note non bloquante (classement indisponible, profil Steam privé…).
+    pub store_notice: Option<String>,
     store_state: StoreLoadState,
     pub add: AddGame,
     pub settings_open: bool,
@@ -486,6 +503,8 @@ pub struct QuarkApp {
     /// État d'installation/vérification des outils gérés, par outil.
     pub managed_tools: [Option<String>; 3],
     pub tool_jobs: [Option<Receiver<Result<String, String>>>; 3],
+    /// Connexion d'une boutique depuis le launcher (code copié du navigateur).
+    pub provider_login: Option<ProviderLogin>,
     pub steam_sync_loading: bool,
     pub steam_sync_error: Option<String>,
     pub steam_sync_rx: Option<Receiver<SteamSyncOutcome>>,
@@ -549,6 +568,8 @@ impl QuarkApp {
         let selected = lib.games.first().map(|g| g.id.clone());
         theme::apply(ctx, lib.settings.theme);
         let pal = theme::palette(lib.settings.theme);
+        let (store_recommendations, store_recommendation_source) =
+            crate::steam_store::recommendations_for(store_snapshot.as_ref(), &lib.games, None);
         Self {
             applied_theme: Some(lib.settings.theme),
             selected,
@@ -569,6 +590,10 @@ impl QuarkApp {
             store_featured_rx: None,
             store_search_rx: None,
             store_offline_mode: false,
+            store_recommendations,
+            store_recommendation_source,
+            store_steam_library: None,
+            store_notice: None,
             store_state: StoreLoadState::Idle,
             add: AddGame {
                 open: false,
@@ -632,6 +657,7 @@ impl QuarkApp {
             epic_installing: None,
             epic_install_rx: None,
             managed_tools: std::array::from_fn(|_| None),
+            provider_login: None,
             tool_jobs: std::array::from_fn(|_| None),
             meta_job: None,
             meta_queue: VecDeque::new(),
@@ -713,6 +739,7 @@ impl QuarkApp {
         self.poll_disk(ctx);
         self.poll_steam_import(ctx);
         self.poll_managed_tools(ctx);
+        self.poll_provider_login(ctx);
         self.poll_steam_sync(ctx);
         self.poll_epic_sync(ctx);
         self.poll_epic_install(ctx);
@@ -2447,17 +2474,39 @@ impl QuarkApp {
         self.store_state = StoreLoadState::Loading;
         self.store_loading = true;
         self.store_error = None;
+        self.store_notice = None;
         let (tx, rx) = channel();
         let repaint = ctx.clone();
         let language = self.lib.settings.language.clone();
         let country = self.lib.settings.country.clone();
+        // La clé Web API ne quitte jamais ce processus sauf vers api.steampowered.com.
+        let steam_key = self.credentials.steam_web_api_key.clone();
+        let steam_id = self.credentials.steam_id.clone();
         std::thread::spawn(move || {
-            let result = crate::steam_store::featured(&artwork::http(), &language, &country);
+            let result = crate::steam_store::fetch_all(
+                &artwork::http(),
+                &language,
+                &country,
+                steam_key.as_deref(),
+                steam_id.as_deref(),
+            );
             let _ = tx.send(result);
             repaint.request_repaint();
         });
         self.store_featured_rx = Some(rx);
         ctx.request_repaint_after(Duration::from_millis(120));
+    }
+
+    /// Recalcule les recommandations depuis l'état courant (catalogue chargé
+    /// et meilleure bibliothèque connue).
+    fn rebuild_store_recommendations(&mut self) {
+        let (recommendations, source) = crate::steam_store::recommendations_for(
+            self.store_snapshot.as_ref(),
+            &self.lib.games,
+            self.store_steam_library.as_deref(),
+        );
+        self.store_recommendations = recommendations;
+        self.store_recommendation_source = source;
     }
 
     pub fn search_store(&mut self, ctx: &egui::Context) {
@@ -2483,17 +2532,20 @@ impl QuarkApp {
     fn poll_store(&mut self, ctx: &egui::Context) {
         if let Some(result) = self.store_featured_rx.as_ref().map(Receiver::try_recv) {
             match result {
-                Ok(Ok(snapshot)) => {
+                Ok(Ok(fetch)) => {
                     let _ = crate::steam_store::save_cache_atomic(
                         &crate::steam_store::cache_path(),
-                        &snapshot,
+                        &fetch.snapshot,
                     );
-                    self.store_snapshot = Some(snapshot);
+                    self.store_snapshot = Some(fetch.snapshot);
+                    self.store_steam_library = fetch.steam_library;
+                    self.store_notice = fetch.popular_error.or(fetch.steam_library_error);
                     self.store_stale = false;
                     self.store_error = None;
                     self.store_state = StoreLoadState::Ready;
                     self.store_loading = false;
                     self.store_featured_rx = None;
+                    self.rebuild_store_recommendations();
                 }
                 Ok(Err(error)) => {
                     self.store_error = Some(error);
@@ -3181,6 +3233,102 @@ impl QuarkApp {
         }
         if pending {
             ctx.request_repaint_after(Duration::from_millis(120));
+        }
+    }
+
+    /// Ouvre le formulaire de connexion d'une boutique (Epic ou GOG).
+    pub fn open_provider_login(&mut self, provider: crate::providers::Provider) {
+        self.provider_login = Some(ProviderLogin {
+            provider,
+            code: String::new(),
+            status: None,
+            error: None,
+            rx: None,
+        });
+    }
+
+    pub fn cancel_provider_login(&mut self) {
+        self.provider_login = None;
+    }
+
+    /// Échange le code collé contre une session, via Legendary ou gogdl.
+    pub fn submit_provider_login(&mut self, ctx: &egui::Context) {
+        let Some(login) = self.provider_login.as_mut() else {
+            return;
+        };
+        if login.rx.is_some() {
+            return;
+        }
+        let code = login.code.trim().to_string();
+        if code.is_empty() {
+            login.error = Some("Colle le code d'autorisation avant de valider.".to_string());
+            return;
+        }
+        if code.len() > 4096 || code.chars().any(char::is_whitespace) {
+            login.error = Some("Le code d'autorisation ne doit pas contenir d'espace.".to_string());
+            return;
+        }
+        let provider = login.provider;
+        login.error = None;
+        login.status = Some("Échange du code auprès de la boutique…".to_string());
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let result = match provider {
+                crate::providers::Provider::Epic => {
+                    crate::providers::legendary::LegendaryAdapter::new()
+                        .login_with_code(&code)
+                        .map(|()| "Compte Epic connecté (Legendary)".to_string())
+                }
+                crate::providers::Provider::Gog => crate::providers::gog::GogAdapter::new(
+                    crate::providers::gog::auth_config_path(),
+                )
+                .login_with_code(&code)
+                .map(|()| "Compte GOG connecté (gogdl)".to_string()),
+                crate::providers::Provider::Steam => {
+                    Err("Steam n'utilise pas cette connexion par code".to_string())
+                }
+            };
+            let _ = tx.send(result);
+            repaint.request_repaint();
+        });
+        if let Some(login) = self.provider_login.as_mut() {
+            login.rx = Some(rx);
+        }
+        ctx.request_repaint_after(Duration::from_millis(120));
+    }
+
+    fn poll_provider_login(&mut self, ctx: &egui::Context) {
+        let Some(login) = self.provider_login.as_mut() else {
+            return;
+        };
+        let Some(result) = login.rx.as_ref().map(Receiver::try_recv) else {
+            return;
+        };
+        match result {
+            Ok(Ok(message)) => {
+                login.rx = None;
+                login.code.clear();
+                login.status = Some(message.clone());
+                login.error = None;
+                let provider = login.provider;
+                self.toast_info(message);
+                if provider == crate::providers::Provider::Epic {
+                    // Une session Epic fraîche permet de relire la bibliothèque.
+                    self.epic_sync_error = None;
+                }
+            }
+            Ok(Err(error)) => {
+                login.rx = None;
+                login.status = None;
+                login.error = Some(error);
+            }
+            Err(TryRecvError::Disconnected) => {
+                login.rx = None;
+                login.status = None;
+                login.error = Some("connexion interrompue".to_string());
+            }
+            Err(TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(120)),
         }
     }
 

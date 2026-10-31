@@ -30,7 +30,12 @@ jobs:
 
       - name: Version
         id: version
-        run: echo "value=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)" >> "$GITHUB_OUTPUT"
+        run: |
+          value="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          echo "value=$value" >> "$GITHUB_OUTPUT"
+          # Un suffixe (`1.1.0-beta.1`) publie une pré-release : GitHub garde alors
+          # la dernière version stable comme « Latest ».
+          if [[ "$value" == *-* ]]; then echo "prerelease=true" >> "$GITHUB_OUTPUT"; else echo "prerelease=false" >> "$GITHUB_OUTPUT"; fi
 
       - name: Compilation
         run: cargo build --release --locked
@@ -52,7 +57,7 @@ jobs:
             "grid:--view grid" \
             "store:--tab store" \
             "my-games:--tab my-games --providers-demo" \
-            "dialog-settings-providers:--dialog settings-providers" \
+            "dialog-settings-providers:--dialog settings-providers --providers-demo" \
             "info:--view list --info" \
             "running:--view list --running" \
             "hover-row:--view list --hover 160,340" \
@@ -94,39 +99,8 @@ jobs:
         with:
           tag_name: v${{ steps.version.outputs.value }}
           name: Quark v${{ steps.version.outputs.value }}
-          body: |
-            ## Quark 1.0 — boutique Steam, bibliothèques unifiées, sauvegardes
-
-            - **Boutique Steam** : offres régionales, recherche, prix dans votre devise, cache
-              local réutilisé hors ligne (et signalé comme potentiellement périmé),
-              recommandations calculées sur votre machine à partir de votre bibliothèque. Aucun
-              achat dans Quark : la fiche s'ouvre sur le site officiel.
-            - **Mes jeux** : les jeux Steam (manifestes locaux) et Epic (via Legendary) réunis
-              sur une page, filtrables par boutique, avec l'état d'installation réel. Les
-              doublons d'un même titre peuvent être fusionnés puis séparés.
-            - **Installations déléguées** : « Installer via Steam » passe l'AppID au client puis
-              rescanne ; « Installer via Legendary » installe dans le dossier choisi et ne
-              déclare un jeu installé qu'après avoir trouvé son dossier local.
-            - **Outils gérés** : Legendary et Ludusavi (et gogdl, pas encore branché) sont
-              téléchargés depuis leurs releases officielles avec digest SHA-256 obligatoire,
-              version comparée au tag et remplacement atomique — un échec laisse l'outil
-              précédent en place.
-            - **Sauvegardes locales (Ludusavi)** : dossiers de sauvegarde personnalisés fusionnés
-              dans une configuration isolée sans perdre les réglages existants, aperçu avant
-              écriture, confirmation explicite, un coffre par installation (10 sauvegardes
-              complètes, aucune différentielle), instantanés automatiques au lancement et à la
-              sortie sans jamais bloquer un jeu, restauration par inventaire + aperçu +
-              confirmation avec revalidation des chemins.
-            - **Identifiants séparés** : `credentials.json` en mode 0600, non chiffré et
-              explicitement signalé comme tel, secrets expurgés des sorties ; une réponse Steam
-              vide reste ambiguë et n'efface jamais la bibliothèque connue.
-            - **README anglais** couvrant les fournisseurs, les outils gérés, les sauvegardes et
-              la procédure de vérification (`docs/verification/ludusavi-config.md`).
-
-            Limites assumées de cette version : GOG n'est pas encore branché, les achievements
-            et la synchronisation cloud ne sont pas proposés faute de source vérifiée, cible
-            Linux x86_64 uniquement. Archives et sommes SHA-256 ci-dessous ; les aperçus de
-            l'interface sont produits par le rendu hors écran.
+          body_path: docs/release-notes.md
+          prerelease: ${{ steps.version.outputs.prerelease }}
           fail_on_unmatched_files: true
           files: |
             quark-${{ steps.version.outputs.value }}-linux-x86_64.tar.gz

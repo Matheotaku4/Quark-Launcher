@@ -2,7 +2,7 @@
 
 use crate::app::QuarkApp;
 use crate::providers::{InstallState, Provider, ProviderGame};
-use eframe::egui::{self, Align, Layout, RichText};
+use eframe::egui::{self, Align, Layout, RichText, Vec2};
 
 impl QuarkApp {
     pub(crate) fn my_games_tab(&mut self, ctx: &egui::Context) {
@@ -25,9 +25,14 @@ impl QuarkApp {
             .frame(egui::Frame::new().fill(pal.bg))
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                    ui.add_space(24.0);
+                    // Marge à droite comprise : les boutons ne touchent jamais le
+                    // bord de la fenêtre, même en 1024 de large.
                     ui.horizontal(|ui| {
                         ui.add_space(28.0);
+                        ui.vertical(|ui| {
+                            ui.set_max_width((ui.available_width() - 28.0).max(240.0));
+                    ui.add_space(24.0);
+                    ui.horizontal(|ui| {
                         ui.vertical(|ui| {
                             ui.label(RichText::new("MES JEUX").size(11.0).strong().color(pal.accent));
                             ui.label(RichText::new("Vos bibliothèques réunies").size(26.0).strong().color(pal.text));
@@ -42,7 +47,6 @@ impl QuarkApp {
                     });
                     ui.add_space(16.0);
                     ui.horizontal_wrapped(|ui| {
-                        ui.add_space(28.0);
                         for provider in [Provider::Steam, Provider::Epic, Provider::Gog] {
                             let name = provider_name(provider);
                             ui.label(RichText::new(format!("{name} · {}", self.lib.provider_library.games.iter().filter(|game| game.key.provider == provider).count())).size(11.0).color(pal.text_dim));
@@ -66,7 +70,6 @@ impl QuarkApp {
                     if games.is_empty() {
                         ui.add_space(20.0);
                         ui.horizontal(|ui| {
-                            ui.add_space(28.0);
                             ui.vertical(|ui| {
                                 ui.label(RichText::new("Aucun jeu de boutique synchronisé").size(16.0).color(pal.text));
                                 ui.add_space(5.0);
@@ -98,6 +101,8 @@ impl QuarkApp {
                             });
                         }
                     }
+                        });
+                    });
                 });
             });
         if sync {
@@ -176,96 +181,104 @@ fn provider_game_row(
     choose_save_folder: &mut Option<crate::providers::ProviderGameKey>,
     remove_save_folder: &mut Option<(crate::providers::ProviderGameKey, std::path::PathBuf)>,
 ) {
+    let status = match game.install_state {
+        InstallState::Installed => "Installé",
+        InstallState::NotInstalled => "Non installé",
+        InstallState::Queued => "En attente",
+        InstallState::Installing => "Installation…",
+        InstallState::Updating => "Mise à jour…",
+        InstallState::Repairing => "Réparation…",
+        InstallState::Failed => "Échec",
+        InstallState::Unknown => "État inconnu",
+    };
+    let status_color = if game.install_state == InstallState::Installed {
+        pal.accent
+    } else {
+        pal.text_dim
+    };
     egui::Frame::new()
         .fill(pal.panel)
         .stroke(egui::Stroke::new(1.0_f32, pal.border))
         .corner_radius(5.0)
         .inner_margin(egui::Margin::symmetric(14, 10))
         .show(ui, |ui| {
+            // Le titre garde une largeur bornée et le statut reste au bord
+            // droit : rien ne déborde quand la fenêtre est étroite.
             ui.horizontal(|ui| {
-                ui.set_width(ui.available_width());
-                ui.vertical(|ui| {
-                    ui.label(
-                        RichText::new(&game.title)
-                            .size(13.0)
-                            .strong()
-                            .color(pal.text),
-                    );
-                    ui.label(
-                        RichText::new(provider_name(game.key.provider))
-                            .size(10.5)
-                            .color(pal.text_faint),
-                    );
-                });
+                let status_width = 96.0;
+                let title_width = (ui.available_width() - status_width).max(120.0);
+                ui.allocate_ui_with_layout(
+                    Vec2::new(title_width, 0.0),
+                    Layout::top_down(Align::Min),
+                    |ui| {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(&game.title)
+                                    .size(13.0)
+                                    .strong()
+                                    .color(pal.text),
+                            )
+                            .truncate(),
+                        );
+                        ui.label(
+                            RichText::new(provider_name(game.key.provider))
+                                .size(10.5)
+                                .color(pal.text_faint),
+                        );
+                    },
+                );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(RichText::new(status).size(11.0).color(status_color));
+                });
+            });
+            let installed = game.install_state == InstallState::Installed;
+            let legendary_ready = crate::providers::tools::ManagedToolId::Legendary
+                .installed_path()
+                .is_file();
+            let ludusavi_ready = crate::providers::tools::ManagedToolId::Ludusavi
+                .installed_path()
+                .is_file();
+            let epic_installable =
+                game.owned && game.key.provider == Provider::Epic && !installed && legendary_ready;
+            let has_actions = (can_install && game.key.provider == Provider::Steam)
+                || epic_installable
+                || (installed && ludusavi_ready)
+                || installed
+                || !game.custom_save_paths.is_empty();
+            if has_actions {
+                ui.add_space(4.0);
+                ui.horizontal_wrapped(|ui| {
                     if can_install
                         && game.key.provider == Provider::Steam
                         && ui.small_button("Installer via Steam").clicked()
                     {
                         *install = app_id;
                     }
-                    if game.owned
-                        && game.key.provider == Provider::Epic
-                        && game.install_state != InstallState::Installed
-                        && crate::providers::tools::ManagedToolId::Legendary
-                            .installed_path()
-                            .is_file()
-                        && ui.small_button("Installer via Legendary").clicked()
-                    {
+                    if epic_installable && ui.small_button("Installer via Legendary").clicked() {
                         *install_epic = Some(game.key.clone());
                     }
-                    if game.install_state == InstallState::Installed
-                        && crate::providers::tools::ManagedToolId::Ludusavi
-                            .installed_path()
-                            .is_file()
-                        && ui.small_button("Aperçu sauvegarde").clicked()
+                    if installed && ludusavi_ready && ui.small_button("Aperçu sauvegarde").clicked()
                     {
                         *preview_save = Some(game.key.clone());
                     }
-                    if game.install_state == InstallState::Installed
-                        && crate::providers::tools::ManagedToolId::Ludusavi
-                            .installed_path()
-                            .is_file()
-                        && ui.small_button("Restaurer…").clicked()
-                    {
+                    if installed && ludusavi_ready && ui.small_button("Restaurer…").clicked() {
                         *inventory_save = Some(game.key.clone());
                     }
-                    if game.install_state == InstallState::Installed
-                        && ui.small_button("Dossiers de sauvegarde…").clicked()
-                    {
+                    if installed && ui.small_button("Dossiers de sauvegarde…").clicked() {
                         *choose_save_folder = Some(game.key.clone());
                     }
-                    let status = match game.install_state {
-                        InstallState::Installed => "Installé",
-                        InstallState::NotInstalled => "Non installé",
-                        InstallState::Queued => "En attente",
-                        InstallState::Installing => "Installation…",
-                        InstallState::Updating => "Mise à jour…",
-                        InstallState::Repairing => "Réparation…",
-                        InstallState::Failed => "Échec",
-                        InstallState::Unknown => "État inconnu",
-                    };
                     for path in &game.custom_save_paths {
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                RichText::new(format!("Dossier sauvegarde · {}", path.display()))
-                                    .size(10.0)
-                                    .color(pal.text_faint),
-                            );
-                            if ui.small_button("Retirer").clicked() {
-                                *remove_save_folder = Some((game.key.clone(), path.clone()));
-                            }
-                        });
+                        ui.label(
+                            RichText::new(format!("Dossier sauvegarde · {}", path.display()))
+                                .size(10.0)
+                                .color(pal.text_faint),
+                        );
+                        if ui.small_button("Retirer").clicked() {
+                            *remove_save_folder = Some((game.key.clone(), path.clone()));
+                        }
                     }
-                    ui.label(RichText::new(status).size(11.0).color(
-                        if game.install_state == InstallState::Installed {
-                            pal.accent
-                        } else {
-                            pal.text_dim
-                        },
-                    ));
                 });
-            });
+            }
         });
     ui.add_space(5.0);
 }

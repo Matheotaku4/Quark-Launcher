@@ -157,15 +157,41 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
                 app.steam_sync_error = Some("API possédée indisponible : bibliothèque privée ou détails invisibles · données précédentes conservées".into());
             }
         }
-        app.store_snapshot = crate::steam_store::parse_featured(r#"{"specials":{"items":[
-            {"id":620,"name":"Portal 2","currency":"EUR","original_price":1999,"final_price":499,"discount_percent":75,"large_capsule_image":"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/620/header.jpg","linux_available":true},
-            {"id":400,"name":"Portal","currency":"EUR","original_price":999,"final_price":199,"discount_percent":80,"large_capsule_image":"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/400/header.jpg","linux_available":true},
-            {"id":292030,"name":"The Witcher 3: Wild Hunt","currency":"EUR","original_price":3999,"final_price":799,"discount_percent":80,"large_capsule_image":"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/292030/header.jpg","linux_available":false},
-            {"id":1091500,"name":"Cyberpunk 2077","currency":"EUR","original_price":5999,"final_price":2999,"discount_percent":50,"large_capsule_image":"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1091500/header.jpg","linux_available":false}
-        ]}}"#).ok();
+        app.store_snapshot = crate::steam_store::parse_featured(r#"{
+            "specials":{"items":[
+                {"id":620,"name":"Portal 2","currency":"EUR","original_price":1999,"final_price":499,"discount_percent":75,"large_capsule_image":"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/620/header.jpg","linux_available":true},
+                {"id":400,"name":"Portal","currency":"EUR","original_price":999,"final_price":199,"discount_percent":80,"large_capsule_image":"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/400/header.jpg","linux_available":true},
+                {"id":292030,"name":"The Witcher 3: Wild Hunt","currency":"EUR","original_price":3999,"final_price":799,"discount_percent":80,"large_capsule_image":"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/292030/header.jpg","linux_available":false},
+                {"id":1091500,"name":"Cyberpunk 2077","currency":"EUR","original_price":5999,"final_price":2999,"discount_percent":50,"large_capsule_image":"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1091500/header.jpg","linux_available":false}
+            ]},
+            "top_sellers":{"items":[
+                {"id":1245620,"name":"ELDEN RING","currency":"EUR","original_price":5999,"final_price":5999,"discount_percent":0,"large_capsule_image":"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1245620/header.jpg","linux_available":false},
+                {"id":1086940,"name":"Baldur's Gate 3","currency":"EUR","original_price":5999,"final_price":5999,"discount_percent":0,"large_capsule_image":"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1086940/header.jpg","linux_available":true}
+            ]},
+            "new_releases":{"items":[
+                {"id":1030300,"name":"Hollow Knight: Silksong","currency":"EUR","original_price":1999,"final_price":1999,"discount_percent":0,"large_capsule_image":"https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1030300/header.jpg","linux_available":true}
+            ]}
+        }"#).ok();
+        if let Some(snapshot) = app.store_snapshot.as_mut() {
+            snapshot.sections.insert(1, crate::steam_store::StoreSection {
+                title: "Populaires en ce moment".into(),
+                items: vec![
+                    crate::steam_store::StoreItem { app_id: 730, name: "Counter-Strike 2".into(), price: None, artwork_url: Some("https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/730/header.jpg".into()), store_url: "https://store.steampowered.com/app/730".into(), linux_available: Some(true), players_peak: Some(1_207_353) },
+                    crate::steam_store::StoreItem { app_id: 570, name: "Dota 2".into(), price: None, artwork_url: Some("https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/570/header.jpg".into()), store_url: "https://store.steampowered.com/app/570".into(), linux_available: Some(true), players_peak: Some(708_985) },
+                    crate::steam_store::StoreItem { app_id: 1030300, name: "Hollow Knight: Silksong".into(), price: None, artwork_url: Some("https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1030300/header.jpg".into()), store_url: "https://store.steampowered.com/app/1030300".into(), linux_available: Some(true), players_peak: Some(412_075) }
+                ],
+            });
+        }
+        let (recommendations, source) = crate::steam_store::recommendations_for(
+            app.store_snapshot.as_ref(),
+            &app.lib.games,
+            None,
+        );
+        app.store_recommendations = recommendations;
+        app.store_recommendation_source = source;
         app.store_search_results = Some(vec![
-            crate::steam_store::StoreItem { app_id: 620, name: "Portal 2".into(), price: Some(crate::steam_store::StorePrice { currency: "EUR".into(), initial: 1999, final_price: 499, discount_percent: Some(75) }), artwork_url: Some("https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/620/header.jpg".into()), store_url: "https://store.steampowered.com/app/620".into(), linux_available: Some(true) },
-            crate::steam_store::StoreItem { app_id: 400, name: "Portal".into(), price: Some(crate::steam_store::StorePrice { currency: "EUR".into(), initial: 999, final_price: 199, discount_percent: Some(80) }), artwork_url: Some("https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/400/header.jpg".into()), store_url: "https://store.steampowered.com/app/400".into(), linux_available: Some(true) },
+            crate::steam_store::StoreItem { app_id: 620, name: "Portal 2".into(), price: Some(crate::steam_store::StorePrice { currency: "EUR".into(), initial: 1999, final_price: 499, discount_percent: Some(75) }), artwork_url: Some("https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/620/header.jpg".into()), store_url: "https://store.steampowered.com/app/620".into(), linux_available: Some(true), players_peak: None },
+            crate::steam_store::StoreItem { app_id: 400, name: "Portal".into(), price: Some(crate::steam_store::StorePrice { currency: "EUR".into(), initial: 999, final_price: 199, discount_percent: Some(80) }), artwork_url: Some("https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/400/header.jpg".into()), store_url: "https://store.steampowered.com/app/400".into(), linux_available: Some(true), players_peak: None },
         ]);
         // Note ProtonDB factice pour le jeu de démonstration (aucun réseau).
         app.protondb.insert(

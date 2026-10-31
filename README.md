@@ -184,13 +184,17 @@ with save snapshots through Ludusavi.
 - **Command-line diagnostics**: `--doctor`, `--search`, `--fetch`, `--news`, `--scan`,
   `--update` and `--ui` (no screen required, `--home` renders the home page). `--tray` runs
   the notification-icon process and is started by Quark itself.
-- **Steam store page**: regional specials, a search field (*Rechercher un jeu sur Steam…*),
-  prices in your currency, and the store page opened in your browser — Quark never buys
-  anything. The catalogue is cached in `~/.local/share/quark/store-cache.json` and shown
-  again, marked as potentially stale, when Steam is unreachable; the *recommandations
-  locales* are ranked from the titles already in your library, on your machine, and your
-  profile is never sent to Steam. These Steam endpoints are undocumented and handled as
-  best-effort: a malformed response is reported, never cached as an empty store.
+- **Steam store page**: a vertical, Steam-like discovery page — a featured deal, then
+  *Recommandé pour vous*, *Populaires en ce moment* (with each game's peak concurrent
+  players), *Meilleures ventes*, *Offres spéciales*, *Nouveautés* and *Prochainement* — in
+  card grids that scroll down, never sideways. Prices are regional and the store page opens
+  in your browser: Quark never buys anything. The catalogue is cached in
+  `~/.local/share/quark/store-cache.json` and shown again, marked as potentially stale, when
+  Steam is unreachable. Recommendations are ranked on your machine: from the titles in your
+  library, or from your **owned Steam games** through `IPlayerService/GetOwnedGames` when a
+  Steam Web API key and SteamID64 are configured — the section says which source was used,
+  and your profile is never sent to Steam. These Steam endpoints are undocumented and
+  handled as best-effort: a malformed response is reported, never cached as an empty store.
 - **Mes jeux**: Steam (read from local `appmanifest_*.acf`) and Epic (through Legendary)
   games in one list — owned, installed, or both — with a filter per store, the detected
   install path, and what the store can actually do. The same game on two stores can be
@@ -285,9 +289,9 @@ Legendary, gogdl and Ludusavi are downloaded from their official GitHub releases
 
 | Tool | Used for | State |
 | --- | --- | --- |
-| Legendary | Epic library, installs | owned + installed lists, installs into a folder you pick |
+| Legendary | Epic library, installs, login | owned + installed lists, installs into a folder you pick |
 | Ludusavi | local save snapshots | preview, backup, inventory, restore |
-| gogdl | GOG | downloadable, but no GOG library or install flow yet |
+| gogdl | GOG | login through a GOG code; no library or install flow yet |
 
 The SHA-256 digest published in the release metadata is mandatory: a release without a
 digest, a digest mismatch, a missing Linux x64 asset, or a `--version` that does not match the
@@ -295,6 +299,27 @@ tag is refused. The downloaded file is never executed before its digest matches,
 verified binary then replaces the previous one atomically, so a failed download or update
 leaves the last working tool in place. **Settings → Stores & tools** shows the installed state
 and only downloads when you ask.
+
+Legendary and gogdl are published as **Python zipapps** (`#!/usr/bin/env python3` followed by
+a zip archive), not as native ELF binaries, so `python3` must be installed on the machine.
+Quark checks that exact layout instead of expecting an ELF, and refuses anything else.
+
+### Connecting Epic and GOG
+
+**Settings → Stores & tools** connects the accounts without Quark ever seeing a password:
+
+1. *Se connecter* opens the store's own login page in your browser.
+2. Copy the code that page shows: the `authorizationCode` value of the JSON response for Epic
+   (`https://legendary.gl/epiclogin`), or the `code` parameter of the return address for GOG
+   (`https://auth.gog.com/auth?client_id=…&response_type=code`).
+3. Paste it into Quark and press *Connecter*: the code is handed to Legendary or gogdl, which
+   exchanges it and writes its own session file (`~/.config/legendary/user.json`,
+   `~/.local/share/quark/gogdl-auth.json`).
+
+Both tools print session tokens and even exit with status 0 when the store refuses the code,
+so Quark never trusts the exit status: the connection only counts once the session file has
+actually been created or rewritten. The code is passed as a single argument, discarded from
+output, and never logged or displayed again.
 
 ### Save files (Ludusavi)
 

@@ -72,8 +72,14 @@ impl ManagedToolId {
         }
     }
 
+    /// Les releases Linux de Legendary et de gogdl sont des zipapps Python
+    /// (`#!/usr/bin/env python3` suivi d'une archive zip), pas des ELF.
     fn is_python_zipapp(self) -> bool {
-        self == Self::Gogdl
+        matches!(self, Self::Legendary | Self::Gogdl)
+    }
+
+    fn requires_python(self) -> bool {
+        self.is_python_zipapp()
     }
 }
 
@@ -277,11 +283,10 @@ pub fn install_verified(
     } else {
         bytes
     };
-    if !tool.is_python_zipapp() && tool != ManagedToolId::Ludusavi {
+    if tool.is_python_zipapp() {
+        verify_python_zipapp(&executable)?;
+    } else {
         verify_elf_x86_64(&executable)?;
-    }
-    if tool.is_python_zipapp() && !executable.starts_with(b"#!/usr/bin/env python3\n") {
-        return Err("gogdl n'est pas le zipapp Python officiel attendu".to_string());
     }
     let temp = destination_dir.join(format!(
         ".{}.{}-{}.tmp",
@@ -380,6 +385,22 @@ fn extract_ludusavi(bytes: &[u8]) -> Result<Vec<u8>, String> {
     Err("binaire ludusavi absent de l'archive officielle".to_string())
 }
 
+/// Accepte uniquement le zipapp Python officiel : shebang exact puis archive zip.
+fn verify_python_zipapp(bytes: &[u8]) -> Result<(), String> {
+    const SHEBANG: &[u8] = b"#!/usr/bin/env python3\n";
+    if !bytes.starts_with(SHEBANG) {
+        return Err("l'outil téléchargé n'est pas le zipapp Python officiel attendu".to_string());
+    }
+    let has_zip_magic = bytes
+        .windows(4)
+        .take(4096)
+        .any(|window| window == b"PK\x03\x04");
+    if !has_zip_magic {
+        return Err("l'outil téléchargé n'est pas le zipapp Python officiel attendu".to_string());
+    }
+    Ok(())
+}
+
 fn verify_elf_x86_64(bytes: &[u8]) -> Result<(), String> {
     if bytes.len() < 20
         || &bytes[..4] != b"\x7fELF"
@@ -436,9 +457,13 @@ fn inspect_version(path: &Path, tool: ManagedToolId, expected_tag: &str) -> Resu
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = command
-        .spawn()
-        .map_err(|_| "l'outil validé ne démarre pas".to_string())?;
+    let mut child = command.spawn().map_err(|_| {
+        if tool.requires_python() {
+            "Python 3 est requis pour lancer cet outil, mais python3 est introuvable".to_string()
+        } else {
+            "l'outil validé ne démarre pas".to_string()
+        }
+    })?;
     let stdout = child
         .stdout
         .take()
@@ -596,6 +621,39 @@ mod tests {
         arm[18..20].copy_from_slice(&[0xb7, 0x00]);
         assert!(verify_elf_x86_64(&arm).is_err());
         assert!(verify_elf_x86_64(b"not an ELF").is_err());
+    }
+
+    #[test]
+    fn legendary_est_un_zipapp_python_et_non_un_elf() {
+        let mut zipapp = b"#!/usr/bin/env python3\n".to_vec();
+        zipapp.extend_from_slice(b"PK\x03\x04reste de l'archive");
+        assert!(verify_python_zipapp(&zipapp).is_ok());
+        assert!(verify_elf_x86_64(&zipapp).is_err());
+        assert!(ManagedToolId::Legendary.is_python_zipapp());
+        assert!(ManagedToolId::Gogdl.is_python_zipapp());
+        assert!(!ManagedToolId::Ludusavi.is_python_zipapp());
+    }
+
+    #[test]
+    fn un_zipapp_sans_en_tete_python_ou_sans_archive_est_refuse() {
+        assert!(verify_python_zipapp(b"PK\x03\x04archive seule").is_err());
+        let mut shebang_sans_archive = b"#!/usr/bin/env python3\n".to_vec();
+        shebang_sans_archive.extend_from_slice(b"pas une archive");
+        assert!(verify_python_zipapp(&shebang_sans_archive).is_err());
+    }
+
+    #[test]
+    fn les_zipapps_sont_inspectes_via_python() {
+        for tool in [ManagedToolId::Legendary, ManagedToolId::Gogdl] {
+            let (program, args) = command_for_tool(tool, Path::new("/tools/outil"));
+            assert_eq!(program, PathBuf::from("python3"));
+            assert_eq!(
+                args,
+                vec!["/tools/outil".to_string(), "--version".to_string()]
+            );
+            assert!(tool.requires_python());
+        }
+        assert!(!ManagedToolId::Ludusavi.requires_python());
     }
 
     #[test]

@@ -8,6 +8,10 @@ use std::time::Duration;
 
 pub const PINNED_VERSION: &str = "0.21.1";
 
+/// Page de connexion manuelle de `legendary auth --disable-webview` : elle
+/// affiche la réponse JSON dont il faut copier la valeur `authorizationCode`.
+pub const LOGIN_URL: &str = "https://legendary.gl/epiclogin";
+
 /// Une installation télécharge plusieurs gigaoctets : le délai des commandes
 /// d'inventaire (60 s) tuerait le processus en pleine écriture.
 pub const INSTALL_TIMEOUT: Duration = Duration::from_secs(6 * 60 * 60);
@@ -71,8 +75,49 @@ impl LegendaryAdapter {
         self.installed_json(&output, fetched_at)
     }
 
+    /// Connecte le compte Epic à partir de l'`authorizationCode` copié depuis
+    /// la réponse JSON de [`LOGIN_URL`]. La sortie est jetée : elle peut
+    /// contenir des jetons de session.
+    ///
+    /// Legendary sort avec le code 0 même quand Epic refuse le code : le seul
+    /// témoin fiable est l'écriture (ou la mise à jour) de `user.json`.
+    pub fn login_with_code(&self, code: &str) -> Result<(), String> {
+        let path = Self::user_config_path();
+        let before = std::fs::read(&path).ok();
+        let mut command = self.command(Self::login_args(code));
+        command.discard_output = true;
+        command.secrets = vec![code.to_string()];
+        let output = super::runner::run(command, self.timeout, None)?;
+        if output.exit_code != Some(0) {
+            return Err("Legendary a échoué pendant la connexion Epic".to_string());
+        }
+        let after = std::fs::read(&path).ok();
+        if super::session_written(before.as_deref(), after.as_deref()) {
+            Ok(())
+        } else {
+            Err("Legendary a refusé l'autorisation Epic (code expiré ou invalide)".to_string())
+        }
+    }
+
+    /// Fichier d'état écrit par Legendary après une connexion réussie.
+    pub fn user_config_path() -> PathBuf {
+        let base = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .unwrap_or_else(|| crate::config::home_dir().join(".config"));
+        base.join("legendary").join("user.json")
+    }
+
+    pub fn is_logged_in() -> bool {
+        Self::user_config_path().is_file()
+    }
+
     pub fn login_status_args() -> Vec<String> {
         vec!["status".into(), "--json".into()]
+    }
+
+    pub fn login_args(code: &str) -> Vec<String> {
+        vec!["auth".into(), "--code".into(), code.into()]
     }
     pub fn library_args() -> Vec<String> {
         vec!["list".into(), "--json".into()]
@@ -309,6 +354,65 @@ fn ensure_success(output: &CommandOutput) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn la_connexion_transmet_le_code_comme_un_seul_argument() {
+        assert_eq!(
+            LegendaryAdapter::login_args("abc; $(touch x)"),
+            vec!["auth", "--code", "abc; $(touch x)"]
+        );
+        assert!(LOGIN_URL.starts_with("https://legendary.gl/"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn la_connexion_exige_une_session_ecrite_meme_avec_un_code_de_sortie_nul() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!(
+            "quark-legendary-login-{}-{}",
+            std::process::id(),
+            crate::config::now_ts()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let config = root.join("config");
+        std::fs::create_dir_all(config.join("legendary")).unwrap();
+        let previous = std::env::var_os("XDG_CONFIG_HOME");
+        // Variable lue par Legendary ; aucun autre test ne la consulte.
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", &config) };
+        let adapter = LegendaryAdapter {
+            executable: root.join("legendary"),
+            timeout: Duration::from_secs(5),
+        };
+
+        // Refus silencieux : exit 0, mais aucune session écrite.
+        std::fs::write(&adapter.executable, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&adapter.executable, std::fs::Permissions::from_mode(0o700))
+            .unwrap();
+        assert!(adapter.login_with_code("code").is_err());
+
+        // Succès : l'outil écrit la session.
+        let session = config.join("legendary").join("user.json");
+        std::fs::write(
+            &adapter.executable,
+            format!(
+                "#!/bin/sh\nprintf '{{\"account\":\"demo\"}}' > '{}'\n",
+                session.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&adapter.executable, std::fs::Permissions::from_mode(0o700))
+            .unwrap();
+        assert!(adapter.login_with_code("code").is_ok());
+        assert!(LegendaryAdapter::is_logged_in());
+
+        unsafe {
+            match previous {
+                Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+                None => std::env::remove_var("XDG_CONFIG_HOME"),
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn legendary_list_json_maps_owned_games_without_using_titles_as_install_paths() {
