@@ -19,10 +19,17 @@ impl QuarkApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(pal.bg))
             .show(ctx, |ui| {
+                let age = self.page_at.elapsed().as_secs_f32();
                 egui::ScrollArea::vertical()
                     .id_salt("quark_store_scroll")
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
+                        // Entrée de page en fondu, comme les deux autres onglets.
+                        let fade = (age / 0.16).clamp(0.0, 1.0);
+                        if fade < 1.0 {
+                            ui.ctx().request_repaint();
+                        }
+                        ui.set_opacity(fade);
                         ui.horizontal(|ui| {
                             ui.add_space(PAGE_MARGIN);
                             ui.vertical(|ui| {

@@ -2,7 +2,9 @@
 
 use crate::app::{NewsState, QuarkApp};
 use crate::config::{self, AssetKind, Game, GameStatus, ViewMode};
-use crate::images::{draw_cover, draw_cover_faded, draw_fit_left, hero_placeholder, rounded_cover};
+use crate::images::{
+    draw_cover, draw_fit_left, hero_placeholder, rounded_cover, rounded_cover_tinted,
+};
 use crate::news;
 use crate::proton::{self, LaunchKind};
 use crate::theme::{self, Palette};
@@ -60,6 +62,9 @@ impl QuarkApp {
     fn grid_page(&mut self, ui: &mut egui::Ui) {
         let pal = self.pal;
         let ids = self.display_ids();
+        // Entrée de page : le contenu se fond et les tuiles montent l'une après
+        // l'autre. L'âge est remis à zéro à chaque changement d'onglet ou de vue.
+        let age = self.page_at.elapsed().as_secs_f32();
         let total = self.lib.games.len();
         ui.add_space(14.0);
         // Les commandes (ajout, vues) vivent dans la barre du haut, pas ici :
@@ -114,6 +119,11 @@ impl QuarkApp {
             .id_salt("quark_grid_page")
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                let fade = (age / 0.16).clamp(0.0, 1.0);
+                if fade < 1.0 {
+                    ui.ctx().request_repaint();
+                }
+                ui.set_opacity(fade);
                 let padding = 24.0;
                 let gap = 16.0;
                 let available = (ui.available_width() - padding * 2.0).max(240.0);
@@ -144,7 +154,14 @@ impl QuarkApp {
                             }
                             let (tile, response) =
                                 ui.allocate_exact_size(Vec2::new(tile_w, row_h), Sense::click());
-                            let painter = ui.painter_at(tile);
+                            let order = (index + slot) as f32;
+                            let appear = ((age - order * 0.02) / 0.3).clamp(0.0, 1.0);
+                            if appear < 1.0 {
+                                ui.ctx().request_repaint();
+                            }
+                            let tile = tile.translate(Vec2::new(0.0, (1.0 - appear) * 9.0));
+                            let mut painter = ui.painter_at(tile);
+                            painter.set_opacity(appear);
                             let anim = ui.ctx().animate_bool_with_time(
                                 egui::Id::new(("quark_grid_tile", id.as_str())),
                                 response.hovered(),
@@ -164,7 +181,13 @@ impl QuarkApp {
                             );
                             match covers.get(index + slot).and_then(|cover| cover.as_ref()) {
                                 Some(texture) => {
-                                    rounded_cover(ui, cover, texture, 10.0);
+                                    rounded_cover_tinted(
+                                        ui,
+                                        cover,
+                                        texture,
+                                        10.0,
+                                        Color32::from_white_alpha((appear * 255.0).round() as u8),
+                                    );
                                 }
                                 None => {
                                     // Monogramme plein cadre, comme une
@@ -358,6 +381,7 @@ impl QuarkApp {
         self.quick_filters(ui);
         ui.add_space(8.0);
 
+        let age = self.page_at.elapsed().as_secs_f32();
         egui::ScrollArea::vertical()
             .id_salt("quark_library_scroll")
             .auto_shrink([false, false])
@@ -440,6 +464,13 @@ impl QuarkApp {
                                     let marked = self.is_marked(id);
                                     let running = self.is_running(id);
                                     let tile_pal = pal.with_accent(self.game_accent(&game));
+                                    // Cascade verticale : chaque rangée démarre un
+                                    // peu après la précédente.
+                                    let appear = ((age - (index + slot) as f32 * 0.02) / 0.3)
+                                        .clamp(0.0, 1.0);
+                                    if appear < 1.0 {
+                                        ui.ctx().request_repaint();
+                                    }
                                     let response = game_tile(
                                         ui,
                                         &tile_pal,
@@ -448,6 +479,7 @@ impl QuarkApp {
                                         selected,
                                         marked,
                                         running,
+                                        appear,
                                         &mut self.textures,
                                     );
                                     let clicked = response.clicked();
@@ -724,22 +756,18 @@ impl QuarkApp {
                 let area = Rect::from_min_max(ui.cursor().min, ui.max_rect().max);
                 let painter = ui.painter_at(area);
                 draw_cover(&painter, &texture, area);
-                // Voile dégradé au lieu d'un aplat : derrière la bannière il
-                // reste léger (l'image rayonne encore), et il s'épaissit vers
-                // le bas pour que le texte se détache. Un aplat unique donnait
-                // un fond plat qui semblait coupé net sous l'image.
-                const VOILE: usize = 24;
-                for band in 0..VOILE {
-                    let t = band as f32 / (VOILE - 1) as f32;
-                    let alpha = (136.0 + 104.0 * t * t).round().clamp(0.0, 255.0) as u8;
-                    let y0 = area.top() + area.height() * band as f32 / VOILE as f32;
-                    let y1 = area.top() + area.height() * (band + 1) as f32 / VOILE as f32;
-                    painter.rect_filled(
-                        Rect::from_min_max(Pos2::new(area.left(), y0), Pos2::new(area.right(), y1)),
-                        0.0,
-                        Color32::from_black_alpha(alpha),
-                    );
-                }
+                // Voile dégradé (maillage à quatre sommets, donc dégradé lisse
+                // sans bandes) : léger derrière la bannière, dense vers le bas
+                // pour que les actualités se détachent. La bannière elle-même
+                // n'est pas assombrie : elle est peinte par-dessus, sans fondu.
+                let mut veil = egui::Mesh::default();
+                veil.colored_vertex(area.left_top(), Color32::from_black_alpha(120));
+                veil.colored_vertex(area.right_top(), Color32::from_black_alpha(120));
+                veil.colored_vertex(area.left_bottom(), Color32::from_black_alpha(238));
+                veil.colored_vertex(area.right_bottom(), Color32::from_black_alpha(238));
+                veil.add_triangle(0, 1, 2);
+                veil.add_triangle(1, 2, 3);
+                painter.add(egui::Shape::mesh(veil));
             }
         }
 
@@ -788,10 +816,9 @@ impl QuarkApp {
                             // Recadrée, jamais étirée : quelle que soit la
                             // largeur de la fenêtre (plein écran compris), la
                             // bannière garde ses proportions et les bords qui
-                            // dépassent sont rognés par le painter. Ses derniers
-                            // 34 % fondent dans le fond flouté : plus de
-                            // coupure franche entre l'image et la fiche.
-                            draw_cover_faded(&painter, &texture, hero, hero.height() * 0.34);
+                            // dépassent sont rognés par le painter. La bannière
+                            // garde son bas net : aucun fondu vers le noir.
+                            draw_cover(&painter, &texture, hero);
                         } else {
                             // Sans bannière, un aplat teinté et la lettre du
                             // jeu : l'espace reste habité au lieu de ressembler
@@ -805,8 +832,6 @@ impl QuarkApp {
                                 0.0,
                             );
                         }
-                        let gradient = self.gradient_texture(ui.ctx());
-                        theme::bottom_gradient(ui, &gradient, hero, 0.52);
 
                         // Note ProtonDB et mention « Linux natif », en haut à
                         // gauche de la bannière.
@@ -1782,10 +1807,16 @@ fn game_tile(
     selected: bool,
     marked: bool,
     running: bool,
+    // Progression de l'apparition de la page (0 → 1), décalée par tuile.
+    appear: f32,
     textures: &mut crate::images::TextureCache,
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-    let painter = ui.painter_at(rect);
+    // Les tuiles montent de quelques pixels en apparaissant ; la place réservée
+    // ne bouge pas, seule la peinture est décalée.
+    let rect = rect.translate(Vec2::new(0.0, (1.0 - appear) * 9.0));
+    let mut painter = ui.painter_at(rect);
+    painter.set_opacity(appear);
     let id = egui::Id::new(("quark_tile", game.id.as_str()));
     let hover = ui
         .ctx()
@@ -1807,7 +1838,13 @@ fn game_tile(
     match texture {
         // Couverture recadrée au centre quand le format diffère (jamais
         // déformée), grâce au painter limité à la tuile.
-        Some(texture) => rounded_cover(ui, cover_rect, texture, 8.0),
+        Some(texture) => rounded_cover_tinted(
+            ui,
+            cover_rect,
+            texture,
+            8.0,
+            Color32::from_white_alpha((appear * 255.0).round() as u8),
+        ),
         None => widgets::monogram(
             &painter,
             cover_rect,
@@ -1839,7 +1876,12 @@ fn game_tile(
             Pos2::new(rect.left() + 6.0, rect.top() + 6.0),
             Vec2::new(34.0, 18.0),
         );
-        painter.rect_filled(badge, 3.0, pal.accent);
+        // La pastille respire tant qu'un jeu tourne : c'est le seul état
+        // animé en continu, et il ne dure que le temps de la partie.
+        let time = ui.input(|i| i.time) as f32;
+        let pulse = 0.62 + 0.38 * (time * 2.6).sin().abs();
+        ui.ctx().request_repaint();
+        painter.rect_filled(badge, 3.0, pal.accent.gamma_multiply(0.55 + 0.25 * pulse));
         painter.text(
             badge.center(),
             Align2::CENTER_CENTER,

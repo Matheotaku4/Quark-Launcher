@@ -16,6 +16,10 @@ pub const LOGIN_URL: &str = "https://legendary.gl/epiclogin";
 /// d'inventaire (60 s) tuerait le processus en pleine écriture.
 pub const INSTALL_TIMEOUT: Duration = Duration::from_secs(6 * 60 * 60);
 
+/// Une liste de bibliothèque rafraîchit les métadonnées Epic quand le cache est
+/// vide : une grosse collection dépasse largement la minute.
+pub const LIBRARY_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
 #[derive(Debug, Clone)]
 pub struct LegendaryAdapter {
     pub executable: PathBuf,
@@ -62,8 +66,12 @@ impl LegendaryAdapter {
         fetched_at: i64,
         cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<Vec<ProviderGame>, String> {
-        let output = self.run(Self::library_args(), cancellation)?;
-        self.owned_json(&output, fetched_at)
+        let output = super::runner::run(
+            self.command(Self::library_args()),
+            LIBRARY_TIMEOUT,
+            cancellation,
+        )?;
+        self.owned_listing(&output, fetched_at)
     }
 
     pub fn sync_installed(
@@ -119,8 +127,12 @@ impl LegendaryAdapter {
     pub fn login_args(code: &str) -> Vec<String> {
         vec!["auth".into(), "--code".into(), code.into()]
     }
+    /// `--json` sérialise les métadonnées, les assets et chaque succès de chaque
+    /// jeu : sur une grosse bibliothèque, la sortie dépasse plusieurs mégaoctets
+    /// et se fait refuser par le plafond de lecture. Le CSV ne garde que
+    /// quatre colonnes, pour la même information utile.
     pub fn library_args() -> Vec<String> {
-        vec!["list".into(), "--json".into()]
+        vec!["list".into(), "--csv".into()]
     }
     pub fn installed_args() -> Vec<String> {
         vec!["list-installed".into(), "--json".into()]
@@ -151,13 +163,13 @@ impl LegendaryAdapter {
         vec!["sync-saves".into(), app_name.into()]
     }
 
-    pub fn owned_json(
+    pub fn owned_listing(
         &self,
         output: &CommandOutput,
         fetched_at: i64,
     ) -> Result<Vec<ProviderGame>, String> {
         ensure_success(output)?;
-        parse_owned_json(&output.stdout, fetched_at)
+        parse_owned_listing(&output.stdout, fetched_at)
     }
 
     pub fn installed_json(
@@ -194,6 +206,112 @@ pub enum LoginState {
     Connected,
     SignedOut,
     Unknown,
+}
+
+/// Lit la sortie de `legendary list` : CSV depuis la 1.0.2, JSON accepté pour
+/// les versions précédentes et les sorties déjà enregistrées.
+pub fn parse_owned_listing(text: &str, fetched_at: i64) -> Result<Vec<ProviderGame>, String> {
+    let trimmed = text.trim_start();
+    if trimmed.starts_with('[') {
+        return parse_owned_json(text, fetched_at);
+    }
+    parse_owned_csv(text, fetched_at)
+}
+
+/// Parseur CSV minimal mais strict (RFC 4180) : guillemets, guillemets doublés,
+/// virgules et retours à la ligne à l'intérieur des champs.
+fn csv_records(text: &str) -> Vec<Vec<String>> {
+    let mut records = Vec::new();
+    let mut record: Vec<String> = Vec::new();
+    let mut field = String::new();
+    let mut quoted = false;
+    let mut chars = text.chars().peekable();
+    while let Some(character) = chars.next() {
+        if quoted {
+            match character {
+                '"' if chars.peek() == Some(&'"') => {
+                    chars.next();
+                    field.push('"');
+                }
+                '"' => quoted = false,
+                _ => field.push(character),
+            }
+            continue;
+        }
+        match character {
+            '"' if field.is_empty() => quoted = true,
+            ',' => record.push(std::mem::take(&mut field)),
+            '\r' => {}
+            '\n' => {
+                record.push(std::mem::take(&mut field));
+                records.push(std::mem::take(&mut record));
+            }
+            _ => field.push(character),
+        }
+    }
+    if !field.is_empty() || !record.is_empty() {
+        record.push(field);
+        records.push(record);
+    }
+    records
+}
+
+/// `App name,App title,Version,Is DLC` : les DLC sortent sur leurs propres
+/// lignes et ne sont pas des jeux lançables.
+pub fn parse_owned_csv(text: &str, fetched_at: i64) -> Result<Vec<ProviderGame>, String> {
+    let records = csv_records(text);
+    let mut rows = records.iter();
+    let header = rows
+        .next()
+        .ok_or_else(|| "sortie CSV Legendary vide".to_string())?;
+    let column = |name: &str| {
+        header
+            .iter()
+            .position(|cell| cell.trim().eq_ignore_ascii_case(name))
+    };
+    let (Some(name_at), Some(title_at)) = (column("App name"), column("App title")) else {
+        return Err("sortie CSV Legendary inattendue".to_string());
+    };
+    let dlc_at = column("Is DLC");
+    let mut seen = std::collections::HashSet::new();
+    let mut games = Vec::new();
+    for row in rows {
+        if row.len() <= name_at.max(title_at) {
+            continue;
+        }
+        let is_dlc = dlc_at
+            .and_then(|index| row.get(index))
+            .is_some_and(|cell| cell.trim().eq_ignore_ascii_case("true"));
+        if is_dlc {
+            continue;
+        }
+        let app_name = row[name_at].trim();
+        let title = row[title_at].trim();
+        if app_name.is_empty() || title.is_empty() {
+            continue;
+        }
+        if !seen.insert(app_name.to_string()) {
+            continue;
+        }
+        games.push(ProviderGame {
+            key: ProviderGameKey {
+                provider: Provider::Epic,
+                product_id: app_name.to_string(),
+            },
+            title: title.to_string(),
+            owned: true,
+            install_path: None,
+            custom_save_paths: Vec::new(),
+            install_state: InstallState::NotInstalled,
+            quark_game_id: None,
+            capabilities: Default::default(),
+            last_synced: Some(fetched_at),
+        });
+    }
+    if games.is_empty() {
+        return Err("bibliothèque Epic vide ou compte Legendary indisponible; données précédentes conservées".into());
+    }
+    Ok(games)
 }
 
 pub fn parse_owned_json(json: &str, fetched_at: i64) -> Result<Vec<ProviderGame>, String> {
@@ -428,6 +546,37 @@ mod tests {
     }
 
     #[test]
+    fn une_liste_csv_ignore_les_dlc_et_garde_les_titres_echappes() {
+        let csv = "App name,App title,Version,Is DLC\r\n\
+Anemone,Anemone,1.0,False\r\n\
+AnemoneDLC,Anemone: Deluxe,1.0,True\r\n\
+\"Odd,Game\",\"Odd, Game \"\"Remastered\"\"\",,False\n\
+Empty,,1.0,False\n";
+        let games = parse_owned_csv(csv, 7).unwrap();
+        assert_eq!(games.len(), 2);
+        assert_eq!(games[0].key.product_id, "Anemone");
+        assert_eq!(games[1].title, "Odd, Game \"Remastered\"");
+        assert_eq!(games[1].key.product_id, "Odd,Game");
+        assert_eq!(games[1].last_synced, Some(7));
+    }
+
+    #[test]
+    fn une_sortie_csv_sans_entete_ou_vide_est_refusee() {
+        assert!(parse_owned_csv("", 1).is_err());
+        assert!(parse_owned_csv("App name,App title,Version,Is DLC\n", 1).is_err());
+        assert!(parse_owned_csv("n'importe quoi\n1,2,3", 1).is_err());
+    }
+
+    #[test]
+    fn la_liste_accepte_encore_l_ancienne_sortie_json() {
+        let json = r#"[{"app_name":"app_1","app_title":"Jeu"}]"#;
+        let games = parse_owned_listing(json, 3).unwrap();
+        assert_eq!(games.len(), 1);
+        assert_eq!(games[0].key.product_id, "app_1");
+        let csv = "App name,App title,Version,Is DLC\napp_2,Jeu 2,1.0,False\n";
+        assert_eq!(parse_owned_listing(csv, 3).unwrap()[0].title, "Jeu 2");
+    }
+
     fn malformed_or_ambiguous_legendary_output_is_not_an_empty_success() {
         assert!(parse_owned_json("not json", 1).is_err());
         assert!(parse_owned_json("{}", 1).is_err());
@@ -464,7 +613,7 @@ mod tests {
             stderr: "private".into(),
             exit_code: Some(1),
         };
-        assert!(adapter.owned_json(&output, 1).is_err());
+        assert!(adapter.owned_listing(&output, 1).is_err());
     }
 
     #[test]

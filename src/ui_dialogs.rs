@@ -550,6 +550,14 @@ impl QuarkApp {
             });
             ui.add_space(8.0);
             ui.separator();
+            ui.add_space(6.0);
+            // Une phrase par page : elle évite d'ouvrir les sept onglets pour
+            // trouver le bon réglage.
+            ui.label(
+                RichText::new(self.settings_tab.hint())
+                    .size(11.5)
+                    .color(pal.text_faint),
+            );
             ui.add_space(2.0);
 
             egui::ScrollArea::vertical()
@@ -558,7 +566,16 @@ impl QuarkApp {
                 // Se rétrécit quand la page est courte, mais grandit jusqu'à
                 // `max_height` quand les variables s'accumulent.
                 .auto_shrink([false, true])
-                .show(ui, |ui| match self.settings_tab {
+                .show(ui, |ui| {
+                    // Chaque page se fond à l'ouverture de son onglet : le
+                    // changement se voit, sans déplacer le contenu.
+                    let page_fade = ui.ctx().animate_bool_with_time(
+                        egui::Id::new(("quark_settings_page", self.settings_tab as usize)),
+                        true,
+                        0.16,
+                    );
+                    ui.set_opacity(page_fade);
+                    match self.settings_tab {
                     SettingsTab::Appearance => {
                         section(ui, "THÈME", &pal);
                         ui.horizontal(|ui| {
@@ -730,7 +747,7 @@ impl QuarkApp {
                     SettingsTab::Defaults => {
                         section_hint(
                             ui,
-                            "PAR DÉFAUT",
+                            "VALEURS PAR DÉFAUT",
                             &pal,
                             "Ce ne sont pas des réglages globaux : ces valeurs sont recopiées \
                              dans un jeu au moment où tu l'ajoutes, puis chaque jeu garde les \
@@ -738,7 +755,7 @@ impl QuarkApp {
                              bibliothèque, et modifier un jeu ne touche pas les autres.",
                         );
 
-                        ui.label(RichText::new("Préfixe Proton").size(12.5).color(pal.text_dim));
+                        section(ui, "PRÉFIXE PROTON", &pal);
                         ui.horizontal(|ui| {
                             let mut text =
                                 self.lib.settings.default_prefix.clone().unwrap_or_default();
@@ -998,7 +1015,10 @@ impl QuarkApp {
                     SettingsTab::Stats => self.stats_page(ui, &pal),
                     SettingsTab::Disk => self.disk_page(ui, &pal, ctx),
                     SettingsTab::Providers => {
-                        section(ui, "CONFIDENTIALITÉ DES COMPTES", &pal);
+                        section(ui, "SYNCHRONISATION", &pal);
+                        self.sync_section(ui, ctx, &pal);
+                        ui.add_space(12.0);
+                        section(ui, "COMPTES", &pal);
                         ui.label(
                             RichText::new(
                                 "Les identifiants restent sur cet ordinateur dans un fichier séparé, protégé par les permissions de ton compte. Ils ne sont pas chiffrés et Quark ne les envoie jamais à un serveur Quark.",
@@ -1042,7 +1062,7 @@ impl QuarkApp {
                             );
                         });
                         ui.add_space(10.0);
-                        section(ui, "BOUTIQUES", &pal);
+                        section(ui, "CONNEXIONS", &pal);
                         self.provider_accounts(ui, ctx, &pal);
                         ui.label(
                             RichText::new("Heroic sera détecté et sa configuration ne sera lue qu'après ton accord explicite.")
@@ -1245,6 +1265,7 @@ impl QuarkApp {
                             &config::prefix_root().display().to_string(),
                             &pal,
                         );
+                    }
                     }
                 });
 
@@ -1680,7 +1701,7 @@ impl QuarkApp {
                     .max_height((ctx.screen_rect().height() - 210.0).max(160.0))
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
-                section(ui, "JEU", &pal);
+                section(ui, "LANCEMENT", &pal);
                 ui.label(RichText::new("Nom affiché").size(12.5).color(pal.text_dim));
                 ui.add(
                     egui::TextEdit::singleline(&mut game.name)
@@ -1704,7 +1725,7 @@ impl QuarkApp {
                         .desired_width(f32::INFINITY),
                 );
 
-                section(ui, "BIBLIOTHÈQUE", &pal);
+                section(ui, "MA FICHE", &pal);
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Statut").size(12.5).color(pal.text_dim));
                     widgets::info_button(
@@ -3100,99 +3121,113 @@ impl QuarkApp {
             .stroke(egui::Stroke::new(1.0_f32, pal.border))
             .corner_radius(12.0)
             .inner_margin(14.0);
-        let modal = egui::Modal::new(egui::Id::new("quark_logs")).frame(log_frame).show(ctx, |ui| {
-            ui.set_min_width(780.0);
-            // Les lignes d'un journal sont longues : la fenêtre se limite à
-            // l'écran et le texte défile horizontalement au lieu de pousser le
-            // cadre hors de la fenêtre.
-            ui.set_max_width((ctx.screen_rect().width() - 120.0).clamp(520.0, 980.0));
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(format!("Journal · {name}"))
-                        .size(17.0)
-                        .color(pal.text),
-                );
-                if running {
-                    ui.add_space(8.0);
-                    ui.spinner();
+        let modal = egui::Modal::new(egui::Id::new("quark_logs"))
+            .frame(log_frame)
+            .show(ctx, |ui| {
+                ui.set_min_width(780.0);
+                // Les lignes d'un journal sont longues : la fenêtre se limite à
+                // l'écran et le texte défile horizontalement au lieu de pousser le
+                // cadre hors de la fenêtre.
+                ui.set_max_width((ctx.screen_rect().width() - 120.0).clamp(520.0, 980.0));
+                ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new("session en cours")
-                            .size(11.0)
-                            .color(pal.text_dim),
+                        RichText::new(format!("Journal · {name}"))
+                            .size(17.0)
+                            .color(pal.text),
                     );
-                }
-            });
-            ui.add_space(4.0);
-            ui.label(
-                RichText::new(path.display().to_string())
-                    .size(10.5)
-                    .color(pal.text_faint),
-            );
-            widgets::info_button(
+                    if running {
+                        ui.add_space(8.0);
+                        ui.spinner();
+                        ui.label(
+                            RichText::new("session en cours")
+                                .size(11.0)
+                                .color(pal.text_dim),
+                        );
+                    }
+                });
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(path.display().to_string())
+                        .size(10.5)
+                        .color(pal.text_faint),
+                );
+                widgets::info_button(
                 ui,
                 &pal,
                 "Tout ce que le jeu et Wine affichent (stdout et stderr) est écrit ici, précédé de \
                  la commande lancée et de ses variables. Avec « Journal Proton détaillé », \
                  PROTON_LOG écrit son propre fichier dans ce même dossier.",
             );
-            ui.add_space(8.0);
+                ui.add_space(8.0);
 
-            egui::ScrollArea::both()
-                .id_salt("quark_logs_scroll")
-                .max_height(max_height)
-                .auto_shrink([false, false])
-                .stick_to_bottom(true)
-                .show(ui, |ui| {
-                    if let Some(message) = &error {
-                        ui.label(RichText::new(message).size(11.5).color(pal.danger));
-                        ui.add_space(6.0);
-                        ui.label(
-                            RichText::new("Le journal est créé au premier lancement du jeu.")
-                                .size(11.5)
-                                .color(pal.text_faint),
-                        );
-                        return;
+                egui::ScrollArea::both()
+                    .id_salt("quark_logs_scroll")
+                    .max_height(max_height)
+                    .auto_shrink([false, false])
+                    .stick_to_bottom(true)
+                    .show(ui, |ui| {
+                        if let Some(message) = &error {
+                            ui.label(RichText::new(message).size(11.5).color(pal.danger));
+                            ui.add_space(6.0);
+                            ui.label(
+                                RichText::new("Le journal est créé au premier lancement du jeu.")
+                                    .size(11.5)
+                                    .color(pal.text_faint),
+                            );
+                            return;
+                        }
+                        if truncated {
+                            ui.label(
+                                RichText::new("début du journal tronqué à l'affichage")
+                                    .size(10.5)
+                                    .color(pal.text_faint),
+                            );
+                            ui.add_space(4.0);
+                        }
+                        if lines.is_empty() {
+                            ui.label(
+                                RichText::new("journal vide")
+                                    .size(11.5)
+                                    .color(pal.text_faint),
+                            );
+                        } else {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(lines.join("\n"))
+                                        .monospace()
+                                        .size(11.0)
+                                        .color(pal.text_dim),
+                                )
+                                .wrap_mode(egui::TextWrapMode::Extend)
+                                .selectable(true),
+                            );
+                        }
+                    });
+
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if widgets::accent_button(
+                        ui,
+                        Vec2::new(130.0, 32.0),
+                        "Fermer",
+                        &pal,
+                        true,
+                        Icon::None,
+                    )
+                    .clicked()
+                    {
+                        close = true;
                     }
-                    if truncated {
-                        ui.label(
-                            RichText::new("début du journal tronqué à l'affichage")
-                                .size(10.5)
-                                .color(pal.text_faint),
-                        );
-                        ui.add_space(4.0);
+                    ui.add_space(8.0);
+                    if widgets::ghost_button(ui, "Actualiser", &pal, Icon::Refresh).clicked() {
+                        refresh = true;
                     }
-                    if lines.is_empty() {
-                        ui.label(RichText::new("journal vide").size(11.5).color(pal.text_faint));
-                    } else {
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new(lines.join("\n"))
-                                    .monospace()
-                                    .size(11.0)
-                                    .color(pal.text_dim),
-                            )
-                            .wrap_mode(egui::TextWrapMode::Extend)
-                            .selectable(true),
-                        );
+                    if widgets::ghost_button(ui, "Ouvrir le dossier", &pal, Icon::Folder).clicked()
+                    {
+                        open_folder = true;
                     }
                 });
-
-            ui.add_space(12.0);
-            ui.horizontal(|ui| {
-                if widgets::accent_button(ui, Vec2::new(130.0, 32.0), "Fermer", &pal, true, Icon::None)
-                    .clicked()
-                {
-                    close = true;
-                }
-                ui.add_space(8.0);
-                if widgets::ghost_button(ui, "Actualiser", &pal, Icon::Refresh).clicked() {
-                    refresh = true;
-                }
-                if widgets::ghost_button(ui, "Ouvrir le dossier", &pal, Icon::Folder).clicked() {
-                    open_folder = true;
-                }
             });
-        });
         if modal.should_close() {
             close = true;
         }

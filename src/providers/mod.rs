@@ -5,6 +5,7 @@
 
 pub mod credentials;
 pub mod gog;
+pub mod gog_library;
 pub mod legendary;
 pub mod model;
 pub mod operations;

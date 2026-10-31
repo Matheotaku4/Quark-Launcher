@@ -4,7 +4,7 @@ A **lightweight game launcher for Linux**, written in Rust (egui), meant as a so
 alternative to Steam: deep black (AMOLED), list or grid view, a game banner with a
 **Play** button, playtime, ProtonDB rating and official artwork, with Windows games launched
 through **Proton** — or through **umu-launcher**. Three tabs: a Steam store page, your
-library, and **Mes jeux** — the Steam and Epic titles you own or have installed, in one list,
+library, and **Mes jeux** — the Steam, Epic and GOG titles you own or have installed, in one list,
 with save snapshots through Ludusavi.
 
 ## Features
@@ -195,19 +195,26 @@ with save snapshots through Ludusavi.
   Steam Web API key and SteamID64 are configured — the section says which source was used,
   and your profile is never sent to Steam. These Steam endpoints are undocumented and
   handled as best-effort: a malformed response is reported, never cached as an empty store.
-- **Mes jeux**: Steam (read from local `appmanifest_*.acf`) and Epic (through Legendary)
-  games in one list — owned, installed, or both — with a filter per store, the detected
-  install path, and what the store can actually do. The same game on two stores can be
-  **merged** into one row and **split** again.
+- **Mes jeux**: Steam (read from local `appmanifest_*.acf`), Epic (through Legendary) and
+  GOG (through the GOG API) games in one grid — owned, installed, or both — with one tab per
+  store and a counter, the detected install path, and what the store can actually do. The
+  same game on two stores can be **merged** into one row and **split** again.
+- **Store sync starts on its own**: once the interface is up, every connected store is
+  refreshed in the background. **Settings → Stores & tools** opens on a *Sync* section with a
+  button per store, *Sync all*, the number of games, the last sync time and any error;
+  **Mes jeux** only shows the result. Epic is read with `legendary list --csv` because the
+  JSON listing (metadata, assets, achievements) overflows the provider output limit, and GOG
+  has no list command at all: Quark refreshes the gogdl session token and asks the GOG API
+  (`embed.gog.com/user/data/games`, then `api.gog.com/products` in batches) directly.
 - **Installs are delegated, never faked**: *Installer via Steam* hands the AppID to the Steam
   client (`steam://install/<id>`) and then rescans; *Installer via Legendary* installs into
   the folder you choose and only marks the game **Installé** once a matching local directory
   has been found. A dialog closing or a process exiting is never taken as proof.
 - **Save folders and snapshots from the same page**: custom save folders per installation,
   Ludusavi preview, backup, backup inventory and restore — see *Save files* below.
-- **Deliberately absent**: achievements, cloud saves and the GOG library. No verified source
-  is wired for them, so Quark shows nothing rather than empty results or invented
-  capabilities.
+- **Deliberately absent**: achievements and cloud saves. No verified source is wired for
+  them, so Quark shows nothing rather than empty results or invented capabilities. GOG games
+  can be listed but not installed yet.
 
 ## Build
 
@@ -291,7 +298,7 @@ Legendary, gogdl and Ludusavi are downloaded from their official GitHub releases
 | --- | --- | --- |
 | Legendary | Epic library, installs, login | owned + installed lists, installs into a folder you pick |
 | Ludusavi | local save snapshots | preview, backup, inventory, restore |
-| gogdl | GOG | login through a GOG code; no library or install flow yet |
+| gogdl | GOG | login through a GOG code; owned games are listed through the GOG API, installs not wired yet |
 
 The SHA-256 digest published in the release metadata is mandatory: a release without a
 digest, a digest mismatch, a missing Linux x64 asset, or a `--version` that does not match the
@@ -346,7 +353,8 @@ Saves are handled per provider installation, not per title:
   Ludusavi call exists only inside that confirmed flow.
 
 Achievements and cloud saves are **not** offered: no verified source is wired for either, so
-nothing is claimed or displayed as empty. GOG games cannot be synced or installed yet.
+nothing is claimed or displayed as empty. GOG games can be synced into **Mes jeux**;
+installing them is not wired yet.
 
 The full manual check — real Ludusavi binary, exact commands, expected JSON and pass/fail
 criteria — is in [`docs/verification/ludusavi-config.md`](docs/verification/ludusavi-config.md).
@@ -499,7 +507,7 @@ src/main.rs         entry point + CLI (--doctor/--search/--fetch/--news/--scan/-
 src/app.rs          application state, egui loop, launching, playtime, toasts, ProtonDB
 src/ui_home.rs      Home page: recent-games carousel, Continue, sorted library grid
 src/ui_library.rs   Library tab: list/grid column + game pane (banner, Play, news, ProtonDB)
-src/ui_my_games.rs  Mes jeux: store sync, duplicate merge, install handoff, save folders
+src/ui_my_games.rs  Mes jeux: per-store tabs and grid, duplicate merge, install handoff, save folders
 src/ui_store.rs     Store tab: specials, search, local recommendations, price display
 src/steam_store.rs  Steam Store catalogue, regional prices, local cache, recommendation ranking
 src/providers/      provider model, Steam/Epic/GOG adapters, managed tools, credentials, installs
@@ -527,7 +535,7 @@ src/snapshot.rs     off-screen software renderer (--ui), for visual checks
 ## Possible next steps
 
 - Achievements and cloud saves, but only once a per-store source can be verified.
-- Wire the gogdl adapter into **Mes jeux** once its library and install output are pinned.
+- Wire GOG installs into the gogdl adapter once its install output is pinned.
 - Favourites on the home page.
 - A time-range selector on the statistics page (7 days, 30 days, this year).
 - A “verify prefix” action.

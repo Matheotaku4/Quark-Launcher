@@ -3,7 +3,7 @@
 //! gogdl n'expose pas de commande CLI de découverte/liste de bibliothèque :
 //! l'adaptateur ne déduit donc jamais une bibliothèque possédée de `info`.
 
-use super::model::CapabilityState;
+use super::model::{CapabilityState, InstallState, Provider, ProviderGame};
 use super::runner::{CommandOutput, ProviderCommand};
 use super::tools::ManagedToolId;
 use std::path::{Path, PathBuf};
@@ -101,18 +101,24 @@ impl GogAdapter {
         super::runner::run(self.command(args), self.timeout, cancellation)
     }
 
-    pub fn sync_library(&self) -> Result<Vec<super::model::ProviderGame>, String> {
-        Err("gogdl 1.4.0 ne fournit pas de commande de découverte de bibliothèque".into())
+    /// Bibliothèque possédée, lue via l'API publique de GOG avec les jetons
+    /// écrits par gogdl (qui ne sait pas lister une bibliothèque).
+    pub fn sync_library(
+        &self,
+        fetched_at: i64,
+    ) -> Result<Vec<super::model::ProviderGame>, String> {
+        let tokens = super::gog_library::usable_tokens(&self.auth_config, crate::config::now_ts())?;
+        let owned = super::gog_library::library(&tokens.access_token)?;
+        Ok(super::gog_library::to_games(&owned, fetched_at))
     }
 
     pub fn login_args(code: &str) -> Vec<String> {
         vec!["auth".into(), "--code".into(), code.into()]
     }
 
+    /// gogdl ne liste rien, mais l'API GOG le fait avec la session gogdl.
     pub fn library_capability() -> CapabilityState {
-        CapabilityState::Unsupported(
-            "gogdl 1.4.0 n'expose pas de commande CLI de liste de bibliothèque".into(),
-        )
+        CapabilityState::Supported
     }
 
     pub fn install_args(game_id: &str, destination: &Path, platform: &str) -> Vec<String> {
@@ -166,16 +172,48 @@ impl GogAdapter {
     }
 }
 
+/// Fusionne la bibliothèque GOG rafraîchie sans perdre l'état local.
+pub fn merge_gog(existing: &[ProviderGame], refreshed: &[ProviderGame]) -> Vec<ProviderGame> {
+    let mut merged: Vec<ProviderGame> = existing
+        .iter()
+        .filter(|game| game.key.provider != Provider::Gog)
+        .cloned()
+        .collect();
+    for incoming in refreshed {
+        let mut game = incoming.clone();
+        if let Some(previous) = existing.iter().find(|previous| previous.key == incoming.key) {
+            game.custom_save_paths = previous.custom_save_paths.clone();
+            if game.quark_game_id.is_none() {
+                game.quark_game_id = previous.quark_game_id.clone();
+            }
+            if previous.install_state == InstallState::Installed
+                && previous
+                    .install_path
+                    .as_ref()
+                    .is_some_and(|path| path.is_dir())
+            {
+                game.install_state = InstallState::Installed;
+                game.install_path = previous.install_path.clone();
+            }
+            if game.capabilities.achievements == CapabilityState::Unknown {
+                game.capabilities.achievements = previous.capabilities.achievements.clone();
+            }
+            if game.capabilities.cloud_saves == CapabilityState::Unknown {
+                game.capabilities.cloud_saves = previous.capabilities.cloud_saves.clone();
+            }
+        }
+        merged.push(game);
+    }
+    merged
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn gogdl_does_not_claim_a_library_command_that_upstream_does_not_provide() {
-        assert!(matches!(
-            GogAdapter::library_capability(),
-            CapabilityState::Unsupported(reason) if reason.contains("liste de bibliothèque")
-        ));
+    fn la_bibliotheque_gog_est_annoncee_comme_disponible() {
+        assert_eq!(GogAdapter::library_capability(), CapabilityState::Supported);
     }
 
     #[test]

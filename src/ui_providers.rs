@@ -5,9 +5,10 @@
 //! (Legendary pour Epic, gogdl pour GOG) échange ce code contre une session.
 
 use crate::app::{ProviderLogin, QuarkApp};
-use crate::providers::Provider;
 use crate::providers::tools::ManagedToolId;
+use crate::providers::Provider;
 use crate::theme::Palette;
+use crate::widgets::{self, Icon};
 use eframe::egui::{self, RichText, Vec2};
 
 enum LoginAction {
@@ -18,6 +19,163 @@ enum LoginAction {
 }
 
 impl QuarkApp {
+    /// Bloc « Synchronisation » : état de chaque boutique et relance manuelle.
+    ///
+    /// C'est le seul endroit d'où l'on synchronise : la page « Mes jeux » se
+    /// contente d'afficher le résultat, et le démarrage lance tout seul les
+    /// boutiques connectées.
+    pub(crate) fn sync_section(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, pal: &Palette) {
+        let epic_logged_in = crate::providers::legendary::LegendaryAdapter::is_logged_in();
+        let gog_logged_in = crate::providers::gog::GogAdapter::is_logged_in();
+        let legendary_ready = ManagedToolId::Legendary.installed_path().is_file();
+        let steam_owned =
+            self.credentials.steam_web_api_key.is_some() && self.credentials.steam_id.is_some();
+        // Compteurs et dernière synchronisation, relevés en une fois : le bloc
+        // peut ensuite modifier l'application sans conflit d'emprunt.
+        let summary: Vec<(usize, Option<i64>)> = [Provider::Steam, Provider::Epic, Provider::Gog]
+            .into_iter()
+            .map(|provider| {
+                let mut count = 0;
+                let mut last = None;
+                for game in self.lib.provider_library.games.iter() {
+                    if game.key.provider == provider {
+                        count += 1;
+                        if let Some(ts) = game.last_synced {
+                            last = Some(last.map_or(ts, |value: i64| value.max(ts)));
+                        }
+                    }
+                }
+                (count, last)
+            })
+            .collect();
+
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(
+                    "Lancée automatiquement au démarrage, boutique par boutique. \
+                     Chaque synchronisation remplace seulement les jeux de sa boutique.",
+                )
+                .size(11.5)
+                .color(pal.text_dim),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if widgets::ghost_button(ui, "Tout synchroniser", &pal, Icon::Refresh).clicked() {
+                    self.start_steam_sync(ctx);
+                    if legendary_ready && epic_logged_in {
+                        self.start_epic_sync(ctx);
+                    }
+                    if gog_logged_in {
+                        self.start_gog_sync(ctx);
+                    }
+                }
+            });
+        });
+        ui.add_space(8.0);
+
+        // Erreurs copiées : le tableau ne doit pas emprunter `self`, que les
+        // boutons modifient pendant le rendu.
+        let steam_error = self.steam_sync_error.clone();
+        let epic_error = self.epic_sync_error.clone();
+        let gog_error = self.gog_sync_error.clone();
+        for (index, provider, label, note, connected, busy, error) in [
+            (
+                0,
+                Provider::Steam,
+                "Steam",
+                if steam_owned {
+                    "Bibliothèque possédée via la clé Web API, plus les jeux installés."
+                } else {
+                    "Jeux installés localement (clé Web API absente : pas de jeux possédés)."
+                },
+                true,
+                self.steam_sync_loading,
+                steam_error.as_deref(),
+            ),
+            (
+                1,
+                Provider::Epic,
+                "Epic Games",
+                if !legendary_ready {
+                    "Legendary n'est pas installé : installe-le dans « Outils gérés par Quark »."
+                } else if epic_logged_in {
+                    "Compte Legendary connecté."
+                } else {
+                    "Compte Epic non connecté."
+                },
+                legendary_ready && epic_logged_in,
+                self.epic_sync_loading,
+                epic_error.as_deref(),
+            ),
+            (
+                2,
+                Provider::Gog,
+                "GOG",
+                if gog_logged_in {
+                    "Compte GOG connecté (bibliothèque lue via l'API GOG)."
+                } else {
+                    "Compte GOG non connecté."
+                },
+                gog_logged_in,
+                self.gog_sync_loading,
+                gog_error.as_deref(),
+            ),
+        ] {
+            let (count, last) = summary[index];
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(label).size(12.5).strong().color(pal.text));
+                ui.label(
+                    RichText::new(if count > 1 {
+                        format!("{count} jeux")
+                    } else if count == 1 {
+                        "1 jeu".to_string()
+                    } else {
+                        "aucun jeu".to_string()
+                    })
+                    .size(11.0)
+                    .color(pal.text_faint),
+                );
+                if let Some(ts) = last {
+                    ui.label(
+                        RichText::new(crate::config::human_ago(ts))
+                            .size(11.0)
+                            .color(pal.text_faint),
+                    );
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let enabled = connected && !busy;
+                    if busy {
+                        ui.add(egui::Spinner::new().size(11.0));
+                    }
+                    ui.add_enabled_ui(enabled, |ui| {
+                        let text = if busy { "En cours…" } else { "Synchroniser" };
+                        if widgets::ghost_button(ui, text, &pal, Icon::Refresh).clicked() {
+                            match provider {
+                                Provider::Steam => self.start_steam_sync(ctx),
+                                Provider::Epic => self.start_epic_sync(ctx),
+                                Provider::Gog => self.start_gog_sync(ctx),
+                            }
+                        }
+                    });
+                });
+            });
+            ui.label(RichText::new(note).size(11.0).color(pal.text_dim));
+            if let Some(error) = error {
+                ui.label(RichText::new(error).size(11.0).color(pal.danger));
+            }
+            ui.add_space(4.0);
+        }
+        if self.epic_sync_loading || self.gog_sync_loading || self.steam_sync_loading {
+            ui.horizontal(|ui| {
+                ui.add(egui::Spinner::new().size(12.0));
+                ui.label(
+                    RichText::new("Synchronisation en cours…")
+                        .size(11.0)
+                        .color(pal.text_faint),
+                );
+            });
+        }
+    }
+
     /// Bloc « Boutiques » de la page Paramètres → Boutiques & outils.
     pub(crate) fn provider_accounts(
         &mut self,

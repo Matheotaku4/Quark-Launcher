@@ -1,3 +1,37 @@
+## Quark 1.0.2 — synchronisation GOG, « Mes jeux » par boutique et réglages clarifiés
+
+- **Synchronisation GOG** : gogdl n'expose aucune commande de liste. Quark lit donc sa session,
+  rafraîchit le `refresh_token` auprès de `auth.gog.com` (client public, comme gogdl), puis
+  interroge `embed.gog.com/user/data/games` et `api.gog.com/products` par lots de 40, avec repli
+  sur `getFilteredProducts`. La session n'est réécrite que si elle a changé, atomiquement et en
+  `0600`. Les jeux GOG possédés apparaissent dans **Mes jeux** ; l'installation GOG reste à faire.
+- **Epic : « sortie stdout fournisseur trop volumineuse ou illisible » corrigé** :
+  `legendary list --json` sérialise métadonnées, assets et succès — plusieurs mégaoctets, au-delà
+  du plafond de 4 Mio du runner. La liste passe par `legendary list --csv` (quatre colonnes) et un
+  parseur RFC 4180 maison (guillemets doublés, virgules, CRLF, DLC ignorés) ; l'ancien JSON reste
+  accepté pour les versions qui ne connaissent pas `--csv`.
+- **Synchronisation au démarrage, réglages à part** : les boutiques connectées se synchronisent
+  seules une fois l'interface affichée, et **Paramètres → Boutiques & outils** ouvre sur une
+  section *Synchronisation* (un bouton par boutique, « Tout synchroniser », nombre de jeux,
+  dernière synchronisation, erreurs et états en cours). **Mes jeux** n'a plus de bouton de
+  synchronisation : elle affiche le résultat.
+- **Mes jeux en grille, un onglet par boutique** : Toutes / Steam / Epic Games / GOG avec
+  compteurs, cartes en grille et actions regroupées par jeu.
+- **Bannière de jeu sans fondu vers le noir** : le dégradé du hero est retiré, l'image garde son
+  bas net ; le fond flouté reçoit un dégradé lissé (maillage à quatre sommets, sans bandes) pour
+  que les actualités restent lisibles.
+- **Animations** : fondu à chaque changement d'onglet, apparition en cascade des tuiles (fondu et
+  léger soulèvement), couvertures soulevées au survol, pastille « EN JEU » qui respire pendant
+  une partie, transitions des pages de réglages, spinners d'état.
+- **Réglages réorganisés** : Apparence · Nouveaux jeux · Artworks · Boutiques & outils ·
+  Statistiques · Espace disque · À propos, une phrase d'introduction par page, et fiche de jeu en
+  LANCEMENT / MA FICHE / FICHE STEAM.
+
+Limites assumées : la synchronisation GOG et la liste Epic n'ont pas pu être validées avec de
+vrais comptes (les parseurs, le rafraîchissement de session et les cas d'erreur sont couverts par
+des tests) ; GOG ne s'installe pas encore ; achievements et sauvegardes cloud restent absents
+faute de source vérifiable.
+
 ## Quark 1.0.1 — installation de Legendary, connexions Epic/GOG et boutique refaite
 
 - **Installation de Legendary réparée** : l'asset officiel `legendary_linux_x64` est un

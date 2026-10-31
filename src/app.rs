@@ -278,15 +278,40 @@ pub enum SettingsTab {
 }
 
 impl SettingsTab {
+    /// Ordre de lecture : l'apparence, puis ce que reçoivent les nouveaux
+    /// jeux, les boutiques (le seul onglet avec des actions), les données, et
+    /// enfin la version installée.
     pub const ALL: [(SettingsTab, &'static str); 7] = [
         (SettingsTab::Appearance, "Apparence"),
-        (SettingsTab::Defaults, "Par défaut"),
+        (SettingsTab::Defaults, "Nouveaux jeux"),
         (SettingsTab::Artworks, "Artworks"),
+        (SettingsTab::Providers, "Boutiques & outils"),
         (SettingsTab::Stats, "Statistiques"),
         (SettingsTab::Disk, "Espace disque"),
         (SettingsTab::About, "À propos"),
-        (SettingsTab::Providers, "Boutiques & outils"),
     ];
+
+    /// Phrase d'introduction de chaque page : elle dit ce qu'on vient y faire.
+    pub fn hint(self) -> &'static str {
+        match self {
+            SettingsTab::Appearance => {
+                "Thème, affichage de la bibliothèque, accueil et notifications."
+            }
+            SettingsTab::Defaults => {
+                "Ce que reçoit chaque jeu ajouté : préfixe, runtime, options et variables. \
+                 Modifiable jeu par jeu."
+            }
+            SettingsTab::Artworks => {
+                "Sources des images, téléchargement et remplacement des artworks."
+            }
+            SettingsTab::Providers => {
+                "Synchronisation, comptes Steam / Epic / GOG et outils gérés par Quark."
+            }
+            SettingsTab::Stats => "Historique de jeu : heures, calendrier et séries.",
+            SettingsTab::Disk => "Poids des préfixes, du cache, des journaux et des jeux.",
+            SettingsTab::About => "Version installée, mises à jour et licences.",
+        }
+    }
 }
 
 /// Fenêtre « Personnaliser » d'un jeu (images et apparence).
@@ -436,8 +461,6 @@ pub struct QuarkApp {
     /// Images claires (bannière bleu ciel…) : une seule analyse par fichier,
     /// pour y poser des icônes sombres.
     pub light_images: HashMap<PathBuf, bool>,
-    /// Rampe de dégradé des bannières (créée au premier usage).
-    pub gradient: Option<egui::TextureHandle>,
     /// Actualités par jeu (chargées une fois, mises en cache).
     pub news: HashMap<String, NewsState>,
     /// Chargement d'actualités en cours.
@@ -488,6 +511,12 @@ pub struct QuarkApp {
     pub carousel_at: Instant,
     /// Instant où la page d'accueil a été ouverte (animation d'entrée).
     pub home_at: Instant,
+    /// Début de l'animation d'entrée de la page visible (changement d'onglet
+    /// ou de vue) : les grilles s'y accrochent pour apparaître en cascade.
+    pub page_at: Instant,
+    /// Dernier onglet et dernière vue rendus, pour détecter un changement.
+    last_tab: Tab,
+    last_view: ViewMode,
     /// Bannières floutées (fond de la fiche jeu), une par fichier.
     pub blurs: crate::images::BlurCache,
     /// Fiche du jeu affichée en surimpression (vue grille).
@@ -522,6 +551,15 @@ pub struct QuarkApp {
             >,
         >,
     >,
+    /// Synchronisation GOG : l'API GOG est interrogée avec la session gogdl.
+    pub gog_sync_loading: bool,
+    pub gog_sync_error: Option<String>,
+    pub gog_sync_rx: Option<Receiver<Result<Vec<crate::providers::ProviderGame>, String>>>,
+    /// Onglet de boutique actif dans « Mes jeux » (None = toutes).
+    pub my_games_store: Option<crate::providers::Provider>,
+    /// Synchronisation automatique lancée une seule fois, après l'affichage.
+    pub startup_sync_done: bool,
+    pub frames_alive: u32,
     pub epic_owned_fallback: Option<Vec<crate::providers::ProviderGame>>,
     pub epic_install_pending: Option<crate::providers::ProviderGameKey>,
     pub epic_installing: Option<crate::providers::ProviderGameKey>,
@@ -616,7 +654,6 @@ impl QuarkApp {
             textures: crate::images::TextureCache::default(),
             accents: HashMap::new(),
             light_images: HashMap::new(),
-            gradient: None,
             news: HashMap::new(),
             news_job: None,
             update: UpdateState::Idle,
@@ -638,6 +675,9 @@ impl QuarkApp {
             carousel: 0,
             carousel_at: Instant::now(),
             home_at: Instant::now(),
+            page_at: Instant::now(),
+            last_tab: Tab::Library,
+            last_view: ViewMode::List,
             blurs: crate::images::BlurCache::default(),
             overlay: None,
             steam_import: None,
@@ -652,6 +692,12 @@ impl QuarkApp {
             epic_sync_error: None,
             epic_sync_rx: None,
             epic_install_sync_rx: None,
+            gog_sync_loading: false,
+            gog_sync_error: None,
+            gog_sync_rx: None,
+            my_games_store: None,
+            startup_sync_done: false,
+            frames_alive: 0,
             epic_owned_fallback: None,
             epic_install_pending: None,
             epic_installing: None,
@@ -742,6 +788,7 @@ impl QuarkApp {
         self.poll_provider_login(ctx);
         self.poll_steam_sync(ctx);
         self.poll_epic_sync(ctx);
+        self.poll_gog_sync(ctx);
         self.poll_epic_install(ctx);
         self.poll_save_jobs(ctx);
         self.poll_save_background_jobs(ctx);
@@ -2102,6 +2149,15 @@ impl QuarkApp {
             self.applied_theme = Some(self.lib.settings.theme);
         }
 
+        self.frames_alive = self.frames_alive.saturating_add(1);
+        // Nouvelle page (ou nouvelle disposition) : la grille repart de zéro et
+        // rejoue son apparition.
+        if self.tab != self.last_tab || self.lib.settings.view != self.last_view {
+            self.last_tab = self.tab;
+            self.last_view = self.lib.settings.view;
+            self.page_at = Instant::now();
+        }
+        self.startup_sync(ctx);
         self.top_bar(ctx);
         match self.tab {
             Tab::Store => self.store_tab(ctx),
@@ -2346,16 +2402,6 @@ impl QuarkApp {
                 }
             }
         }
-    }
-
-    /// Rampe de dégradé des bannières, créée une seule fois.
-    pub fn gradient_texture(&mut self, ctx: &egui::Context) -> egui::TextureHandle {
-        if self.gradient.is_none() {
-            self.gradient = Some(theme::gradient_texture(ctx));
-        }
-        self.gradient
-            .clone()
-            .expect("la rampe de dégradé vient d'être créée")
     }
 
     /// Jeux du carrousel de l'accueil (les dernières sessions).
@@ -3643,6 +3689,78 @@ impl QuarkApp {
                 self.epic_sync_loading = false;
                 self.epic_sync_error =
                     Some("synchronisation Epic interrompue; données précédentes conservées".into());
+            }
+            Err(TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(120)),
+        }
+    }
+
+    /// Lance les synchronisations des boutiques connectées, une fois, peu
+    /// après l'affichage : l'utilisateur n'a plus à cliquer après chaque
+    /// démarrage, et chaque boutique échoue indépendamment des autres.
+    pub fn startup_sync(&mut self, ctx: &egui::Context) {
+        // Vingt images laissent la fenêtre apparaître avant de lancer des
+        // lectures disque et réseau ; sans cela le premier rendu saccade.
+        if self.startup_sync_done || self.frames_alive < 20 {
+            return;
+        }
+        self.startup_sync_done = true;
+        self.start_steam_sync(ctx);
+        if crate::providers::tools::ManagedToolId::Legendary
+            .installed_path()
+            .is_file()
+            && crate::providers::legendary::LegendaryAdapter::is_logged_in()
+        {
+            self.start_epic_sync(ctx);
+        }
+        if crate::providers::gog::GogAdapter::is_logged_in() {
+            self.start_gog_sync(ctx);
+        }
+    }
+
+    pub fn start_gog_sync(&mut self, ctx: &egui::Context) {
+        if self.gog_sync_loading || self.gog_sync_rx.is_some() {
+            return;
+        }
+        self.gog_sync_loading = true;
+        self.gog_sync_error = None;
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let adapter =
+                crate::providers::gog::GogAdapter::new(crate::providers::gog::auth_config_path());
+            let result = adapter.sync_library(crate::config::now_ts());
+            let _ = tx.send(result);
+            repaint.request_repaint();
+        });
+        self.gog_sync_rx = Some(rx);
+        ctx.request_repaint_after(Duration::from_millis(120));
+    }
+
+    fn poll_gog_sync(&mut self, ctx: &egui::Context) {
+        let Some(result) = self.gog_sync_rx.as_ref().map(Receiver::try_recv) else {
+            return;
+        };
+        match result {
+            Ok(Ok(games)) => {
+                self.gog_sync_rx = None;
+                self.gog_sync_loading = false;
+                self.gog_sync_error = None;
+                if !games.is_empty() {
+                    self.lib.provider_library.games =
+                        crate::providers::gog::merge_gog(&self.lib.provider_library.games, &games);
+                    self.touch();
+                }
+            }
+            Ok(Err(error)) => {
+                self.gog_sync_rx = None;
+                self.gog_sync_loading = false;
+                self.gog_sync_error = Some(error);
+            }
+            Err(TryRecvError::Disconnected) => {
+                self.gog_sync_rx = None;
+                self.gog_sync_loading = false;
+                self.gog_sync_error =
+                    Some("synchronisation GOG interrompue; données précédentes conservées".into());
             }
             Err(TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(120)),
         }

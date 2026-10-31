@@ -14,7 +14,7 @@
 
 use crate::app::{AddStep, NewsState, QuarkApp, ScanCandidate, SearchState, Tab};
 use crate::artwork::{AssetPlan, SearchHit, Source};
-use crate::config::{Artwork, AssetKind, Game, Library, ThemeMode, ViewMode, now_ts};
+use crate::config::{now_ts, Artwork, AssetKind, Game, Library, ThemeMode, ViewMode};
 use crate::news::NewsItem;
 use crate::proton::{ProtonRuntime, RuntimeKind};
 use eframe::egui::epaint::textures::TexturesDelta;
@@ -248,6 +248,8 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
         app.carousel_at = std::time::Instant::now() - std::time::Duration::from_secs(60);
         app.lib.settings.carousel_secs = 600.0;
         app.home_at = std::time::Instant::now() - std::time::Duration::from_secs(3);
+        // Le rendu doit montrer la page installée, pas son fondu d'entrée.
+        app.page_at = std::time::Instant::now() - std::time::Duration::from_secs(3);
     }
 
     let width = (size.x * scale).round() as usize;

@@ -1,7 +1,7 @@
 //! Thème de Quark : noir profond (AMOLED) par défaut, ambiance Steam.
 
 use crate::config::ThemeMode;
-use eframe::egui::{self, Color32, FontFamily, FontId, Pos2, Rect, Stroke, Vec2};
+use eframe::egui::{self, Color32, FontFamily, FontId, Stroke, Vec2};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Palette {
@@ -221,45 +221,6 @@ pub fn apply(ctx: &egui::Context, mode: ThemeMode) {
     ctx.set_style(style);
 }
 
-/// Rampe de dégradé noir (alpha 0 en haut, presque opaque en bas). Créée une
-/// seule fois puis étirée sur la bannière : un seul rectangle à dessiner, donc
-/// aucun bord de bande visible et un coût négligeable.
-pub fn gradient_texture(ctx: &egui::Context) -> egui::TextureHandle {
-    const HEIGHT: usize = 256;
-    let mut pixels = Vec::with_capacity(HEIGHT);
-    for i in 0..HEIGHT {
-        let t = i as f32 / (HEIGHT - 1) as f32;
-        // Profil quadratique : le noir ne monte vraiment qu'en bas.
-        pixels.push(Color32::from_black_alpha((t * t * 244.0).round() as u8));
-    }
-    ctx.load_texture(
-        "quark-bottom-gradient",
-        egui::ColorImage::new([1, HEIGHT], pixels),
-        egui::TextureOptions::LINEAR,
-    )
-}
-
-/// Assombrit le bas du rectangle avec la rampe (lisibilité du titre et des
-/// actualités posés sur la bannière).
-pub fn bottom_gradient(
-    ui: &mut egui::Ui,
-    texture: &egui::TextureHandle,
-    rect: Rect,
-    fraction: f32,
-) {
-    let height = rect.height() * fraction.clamp(0.0, 1.0);
-    if height <= 1.0 {
-        return;
-    }
-    let area = Rect::from_min_max(
-        Pos2::new(rect.left(), rect.bottom() - height),
-        Pos2::new(rect.right(), rect.bottom()),
-    );
-    ui.put(
-        area,
-        egui::Image::new(egui::load::SizedTexture::new(texture.id(), area.size())),
-    );
-}
 
 /// Hauteur de bannière : plus haute que le 3.1:1 des `library_hero` de Steam,
 /// pour laisser respirer le logo, le bouton et les actualités.
