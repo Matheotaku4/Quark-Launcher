@@ -1,31 +1,28 @@
-## Quark 1.1.0-beta.1 — refonte visuelle (pré-release)
+## Quark 1.0.1 — installation de Legendary, connexions Epic/GOG et boutique refaite
 
-Cette version est une **pré-release** : elle ne remplace pas la 1.0.1, qui reste la version
-stable recommandée. Elle ne change que l'apparence — aucune donnée, aucun réglage et aucun
-comportement de lancement ne bouge.
+- **Installation de Legendary réparée** : l'asset officiel `legendary_linux_x64` est un
+  *zipapp* Python (`#!/usr/bin/env python3` suivi d'une archive zip), pas un binaire ELF — il
+  était donc rejeté à juste titre par un contrôle trop strict. Le format est maintenant vérifié
+  correctement (comme pour gogdl), `python3` est exigé explicitement, et l'ELF reste requis pour
+  Ludusavi. Le téléchargement, le digest SHA-256, la comparaison de version et le remplacement
+  atomique sont validés sur la vraie release 0.21.1.
+- **Connexion Epic et GOG depuis le launcher** (Paramètres → Boutiques & outils) : la page
+  officielle s'ouvre dans le navigateur, vous collez le code qu'elle affiche, Quark l'échange
+  via Legendary ou gogdl. Aucun mot de passe ne transite par Quark, le code n'est ni journalisé
+  ni réaffiché. Comme les deux outils sortent avec le code 0 même quand la boutique refuse le
+  code, la connexion n'est déclarée réussie que si le fichier de session a réellement changé.
+- **Boutique Steam verticale** : à la une, recommandations, populaires du moment (avec le pic de
+  joueurs simultanés), meilleures ventes, offres spéciales, nouveautés et prochainement — en
+  sections qui défilent vers le bas, plus jamais sur le côté. Les recommandations viennent de la
+  Steam Web API (`IPlayerService/GetOwnedGames`) dès qu'une clé et un SteamID64 sont
+  configurés, sinon de la bibliothèque Quark ; la source employée est affichée.
+- **Plus de débordement à droite** : ligne de recherche de la boutique, rangées de « Mes jeux »
+  et marges de page recalées, vérifiées en 1360 et 1024 px.
+- **Documentation** : README mis à jour (format des outils, `python3` requis, procédure de
+  connexion, sections de la boutique) et un aperçu CI de la connexion Epic.
 
-- **Barre supérieure** : navigation en segments arrondis sur une piste discrète, champ de
-  recherche en pastille avec sa loupe, ajout et bascule liste/grille regroupés dans une seule
-  pastille. Le titre « Quark » passe en casse normale, l'ancien trait sous l'onglet disparaît.
-- **Un seul jeu de formes** : rayons de coins, marges de page, gouttières et ombres sont
-  centralisés et partagés par la boutique, la bibliothèque, l'accueil et toutes les fenêtres.
-  Les boutons principaux et secondaires deviennent des pastilles, les champs de saisie des
-  surfaces arrondies.
-- **Titres de section unifiés** : petites capitales suivies d'un filet, sur la boutique, dans
-  les réglages et dans les fiches, à la place des traits pleine largeur et des libellés gris
-  de tailles différentes.
-- **Boutique** : bandeau à la une et cartes plus arrondis, images aux coins arrondis, sections
-  aérées, pastilles d'information (Linux natif, joueurs simultanés), recherche et
-  « Actualiser » alignés sur le reste de l'application.
-- **Bibliothèque** : lignes sélectionnées arrondies avec un liseré d'accent intérieur, compteurs
-  de section en pastille, vignettes et tuiles plus arrondies, bouton Accueil avec un point
-  d'accent au lieu d'un soulignement.
-- **Fenêtres** : même cadre pour toutes (rayon, ombre, marges), onglets des réglages dans une
-  piste, titres de fenêtre plus présents, et les fenêtres longues laissent leurs boutons
-  visibles en bas.
-- **Palette inchangée** : AMOLED reste noir pur, Graphite reste doux ; la couleur d'accent d'un
-  jeu continue de teinter le bouton Jouer et la ligne sélectionnée.
-
-À vérifier en priorité : lisibilité sur un écran non OLED (thème Graphite), confort de la
-barre supérieure en 1024 px de large, et rendu des fenêtres de réglages. La 1.0.1 reste
-téléchargeable et marquée « Latest » si cette pré-release ne convient pas.
+Limites assumées : la connexion réelle à Epic et GOG n'a pas pu être menée de bout en bout sans
+comptes (seuls le refus et le succès simulé sont couverts par des tests), et un quota GitHub
+épuisé côté API peut encore bloquer le téléchargement d'un outil — sans digest publié, Quark
+refuse d'installer à l'aveugle plutôt que de faire confiance à un binaire non vérifié. GOG reste
+sans bibliothèque ni installation, cible Linux x86_64 uniquement.

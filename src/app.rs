@@ -1826,17 +1826,16 @@ impl QuarkApp {
 
     fn top_bar(&mut self, ctx: &egui::Context) {
         let pal = self.pal;
-        let pill = theme::radius::PILL;
         egui::TopBottomPanel::top("quark_topbar")
-            .exact_height(60.0)
+            .exact_height(56.0)
             .frame(
                 egui::Frame::new()
-                    .fill(pal.bg)
+                    .fill(pal.header)
                     .stroke(Stroke::new(1.0_f32, pal.border)),
             )
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
-                    ui.add_space(20.0);
+                    ui.add_space(18.0);
                     let (mark_rect, _) = ui.allocate_exact_size(Vec2::splat(24.0), Sense::hover());
                     let painter = ui.painter_at(mark_rect);
                     painter.circle_stroke(
@@ -1854,36 +1853,22 @@ impl QuarkApp {
                         2.5,
                         pal.accent_hover,
                     );
-                    ui.add_space(6.0);
-                    ui.label(RichText::new("Quark").size(17.0).strong().color(pal.text));
-                    ui.add_space(26.0);
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("QUARK").size(16.0).strong().color(pal.text));
+                    ui.add_space(30.0);
 
-                    // Rail de navigation : les trois pages vivent dans une piste
-                    // arrondie, le segment choisi se détache dessus.
-                    egui::Frame::new()
-                        .fill(pal.surface)
-                        .corner_radius(pill)
-                        .inner_margin(egui::Margin::symmetric(4, 3))
-                        .show(ui, |ui| {
-                            ui.spacing_mut().item_spacing.x = 2.0;
-                            if widgets::tab(ui, "Boutique", self.tab == Tab::Store, &pal).clicked()
-                            {
-                                self.tab = Tab::Store;
-                            }
-                            if widgets::tab(ui, "Mes jeux", self.tab == Tab::MyGames, &pal)
-                                .clicked()
-                            {
-                                self.tab = Tab::MyGames;
-                            }
-                            if widgets::tab(ui, "Bibliothèque", self.tab == Tab::Library, &pal)
-                                .clicked()
-                            {
-                                self.tab = Tab::Library;
-                            }
-                        });
+                    if widgets::tab(ui, "Boutique", self.tab == Tab::Store, &pal).clicked() {
+                        self.tab = Tab::Store;
+                    }
+                    if widgets::tab(ui, "Mes jeux", self.tab == Tab::MyGames, &pal).clicked() {
+                        self.tab = Tab::MyGames;
+                    }
+                    if widgets::tab(ui, "Bibliothèque", self.tab == Tab::Library, &pal).clicked() {
+                        self.tab = Tab::Library;
+                    }
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.add_space(18.0);
+                        ui.add_space(16.0);
                         if widgets::icon_button(
                             ui,
                             32.0,
@@ -1895,59 +1880,42 @@ impl QuarkApp {
                         {
                             self.settings_open = true;
                         }
+                        ui.add_space(6.0);
+                        // Seul endroit où l'on bascule de vue : la colonne de
+                        // gauche et la page grille ne les dupliquent plus.
                         if self.tab == Tab::Library {
-                            ui.add_space(10.0);
-                            widgets::search_field(
-                                ui,
-                                &mut self.filter,
-                                "Rechercher  ·  Ctrl+F",
-                                236.0,
-                                &pal,
+                            ui.add_space(4.0);
+                            if widgets::icon_button(ui, 28.0, Icon::Grid, &pal, "Vue grille")
+                                .clicked()
+                            {
+                                self.set_view(ViewMode::Grid);
+                            }
+                            if widgets::icon_button(ui, 28.0, Icon::List, &pal, "Vue liste (Steam)")
+                                .clicked()
+                            {
+                                self.set_view(ViewMode::List);
+                            }
+                            if widgets::icon_button(ui, 28.0, Icon::Plus, &pal, "Ajouter un jeu")
+                                .clicked()
+                            {
+                                self.open_add_dialog();
+                            }
+                            ui.add_space(6.0);
+                        }
+                        if self.tab == Tab::Library {
+                            ui.add_sized(
+                                Vec2::new(260.0, 30.0),
+                                egui::TextEdit::singleline(&mut self.filter)
+                                    .id(egui::Id::new("quark_filter"))
+                                    .hint_text("Rechercher dans la bibliothèque  ·  Ctrl+F")
+                                    .font(FontId::proportional(12.5)),
                             );
-                            ui.add_space(10.0);
-                            // Ajout et bascule de vue : une seule pastille
-                            // discrète, sans cadre autour de chaque icône.
-                            egui::Frame::new()
-                                .fill(pal.surface)
-                                .corner_radius(pill)
-                                .inner_margin(egui::Margin::symmetric(4, 3))
-                                .show(ui, |ui| {
-                                    ui.spacing_mut().item_spacing.x = 2.0;
-                                    if widgets::icon_button(
-                                        ui,
-                                        26.0,
-                                        Icon::Plus,
-                                        &pal,
-                                        "Ajouter un jeu",
-                                    )
-                                    .clicked()
-                                    {
-                                        self.open_add_dialog();
-                                    }
-                                    if widgets::icon_button(
-                                        ui,
-                                        26.0,
-                                        Icon::Grid,
-                                        &pal,
-                                        "Vue grille",
-                                    )
-                                    .clicked()
-                                    {
-                                        self.set_view(ViewMode::Grid);
-                                    }
-                                    if widgets::icon_button(
-                                        ui,
-                                        26.0,
-                                        Icon::List,
-                                        &pal,
-                                        "Vue liste (Steam)",
-                                    )
-                                    .clicked()
-                                    {
-                                        self.set_view(ViewMode::List);
-                                    }
-                                });
-                            ui.add_space(8.0);
+                        } else if self.tab == Tab::Store {
+                            ui.label(
+                                RichText::new("Catalogue Steam")
+                                    .size(11.5)
+                                    .color(pal.text_faint),
+                            );
                         }
                     });
                 });
@@ -3023,9 +2991,7 @@ impl QuarkApp {
             let preview = preview.clone();
             let mut begin_confirmation = false;
             let mut close = false;
-            egui::Modal::new(egui::Id::new("quark_save_backup_preview"))
-            .frame(theme::modal_frame(&self.pal))
-            .show(ctx, |ui| {
+            egui::Modal::new(egui::Id::new("quark_save_backup_preview")).show(ctx, |ui| {
                 ui.set_min_width(460.0);
                 ui.label(RichText::new(format!("Aperçu de sauvegarde · {title}")).size(17.0).color(pal.text));
                 ui.add_space(8.0);
@@ -3061,9 +3027,7 @@ impl QuarkApp {
         let confirm_title = confirm_title.clone();
         let mut confirm = false;
         let mut cancel = false;
-        egui::Modal::new(egui::Id::new("quark_save_backup_confirmation"))
-            .frame(theme::modal_frame(&self.pal))
-            .show(ctx, |ui| {
+        egui::Modal::new(egui::Id::new("quark_save_backup_confirmation")).show(ctx, |ui| {
             ui.set_min_width(440.0);
             ui.label(RichText::new("Confirmer la sauvegarde locale ?").size(17.0).color(pal.text));
             ui.add_space(8.0);
@@ -3083,40 +3047,36 @@ impl QuarkApp {
         if let Some((key, title, backups)) = self.save_inventory.clone() {
             let mut close = false;
             let mut selected = None;
-            egui::Modal::new(egui::Id::new("quark_save_inventory"))
-                .frame(theme::modal_frame(&self.pal))
-                .show(ctx, |ui| {
-                    ui.set_min_width(500.0);
+            egui::Modal::new(egui::Id::new("quark_save_inventory")).show(ctx, |ui| {
+                ui.set_min_width(500.0);
+                ui.label(
+                    RichText::new(format!("Sauvegardes locales · {title}"))
+                        .size(17.0)
+                        .color(pal.text),
+                );
+                ui.add_space(8.0);
+                if backups.is_empty() {
                     ui.label(
-                        RichText::new(format!("Sauvegardes locales · {title}"))
-                            .size(17.0)
-                            .color(pal.text),
-                    );
-                    ui.add_space(8.0);
-                    if backups.is_empty() {
-                        ui.label(
-                            RichText::new(
-                                "Aucune sauvegarde dans le coffre de cette installation.",
-                            )
+                        RichText::new("Aucune sauvegarde dans le coffre de cette installation.")
                             .size(12.0)
                             .color(pal.text_dim),
-                        );
-                    }
-                    for backup in &backups {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new(&backup.when).size(12.0).color(pal.text));
-                            if backup.locked {
-                                ui.label(RichText::new("Protégée").size(10.0).color(pal.accent));
-                            }
-                            if ui.small_button("Aperçu restauration…").clicked() {
-                                selected = Some(backup.clone());
-                            }
-                        });
-                    }
-                    if ui.button("Fermer").clicked() {
-                        close = true;
-                    }
-                });
+                    );
+                }
+                for backup in &backups {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(&backup.when).size(12.0).color(pal.text));
+                        if backup.locked {
+                            ui.label(RichText::new("Protégée").size(10.0).color(pal.accent));
+                        }
+                        if ui.small_button("Aperçu restauration…").clicked() {
+                            selected = Some(backup.clone());
+                        }
+                    });
+                }
+                if ui.button("Fermer").clicked() {
+                    close = true;
+                }
+            });
             if let Some(backup) = selected {
                 self.preview_save_restore(ctx, &backup);
             } else if close {
@@ -3128,59 +3088,55 @@ impl QuarkApp {
         if let Some((key, title, backup, preview)) = self.save_restore_preview.clone() {
             let mut confirm = false;
             let mut close = false;
-            egui::Modal::new(egui::Id::new("quark_restore_preview"))
-                .frame(theme::modal_frame(&self.pal))
-                .show(ctx, |ui| {
-                    ui.set_min_width(560.0);
-                    ui.label(
-                        RichText::new(format!("Aperçu de restauration · {title}"))
-                            .size(17.0)
-                            .color(pal.text),
-                    );
-                    ui.label(
-                        RichText::new(format!(
-                            "Snapshot {} · {} fichier(s) concernés",
-                            backup.when,
-                            preview.files.len()
-                        ))
-                        .size(12.0)
-                        .color(pal.text_dim),
-                    );
-                    ui.add_space(8.0);
-                    egui::ScrollArea::vertical()
-                        .max_height(240.0)
-                        .show(ui, |ui| {
-                            for file in &preview.files {
-                                ui.label(RichText::new(&file.path).size(10.5).color(pal.text_dim));
-                            }
-                        });
-                    if !preview.errors.is_empty() || preview.files.iter().any(|file| file.failed) {
-                        ui.label(
-                            RichText::new(
-                                "L'aperçu contient des erreurs; restauration désactivée.",
-                            )
-                            .size(11.5)
-                            .color(pal.danger),
-                        );
-                    }
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        let safe = preview.errors.is_empty()
-                            && !preview.files.iter().any(|file| file.failed);
-                        if ui
-                            .add_enabled(
-                                safe,
-                                egui::Button::new("Restaurer et remplacer les fichiers concernés…"),
-                            )
-                            .clicked()
-                        {
-                            confirm = true;
-                        }
-                        if ui.button("Fermer").clicked() {
-                            close = true;
+            egui::Modal::new(egui::Id::new("quark_restore_preview")).show(ctx, |ui| {
+                ui.set_min_width(560.0);
+                ui.label(
+                    RichText::new(format!("Aperçu de restauration · {title}"))
+                        .size(17.0)
+                        .color(pal.text),
+                );
+                ui.label(
+                    RichText::new(format!(
+                        "Snapshot {} · {} fichier(s) concernés",
+                        backup.when,
+                        preview.files.len()
+                    ))
+                    .size(12.0)
+                    .color(pal.text_dim),
+                );
+                ui.add_space(8.0);
+                egui::ScrollArea::vertical()
+                    .max_height(240.0)
+                    .show(ui, |ui| {
+                        for file in &preview.files {
+                            ui.label(RichText::new(&file.path).size(10.5).color(pal.text_dim));
                         }
                     });
+                if !preview.errors.is_empty() || preview.files.iter().any(|file| file.failed) {
+                    ui.label(
+                        RichText::new("L'aperçu contient des erreurs; restauration désactivée.")
+                            .size(11.5)
+                            .color(pal.danger),
+                    );
+                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    let safe =
+                        preview.errors.is_empty() && !preview.files.iter().any(|file| file.failed);
+                    if ui
+                        .add_enabled(
+                            safe,
+                            egui::Button::new("Restaurer et remplacer les fichiers concernés…"),
+                        )
+                        .clicked()
+                    {
+                        confirm = true;
+                    }
+                    if ui.button("Fermer").clicked() {
+                        close = true;
+                    }
                 });
+            });
             if confirm {
                 let expected_paths = preview.files.iter().map(|file| file.path.clone()).collect();
                 self.save_restore_confirm = Some((key, title, backup.id, expected_paths));
@@ -3193,9 +3149,7 @@ impl QuarkApp {
         if let Some((_, title, backup_id, _)) = self.save_restore_confirm.clone() {
             let mut confirm = false;
             let mut cancel = false;
-            egui::Modal::new(egui::Id::new("quark_restore_confirmation"))
-            .frame(theme::modal_frame(&self.pal))
-            .show(ctx, |ui| {
+            egui::Modal::new(egui::Id::new("quark_restore_confirmation")).show(ctx, |ui| {
                 ui.set_min_width(440.0);
                 ui.label(RichText::new("Confirmer le remplacement des sauvegardes ?").size(17.0).color(pal.danger));
                 ui.label(RichText::new(format!("Les fichiers de {title} seront restaurés depuis le snapshot {backup_id}. Les fichiers présents aux destinations pourront être écrasés.")).size(12.0).color(pal.text_dim));

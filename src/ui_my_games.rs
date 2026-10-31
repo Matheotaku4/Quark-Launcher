@@ -199,8 +199,8 @@ fn provider_game_row(
     egui::Frame::new()
         .fill(pal.panel)
         .stroke(egui::Stroke::new(1.0_f32, pal.border))
-        .corner_radius(crate::theme::radius::LG)
-        .inner_margin(egui::Margin::symmetric(16, 12))
+        .corner_radius(5.0)
+        .inner_margin(egui::Margin::symmetric(14, 10))
         .show(ui, |ui| {
             // Le titre garde une largeur bornée et le statut reste au bord
             // droit : rien ne déborde quand la fenêtre est étroite.
@@ -220,19 +220,11 @@ fn provider_game_row(
                             )
                             .truncate(),
                         );
-                        // Nom de la boutique dans une petite pastille : il ne se
-                        // confond plus avec le statut, écrit en gris lui aussi.
-                        egui::Frame::new()
-                            .fill(pal.surface)
-                            .corner_radius(crate::theme::radius::SM)
-                            .inner_margin(egui::Margin::symmetric(6, 1))
-                            .show(ui, |ui| {
-                                ui.label(
-                                    RichText::new(provider_name(game.key.provider))
-                                        .size(10.0)
-                                        .color(pal.text_dim),
-                                );
-                            });
+                        ui.label(
+                            RichText::new(provider_name(game.key.provider))
+                                .size(10.5)
+                                .color(pal.text_faint),
+                        );
                     },
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
