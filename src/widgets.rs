@@ -31,6 +31,8 @@ pub enum Icon {
     Home,
     ArrowLeft,
     ArrowRight,
+    /// Loupe (champs de recherche).
+    Search,
 }
 
 /// Identifiant stable d'un contrôle animé : sa place et son libellé. Le bloc de
@@ -357,6 +359,24 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
                 Stroke::NONE,
             ));
         }
+        Icon::Search => {
+            ring(
+                painter,
+                Pos2::new(c.x - s * 0.07, c.y - s * 0.07),
+                s * 0.26,
+                s * 0.13,
+                color,
+                0.0,
+                std::f32::consts::TAU,
+            );
+            painter.line_segment(
+                [
+                    Pos2::new(c.x + s * 0.14, c.y + s * 0.14),
+                    Pos2::new(c.x + s * 0.36, c.y + s * 0.36),
+                ],
+                Stroke::new(s * 0.13, color),
+            );
+        }
         Icon::Refresh => {
             let from = 0.55f32;
             let to = std::f32::consts::TAU + 0.1;
@@ -413,13 +433,17 @@ pub fn accent_button(
     };
     let painter = ui.painter_at(rect);
     // L'enfoncement est peint, jamais alloué : la mise en page ne bouge pas.
-    painter.rect_filled(rect.shrink(if pressed { 1.0 } else { 0.0 }), 4.0, bg);
+    painter.rect_filled(
+        rect.shrink(if pressed { 1.0 } else { 0.0 }),
+        theme::pill_radius(rect.height()),
+        bg,
+    );
     if enabled && hover > 0.0 && !pressed {
-        border_rect(
-            &painter,
+        painter.rect_stroke(
             rect.shrink(0.5),
-            1.0,
-            pal.accent_hover.gamma_multiply(0.30 * hover),
+            theme::pill_radius(rect.height()),
+            Stroke::new(1.0_f32, pal.accent_hover.gamma_multiply(0.30 * hover)),
+            egui::StrokeKind::Inside,
         );
     }
 
@@ -475,7 +499,11 @@ pub fn danger_button(
         theme::lerp_color(pal.danger, pal.danger.gamma_multiply(1.30), hover)
     };
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect.shrink(if pressed { 1.0 } else { 0.0 }), 4.0, bg);
+    painter.rect_filled(
+        rect.shrink(if pressed { 1.0 } else { 0.0 }),
+        theme::pill_radius(rect.height()),
+        bg,
+    );
 
     let galley = painter.layout_no_wrap(label.to_string(), FontId::proportional(14.0), fg);
     let icon_w = if icon == Icon::None { 0.0 } else { 15.0 };
@@ -515,9 +543,25 @@ pub fn ghost_button(ui: &mut egui::Ui, label: &str, pal: &Palette, icon: Icon) -
     let hover =
         ui.ctx()
             .animate_bool_with_time(control_id(ui, rect, label, "ghost"), resp.hovered(), 0.12);
+    // Une pastille au repos : un bouton secondaire reste cliquable au premier
+    // regard, et s'allume au survol au lieu d'apparaître de nulle part.
+    painter.rect_filled(
+        rect,
+        theme::pill_radius(rect.height()),
+        theme::lerp_color(pal.surface.gamma_multiply(0.85), pal.surface_hover, hover),
+    );
     if hover > 0.0 {
-        painter.rect_filled(rect, 4.0, pal.surface_hover.gamma_multiply(hover));
-        border_rect(&painter, rect, 1.0, pal.border.gamma_multiply(hover));
+        painter.rect_filled(
+            rect,
+            theme::pill_radius(rect.height()),
+            pal.surface_hover.gamma_multiply(hover),
+        );
+        painter.rect_stroke(
+            rect,
+            theme::pill_radius(rect.height()),
+            Stroke::new(1.0_f32, pal.border.gamma_multiply(hover)),
+            egui::StrokeKind::Inside,
+        );
     }
     let color = theme::lerp_color(pal.text_dim, pal.text, hover);
     let x0 = rect.center().x - (icon_w + gap + galley.size().x) / 2.0;
@@ -556,7 +600,11 @@ pub fn icon_button(
         0.12,
     );
     if hover > 0.0 {
-        painter.rect_filled(rect, 4.0, pal.surface_hover.gamma_multiply(hover));
+        painter.rect_filled(
+            rect,
+            (size * 0.32).min(theme::radius::MD),
+            pal.surface_hover.gamma_multiply(hover),
+        );
     }
     // Le symbole se resserre légèrement au survol : un effet de « prise », sans
     // aucune conséquence sur la mise en page.
@@ -652,46 +700,46 @@ pub fn menu_row(ui: &mut egui::Ui, pal: &Palette, icon: Icon, color: Color32, la
     resp.clicked()
 }
 
-/// Onglet de la barre supérieure (Boutique / Bibliothèque).
+/// Onglet de la barre supérieure, en segment : le segment choisi se pose sur le
+/// rail (`Frame` en pastille) avec un fond sombre et un liseré, sans trait sous
+/// le texte. Utilisé aussi pour les onglets des réglages.
 pub fn tab(ui: &mut egui::Ui, label: &str, selected: bool, pal: &Palette) -> Response {
     let text = label.to_uppercase();
-    let font = FontId::proportional(12.5);
+    let font = FontId::proportional(11.5);
     let width = ui
         .painter()
         .layout_no_wrap(text.clone(), font.clone(), pal.text)
         .size()
         .x;
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width + 26.0, 34.0), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width + 26.0, 28.0), Sense::click());
     let painter = ui.painter_at(rect);
-    let hover = ui.ctx().animate_bool_with_time(
-        ui.id().with(("quark-tab-hover", label)),
-        resp.hovered(),
-        0.12,
-    );
-    // Le trait d'onglet s'étire depuis le centre quand l'onglet est choisi.
-    let mark =
-        ui.ctx()
-            .animate_bool_with_time(ui.id().with(("quark-tab-mark", label)), selected, 0.16);
+    let id = ui.id().with(("quark-tab", label));
+    let hover = ui
+        .ctx()
+        .animate_bool_with_time(id.with("hover"), resp.hovered(), 0.12);
+    let mark = ui
+        .ctx()
+        .animate_bool_with_time(id.with("mark"), selected, 0.16);
+    let shape = rect.height() * 0.5;
+    if hover > 0.0 && !selected {
+        painter.rect_filled(rect, shape, pal.surface_hover.gamma_multiply(hover * 0.8));
+    }
+    if mark > 0.0 {
+        // Le fond du segment apparaît en fondu : pas de saut au clic.
+        painter.rect_filled(rect.shrink(1.5), shape, pal.bg.gamma_multiply(mark));
+        painter.rect_stroke(
+            rect.shrink(1.5),
+            shape,
+            Stroke::new(1.0_f32, pal.border.gamma_multiply(mark)),
+            egui::StrokeKind::Inside,
+        );
+    }
     let color = if selected {
         pal.text
     } else {
         theme::lerp_color(pal.text_dim, pal.text, hover)
     };
     painter.text(rect.center(), Align2::CENTER_CENTER, text, font, color);
-    if mark > 0.0 {
-        let width = (rect.width() - 6.0) * (0.55 + 0.45 * mark);
-        painter.rect_filled(
-            Rect::from_min_size(
-                Pos2::new(
-                    rect.center().x - width / 2.0,
-                    rect.bottom() - 2.0 - (1.0 - mark) * 2.0,
-                ),
-                Vec2::new(width, 2.0),
-            ),
-            1.0,
-            pal.accent.gamma_multiply(mark),
-        );
-    }
     resp
 }
 
@@ -738,7 +786,7 @@ pub fn chip_colored(
                 1.0_f32,
                 if selected { accent } else { pal.border },
             ))
-            .corner_radius(9.0)
+            .corner_radius(11.0)
             .min_size(Vec2::new(0.0, 22.0)),
     )
     .clicked()
@@ -757,7 +805,12 @@ pub fn home_button(ui: &mut egui::Ui, selected: bool, pal: &Palette) -> Response
         .animate_bool_with_time(ui.id().with("quark-home-mark"), selected, 0.16);
     let lift = hover.max(mark);
     if lift > 0.0 {
-        painter.rect_filled(rect, 5.0, pal.surface_hover.gamma_multiply(lift * 0.8));
+        painter.rect_filled(
+            rect,
+            theme::radius::MD,
+            pal.surface_hover
+                .gamma_multiply(lift * if selected { 0.95 } else { 0.7 }),
+        );
     }
     let color = if selected {
         pal.text
@@ -781,13 +834,12 @@ pub fn home_button(ui: &mut egui::Ui, selected: bool, pal: &Palette) -> Response
         color,
     );
     if mark > 0.0 {
-        painter.rect_filled(
-            Rect::from_min_size(
-                Pos2::new(rect.left() + 8.0, rect.bottom() - 2.0),
-                Vec2::new((rect.width() - 16.0) * mark, 2.0),
-            ),
-            1.0,
-            pal.accent,
+        // Petit point d'accent à droite : la page courante se lit d'un coup,
+        // sans trait qui alourdit la colonne.
+        painter.circle_filled(
+            Pos2::new(rect.right() - 12.0, rect.center().y),
+            3.0 * mark,
+            pal.accent.gamma_multiply(mark),
         );
     }
     resp
@@ -816,11 +868,11 @@ pub fn floating_icon_button(
     } else {
         Color32::from_rgba_unmultiplied(0, 0, 0, 120)
     };
-    painter.rect_filled(rect, 5.0, backdrop);
+    painter.rect_filled(rect, theme::radius::MD, backdrop);
     if hover > 0.0 {
         painter.rect_filled(
             rect,
-            5.0,
+            theme::radius::MD,
             if on_light {
                 Color32::from_rgba_unmultiplied(255, 255, 255, 40)
             } else {
@@ -844,6 +896,87 @@ pub fn floating_icon_button(
     } else {
         resp.on_hover_text(tooltip)
     }
+}
+
+/// Titre de section (ACCUEIL, RECOMMANDÉ POUR VOUS…) : petites capitales
+/// espacées, couleur discrète, et un filet qui court jusqu'au bord. Un seul
+/// endroit décide de ce style, donc toutes les pages se ressemblent.
+pub fn section_title(ui: &mut egui::Ui, label: &str, pal: &Palette) -> Response {
+    let (rect, resp) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), Sense::hover());
+    let painter = ui.painter_at(rect);
+    let galley = painter.layout_no_wrap(
+        label.to_uppercase(),
+        FontId::proportional(10.5),
+        pal.text_faint,
+    );
+    let text_width = galley.size().x;
+    painter.galley(
+        Pos2::new(rect.left(), rect.center().y - galley.size().y / 2.0),
+        galley,
+        pal.text_faint,
+    );
+    // Filet après le titre : il souligne la section sans la crier.
+    let line_x = rect.left() + text_width + 12.0;
+    if line_x < rect.right() - 4.0 {
+        painter.rect_filled(
+            Rect::from_min_size(
+                Pos2::new(line_x, rect.center().y - 0.5),
+                Vec2::new(rect.right() - line_x, 1.0),
+            ),
+            0.0,
+            pal.border.gamma_multiply(0.8),
+        );
+    }
+    resp
+}
+
+/// Champ de recherche arrondi, avec sa loupe : le même sur la bibliothèque et
+/// sur la boutique. `width` fixe sa largeur, la hauteur est de 30 px.
+pub fn search_field(
+    ui: &mut egui::Ui,
+    text: &mut String,
+    hint: &str,
+    width: f32,
+    pal: &Palette,
+) -> Response {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 30.0), Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, theme::pill_radius(rect.height()), pal.surface);
+    painter.rect_stroke(
+        rect,
+        theme::pill_radius(rect.height()),
+        Stroke::new(1.0_f32, pal.border),
+        egui::StrokeKind::Inside,
+    );
+    paint_icon(
+        &painter,
+        Rect::from_center_size(
+            Pos2::new(rect.left() + 16.0, rect.center().y),
+            Vec2::splat(13.0),
+        ),
+        Icon::Search,
+        pal.text_faint,
+    );
+    let field = Rect::from_min_max(
+        Pos2::new(rect.left() + 30.0, rect.top() + 4.0),
+        Pos2::new(rect.right() - 10.0, rect.bottom() - 4.0),
+    );
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(field)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        |ui| {
+            ui.add(
+                egui::TextEdit::singleline(text)
+                    .frame(false)
+                    .hint_text(RichText::new(hint).size(12.0).color(pal.text_faint))
+                    .desired_width(field.width())
+                    .font(FontId::proportional(12.5)),
+            )
+        },
+    )
+    .inner
 }
 
 /// Petit ⓘ ) côté d'un réglage : l'explication remplace les lignes de conseil

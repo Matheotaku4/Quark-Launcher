@@ -29,6 +29,44 @@ const fn rgb(r: u8, g: u8, b: u8) -> Color32 {
     Color32::from_rgb(r, g, b)
 }
 
+/// Rayons de coins du langage visuel : une seule échelle, utilisée partout.
+/// Les surfaces posées (champs, cartes) prennent `MD`, les panneaux `LG`, les
+/// fenêtres `XL`, et les pastilles/segments `PILL`.
+pub mod radius {
+    pub const SM: f32 = 6.0;
+    pub const MD: f32 = 10.0;
+    pub const LG: f32 = 14.0;
+    pub const XL: f32 = 18.0;
+    pub const PILL: f32 = 999.0;
+}
+
+/// Espacements de la page : marge latérale, respiration entre sections, gouttière.
+pub mod space {
+    /// Marge gauche/droite d'une page pleine largeur.
+    pub const PAGE: f32 = 32.0;
+    /// Espace entre deux sections.
+    pub const SECTION: f32 = 26.0;
+    /// Gouttière des grilles de cartes.
+    pub const GUTTER: f32 = 16.0;
+}
+
+/// Rayon d'une pastille : la moitié de la hauteur, jamais plus (un rayon plus
+/// grand que la moitié déforme les coins de certains rectangles aplatis).
+pub fn pill_radius(height: f32) -> f32 {
+    (height * 0.5).max(0.0)
+}
+
+/// Ombre portée douce des fenêtres et menus : elle détache la surface du fond
+/// sans dessiner de halo clair.
+pub fn soft_shadow() -> egui::epaint::Shadow {
+    egui::epaint::Shadow {
+        offset: [0, 10],
+        blur: 28,
+        spread: 0,
+        color: Color32::from_black_alpha(150),
+    }
+}
+
 impl Palette {
     /// Même palette avec la couleur d'accent d'un jeu (bouton Jouer, liseré de
     /// sélection, ligne sélectionnée). Le reste du thème ne bouge pas.
@@ -137,6 +175,18 @@ pub fn palette(mode: ThemeMode) -> Palette {
     }
 }
 
+/// Cadre commun aux fenêtres (réglages, ajout, confirmations) : même rayon,
+/// même ombre et même marge intérieure partout, au lieu du cadre par défaut
+/// d'egui qui changeait d'une fenêtre à l'autre.
+pub fn modal_frame(pal: &Palette) -> egui::Frame {
+    egui::Frame::new()
+        .fill(pal.panel)
+        .stroke(Stroke::new(1.0_f32, pal.border))
+        .corner_radius(radius::XL)
+        .inner_margin(egui::Margin::symmetric(20, 16))
+        .shadow(soft_shadow())
+}
+
 pub fn apply(ctx: &egui::Context, mode: ThemeMode) {
     let p = palette(mode);
     let mut style = (*ctx.style()).clone();
@@ -147,6 +197,8 @@ pub fn apply(ctx: &egui::Context, mode: ThemeMode) {
     v.extreme_bg_color = p.surface;
     v.faint_bg_color = p.surface;
     v.window_stroke = Stroke::new(1.0_f32, p.border);
+    v.window_shadow = soft_shadow();
+    v.popup_shadow = soft_shadow();
     v.override_text_color = Some(p.text);
     v.hyperlink_color = p.accent;
     v.selection.bg_fill = p.accent.gamma_multiply(0.35);
@@ -163,28 +215,28 @@ pub fn apply(ctx: &egui::Context, mode: ThemeMode) {
     widgets.inactive.bg_stroke = Stroke::new(1.0_f32, p.border);
     widgets.inactive.fg_stroke = Stroke::new(1.0_f32, p.text);
     widgets.inactive.expansion = 0.0;
-    widgets.inactive.corner_radius = egui::CornerRadius::same(4);
+    widgets.inactive.corner_radius = egui::CornerRadius::same(radius::MD as u8);
 
     widgets.hovered.bg_fill = p.surface_hover;
     widgets.hovered.weak_bg_fill = p.surface_hover;
     widgets.hovered.bg_stroke = Stroke::new(1.0_f32, p.accent.gamma_multiply(0.6));
     widgets.hovered.fg_stroke = Stroke::new(1.0_f32, p.text);
     widgets.hovered.expansion = 0.0;
-    widgets.hovered.corner_radius = egui::CornerRadius::same(4);
+    widgets.hovered.corner_radius = egui::CornerRadius::same(radius::MD as u8);
 
     widgets.active.bg_fill = p.accent_pressed;
     widgets.active.weak_bg_fill = p.accent_pressed;
     widgets.active.bg_stroke = Stroke::new(1.0_f32, p.accent);
     widgets.active.fg_stroke = Stroke::new(1.0_f32, Color32::WHITE);
     widgets.active.expansion = 0.0;
-    widgets.active.corner_radius = egui::CornerRadius::same(4);
+    widgets.active.corner_radius = egui::CornerRadius::same(radius::MD as u8);
 
     widgets.open.bg_fill = p.surface_hover;
     widgets.open.weak_bg_fill = p.surface_hover;
     widgets.open.bg_stroke = Stroke::new(1.0_f32, p.border);
     widgets.open.fg_stroke = Stroke::new(1.0_f32, p.text);
     widgets.open.expansion = 0.0;
-    widgets.open.corner_radius = egui::CornerRadius::same(4);
+    widgets.open.corner_radius = egui::CornerRadius::same(radius::MD as u8);
 
     style.visuals = v;
     style.text_styles = [
@@ -210,9 +262,12 @@ pub fn apply(ctx: &egui::Context, mode: ThemeMode) {
         ),
     ]
     .into();
-    style.spacing.item_spacing = Vec2::new(8.0, 6.0);
-    style.spacing.button_padding = Vec2::new(10.0, 5.0);
+    style.spacing.item_spacing = Vec2::new(8.0, 7.0);
+    style.spacing.button_padding = Vec2::new(12.0, 6.0);
     style.spacing.scroll.bar_width = 8.0;
+    // Barre de défilement en pastille, plus discrète qu'un rail plein.
+    style.spacing.scroll.bar_inner_margin = 3.0;
+    style.spacing.menu_margin = egui::Margin::same(8);
     // Transitions courtes : assez visibles pour être agréables, assez rapides
     // pour ne jamais retarder un clic. Les animations d'egui n'entretiennent un
     // repaint que tant qu'elles bougent, donc aucun coût au repos.

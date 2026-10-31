@@ -49,338 +49,347 @@ impl QuarkApp {
             AddStep::Exe => "Ajouter un jeu · exécutable",
         };
 
-        let modal = egui::Modal::new(egui::Id::new("quark_add_game")).show(ctx, |ui| {
-            ui.set_min_width(660.0);
-            ui.label(RichText::new(title).size(17.0).color(pal.text));
-            ui.add_space(10.0);
+        let modal = egui::Modal::new(egui::Id::new("quark_add_game"))
+            .frame(theme::modal_frame(&pal))
+            .show(ctx, |ui| {
+                ui.set_min_width(660.0);
+                ui.label(RichText::new(title).size(17.0).color(pal.text));
+                ui.add_space(10.0);
 
-            match step {
-                AddStep::Name => {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("Nom du jeu").size(12.0).color(pal.text_dim));
-                        widgets::info_button(
-                            ui,
-                            &pal,
-                            "Quark cherche le jeu sur Steam puis sur SteamGridDB pour \
+                match step {
+                    AddStep::Name => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Nom du jeu").size(12.0).color(pal.text_dim));
+                            widgets::info_button(
+                                ui,
+                                &pal,
+                                "Quark cherche le jeu sur Steam puis sur SteamGridDB pour \
                                  récupérer les artworks originaux (bannière, logo, couverture, \
                                  icône). La recherche part dès 2 lettres.",
-                        );
-                    });
-                    ui.add_space(4.0);
-                    let response = ui.add(
-                        egui::TextEdit::singleline(&mut self.add.name)
-                            .hint_text("Ex. Hollow Knight")
-                            .font(FontId::proportional(15.0))
-                            .desired_width(f32::INFINITY),
-                    );
-                    if response.changed() {
-                        // On garde les résultats affichés : ils sont remplacés
-                        // dès que la nouvelle requête part.
-                        self.add.last_typed = Some(Instant::now());
-                    }
-                    if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        self.start_search(ui.ctx());
-                    }
-                    ui.add_space(12.0);
-
-                    let mut warnings: Vec<String> = Vec::new();
-                    match &self.add.state {
-                        SearchState::Idle => {
-                            ui.label(
-                                RichText::new(
-                                    "Tape au moins 2 lettres, la recherche est automatique.",
-                                )
-                                .size(11.5)
-                                .color(pal.text_faint),
                             );
+                        });
+                        ui.add_space(4.0);
+                        let response = ui.add(
+                            egui::TextEdit::singleline(&mut self.add.name)
+                                .hint_text("Ex. Hollow Knight")
+                                .font(FontId::proportional(15.0))
+                                .desired_width(f32::INFINITY),
+                        );
+                        if response.changed() {
+                            // On garde les résultats affichés : ils sont remplacés
+                            // dès que la nouvelle requête part.
+                            self.add.last_typed = Some(Instant::now());
                         }
-                        SearchState::Loading => {
+                        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            self.start_search(ui.ctx());
+                        }
+                        ui.add_space(12.0);
+
+                        let mut warnings: Vec<String> = Vec::new();
+                        match &self.add.state {
+                            SearchState::Idle => {
+                                ui.label(
+                                    RichText::new(
+                                        "Tape au moins 2 lettres, la recherche est automatique.",
+                                    )
+                                    .size(11.5)
+                                    .color(pal.text_faint),
+                                );
+                            }
+                            SearchState::Loading => {
+                                ui.horizontal(|ui| {
+                                    ui.spinner();
+                                    ui.label(
+                                        RichText::new("Recherche en cours…")
+                                            .size(12.5)
+                                            .color(pal.text_dim),
+                                    );
+                                });
+                            }
+                            SearchState::Done(hits, warns) => {
+                                warnings = warns.clone();
+                                if hits.is_empty() {
+                                    ui.label(
+                                        RichText::new(
+                                            "Aucun résultat. Tu peux continuer sans artwork.",
+                                        )
+                                        .size(12.5)
+                                        .color(pal.text_dim),
+                                    );
+                                }
+                                let list_height = (hits.len().min(6) as f32) * 46.0;
+                                egui::ScrollArea::vertical()
+                                    .id_salt("quark_search_results")
+                                    .max_height(list_height.max(46.0))
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        for (index, hit) in hits.iter().enumerate() {
+                                            if search_result_row(ui, &pal, hit).clicked() {
+                                                pick_hit = Some(index);
+                                            }
+                                        }
+                                    });
+                            }
+                        }
+                        for warning in warnings {
+                            ui.add_space(2.0);
+                            ui.label(RichText::new(warning).size(11.0).color(pal.text_faint));
+                        }
+
+                        ui.add_space(14.0);
+                        ui.horizontal(|ui| {
+                            let ready = !self.add.name.trim().is_empty();
+                            if widgets::accent_button(
+                                ui,
+                                Vec2::new(230.0, 36.0),
+                                "Choisir l'exécutable",
+                                &pal,
+                                ready,
+                                Icon::Plus,
+                            )
+                            .clicked()
+                                && ready
+                            {
+                                continue_to_exe = true;
+                            }
+                            ui.add_space(10.0);
+                            if widgets::ghost_button(ui, "Annuler", &pal, Icon::None).clicked() {
+                                close = true;
+                            }
+                        });
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
+                            if widgets::ghost_button(ui, "Choisir un dossier…", &pal, Icon::Folder)
+                                .clicked()
+                            {
+                                browse_folder = true;
+                            }
+                            widgets::info_button(
+                                ui,
+                                &pal,
+                                "Analyse un dossier, propose les jeux qu'il contient et te laisse \
+                                 confirmer chaque titre (ou dire que ce n'est pas un jeu).",
+                            );
+                        });
+                    }
+                    AddStep::Artwork => {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new("Images du jeu")
+                                    .size(12.0)
+                                    .color(pal.text_dim),
+                            );
+                            widgets::info_button(
+                                ui,
+                                &pal,
+                                "La première proposition de chaque type est choisie par défaut : \
+                                 clique une vignette pour en prendre une autre.",
+                            );
+                        });
+                        ui.add_space(10.0);
+
+                        let plan = self.add.artwork.plan.clone();
+                        if self.add.artwork.loading {
                             ui.horizontal(|ui| {
                                 ui.spinner();
                                 ui.label(
-                                    RichText::new("Recherche en cours…")
+                                    RichText::new("Recherche des artworks\u{2026}")
                                         .size(12.5)
                                         .color(pal.text_dim),
                                 );
                             });
-                        }
-                        SearchState::Done(hits, warns) => {
-                            warnings = warns.clone();
-                            if hits.is_empty() {
-                                ui.label(
-                                    RichText::new(
-                                        "Aucun résultat. Tu peux continuer sans artwork.",
-                                    )
-                                    .size(12.5)
-                                    .color(pal.text_dim),
-                                );
-                            }
-                            let list_height = (hits.len().min(6) as f32) * 46.0;
+                        } else if let Some(plan) = &plan {
                             egui::ScrollArea::vertical()
-                                .id_salt("quark_search_results")
-                                .max_height(list_height.max(46.0))
+                                .id_salt("quark_artwork_choices")
+                                .max_height(330.0)
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
-                                    for (index, hit) in hits.iter().enumerate() {
-                                        if search_result_row(ui, &pal, hit).clicked() {
-                                            pick_hit = Some(index);
-                                        }
-                                    }
-                                });
-                        }
-                    }
-                    for warning in warnings {
-                        ui.add_space(2.0);
-                        ui.label(RichText::new(warning).size(11.0).color(pal.text_faint));
-                    }
-
-                    ui.add_space(14.0);
-                    ui.horizontal(|ui| {
-                        let ready = !self.add.name.trim().is_empty();
-                        if widgets::accent_button(
-                            ui,
-                            Vec2::new(230.0, 36.0),
-                            "Choisir l'exécutable",
-                            &pal,
-                            ready,
-                            Icon::Plus,
-                        )
-                        .clicked()
-                            && ready
-                        {
-                            continue_to_exe = true;
-                        }
-                        ui.add_space(10.0);
-                        if widgets::ghost_button(ui, "Annuler", &pal, Icon::None).clicked() {
-                            close = true;
-                        }
-                    });
-                    ui.add_space(10.0);
-                    ui.horizontal(|ui| {
-                        if widgets::ghost_button(ui, "Choisir un dossier…", &pal, Icon::Folder)
-                            .clicked()
-                        {
-                            browse_folder = true;
-                        }
-                        widgets::info_button(
-                            ui,
-                            &pal,
-                            "Analyse un dossier, propose les jeux qu'il contient et te laisse \
-                                 confirmer chaque titre (ou dire que ce n'est pas un jeu).",
-                        );
-                    });
-                }
-                AddStep::Artwork => {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Images du jeu")
-                                .size(12.0)
-                                .color(pal.text_dim),
-                        );
-                        widgets::info_button(
-                            ui,
-                            &pal,
-                            "La première proposition de chaque type est choisie par défaut : \
-                                 clique une vignette pour en prendre une autre.",
-                        );
-                    });
-                    ui.add_space(10.0);
-
-                    let plan = self.add.artwork.plan.clone();
-                    if self.add.artwork.loading {
-                        ui.horizontal(|ui| {
-                            ui.spinner();
-                            ui.label(
-                                RichText::new("Recherche des artworks\u{2026}")
-                                    .size(12.5)
-                                    .color(pal.text_dim),
-                            );
-                        });
-                    } else if let Some(plan) = &plan {
-                        egui::ScrollArea::vertical()
-                            .id_salt("quark_artwork_choices")
-                            .max_height(330.0)
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                for kind in AssetKind::ALL {
-                                    let urls = plan.candidates(kind);
-                                    ui.label(
-                                        RichText::new(kind.label().to_uppercase())
-                                            .size(11.0)
-                                            .color(pal.text_faint),
-                                    );
-                                    ui.add_space(3.0);
-                                    if urls.is_empty() {
+                                    for kind in AssetKind::ALL {
+                                        let urls = plan.candidates(kind);
                                         ui.label(
-                                            RichText::new("aucune proposition")
-                                                .size(11.5)
+                                            RichText::new(kind.label().to_uppercase())
+                                                .size(11.0)
                                                 .color(pal.text_faint),
                                         );
-                                    } else {
-                                        let selected = self
-                                            .add
-                                            .artwork
-                                            .chosen
-                                            .get(&kind)
-                                            .copied()
-                                            .unwrap_or(0);
-                                        ui.horizontal_wrapped(|ui| {
-                                            for (index, url) in urls.iter().enumerate() {
-                                                if artwork_choice(ui, &pal, url, index == selected)
+                                        ui.add_space(3.0);
+                                        if urls.is_empty() {
+                                            ui.label(
+                                                RichText::new("aucune proposition")
+                                                    .size(11.5)
+                                                    .color(pal.text_faint),
+                                            );
+                                        } else {
+                                            let selected = self
+                                                .add
+                                                .artwork
+                                                .chosen
+                                                .get(&kind)
+                                                .copied()
+                                                .unwrap_or(0);
+                                            ui.horizontal_wrapped(|ui| {
+                                                for (index, url) in urls.iter().enumerate() {
+                                                    if artwork_choice(
+                                                        ui,
+                                                        &pal,
+                                                        url,
+                                                        index == selected,
+                                                    )
                                                     .clicked()
-                                                {
-                                                    pick_artwork = Some((kind, index));
+                                                    {
+                                                        pick_artwork = Some((kind, index));
+                                                    }
                                                 }
-                                            }
-                                        });
+                                            });
+                                        }
+                                        ui.add_space(10.0);
                                     }
-                                    ui.add_space(10.0);
-                                }
-                            });
-                    } else {
+                                });
+                        } else {
+                            ui.label(
+                                RichText::new("Aucun artwork proposé : tu peux continuer sans.")
+                                    .size(12.0)
+                                    .color(pal.text_dim),
+                            );
+                        }
+                        if let Some(error) = self.add.artwork.error.clone() {
+                            ui.add_space(4.0);
+                            ui.label(RichText::new(error).size(11.0).color(pal.text_faint));
+                        }
+
+                        ui.add_space(14.0);
+                        ui.horizontal(|ui| {
+                            if widgets::ghost_button(ui, "← Retour", &pal, Icon::None).clicked() {
+                                back = true;
+                            }
+                            ui.add_space(10.0);
+                            if widgets::accent_button(
+                                ui,
+                                Vec2::new(230.0, 36.0),
+                                "Choisir l'exécutable",
+                                &pal,
+                                true,
+                                Icon::Plus,
+                            )
+                            .clicked()
+                            {
+                                finish_artwork = true;
+                            }
+                        });
+                    }
+                    AddStep::Scan => {
+                        scan_action = self.scan_step(ui, &pal);
+                    }
+                    AddStep::Exe => {
+                        ui.label(RichText::new("Nom affiché").size(12.0).color(pal.text_dim));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.add.name)
+                                .font(FontId::proportional(15.0))
+                                .desired_width(f32::INFINITY),
+                        );
+                        ui.add_space(10.0);
+
                         ui.label(
-                            RichText::new("Aucun artwork proposé : tu peux continuer sans.")
+                            RichText::new("Exécutable du jeu")
                                 .size(12.0)
                                 .color(pal.text_dim),
                         );
-                    }
-                    if let Some(error) = self.add.artwork.error.clone() {
-                        ui.add_space(4.0);
-                        ui.label(RichText::new(error).size(11.0).color(pal.text_faint));
-                    }
-
-                    ui.add_space(14.0);
-                    ui.horizontal(|ui| {
-                        if widgets::ghost_button(ui, "← Retour", &pal, Icon::None).clicked() {
-                            back = true;
-                        }
-                        ui.add_space(10.0);
-                        if widgets::accent_button(
-                            ui,
-                            Vec2::new(230.0, 36.0),
-                            "Choisir l'exécutable",
-                            &pal,
-                            true,
-                            Icon::Plus,
-                        )
-                        .clicked()
-                        {
-                            finish_artwork = true;
-                        }
-                    });
-                }
-                AddStep::Scan => {
-                    scan_action = self.scan_step(ui, &pal);
-                }
-                AddStep::Exe => {
-                    ui.label(RichText::new("Nom affiché").size(12.0).color(pal.text_dim));
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.add.name)
-                            .font(FontId::proportional(15.0))
-                            .desired_width(f32::INFINITY),
-                    );
-                    ui.add_space(10.0);
-
-                    ui.label(
-                        RichText::new("Exécutable du jeu")
-                            .size(12.0)
-                            .color(pal.text_dim),
-                    );
-                    ui.horizontal(|ui| {
-                        let field = (ui.available_width() - 130.0).max(200.0);
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.add.exe)
-                                .hint_text("/chemin/vers/jeu.exe ou jeu.sh")
-                                .desired_width(field),
-                        );
-                        if widgets::ghost_button(ui, "Parcourir…", &pal, Icon::Folder).clicked() {
-                            browse_exe = true;
-                        }
-                    });
-                    if let Some(hit) = self.add.hit.as_ref() {
-                        let info = match (hit.steam_app_id, hit.sgdb_id) {
-                            (Some(appid), _) => format!("Artworks : Steam AppID {appid}"),
-                            (None, Some(id)) => format!("Artworks : SteamGridDB #{id}"),
-                            _ => "Artworks : aucun".to_string(),
-                        };
-                        ui.label(RichText::new(info).size(11.0).color(pal.text_faint));
-                    }
-                    ui.add_space(12.0);
-
-                    ui.label(
-                        RichText::new("Arguments (optionnel)")
-                            .size(12.0)
-                            .color(pal.text_dim),
-                    );
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.add.args)
-                            .hint_text("--fullscreen")
-                            .desired_width(f32::INFINITY),
-                    );
-                    ui.add_space(12.0);
-
-                    ui.label(RichText::new("Lancement").size(12.0).color(pal.text_dim));
-                    runtime_combo(
-                        ui,
-                        &pal,
-                        "add_runtime",
-                        &mut self.add.proton,
-                        &self.runtimes,
-                        true,
-                    );
-                    ui.add_space(10.0);
-
-                    ui.checkbox(
-                        &mut self.add.custom_prefix,
-                        "Préfixe Proton personnalisé pour ce jeu",
-                    );
-                    if self.add.custom_prefix {
                         ui.horizontal(|ui| {
                             let field = (ui.available_width() - 130.0).max(200.0);
                             ui.add(
-                                egui::TextEdit::singleline(&mut self.add.prefix)
-                                    .hint_text("~/Games/prefixes/mon-jeu")
+                                egui::TextEdit::singleline(&mut self.add.exe)
+                                    .hint_text("/chemin/vers/jeu.exe ou jeu.sh")
                                     .desired_width(field),
                             );
                             if widgets::ghost_button(ui, "Parcourir…", &pal, Icon::Folder).clicked()
                             {
-                                browse_prefix = true;
+                                browse_exe = true;
+                            }
+                        });
+                        if let Some(hit) = self.add.hit.as_ref() {
+                            let info = match (hit.steam_app_id, hit.sgdb_id) {
+                                (Some(appid), _) => format!("Artworks : Steam AppID {appid}"),
+                                (None, Some(id)) => format!("Artworks : SteamGridDB #{id}"),
+                                _ => "Artworks : aucun".to_string(),
+                            };
+                            ui.label(RichText::new(info).size(11.0).color(pal.text_faint));
+                        }
+                        ui.add_space(12.0);
+
+                        ui.label(
+                            RichText::new("Arguments (optionnel)")
+                                .size(12.0)
+                                .color(pal.text_dim),
+                        );
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.add.args)
+                                .hint_text("--fullscreen")
+                                .desired_width(f32::INFINITY),
+                        );
+                        ui.add_space(12.0);
+
+                        ui.label(RichText::new("Lancement").size(12.0).color(pal.text_dim));
+                        runtime_combo(
+                            ui,
+                            &pal,
+                            "add_runtime",
+                            &mut self.add.proton,
+                            &self.runtimes,
+                            true,
+                        );
+                        ui.add_space(10.0);
+
+                        ui.checkbox(
+                            &mut self.add.custom_prefix,
+                            "Préfixe Proton personnalisé pour ce jeu",
+                        );
+                        if self.add.custom_prefix {
+                            ui.horizontal(|ui| {
+                                let field = (ui.available_width() - 130.0).max(200.0);
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.add.prefix)
+                                        .hint_text("~/Games/prefixes/mon-jeu")
+                                        .desired_width(field),
+                                );
+                                if widgets::ghost_button(ui, "Parcourir…", &pal, Icon::Folder)
+                                    .clicked()
+                                {
+                                    browse_prefix = true;
+                                }
+                            });
+                        }
+
+                        ui.add_space(14.0);
+                        ui.horizontal(|ui| {
+                            if widgets::ghost_button(ui, "← Retour", &pal, Icon::None).clicked() {
+                                back = true;
+                            }
+                            ui.add_space(10.0);
+                            let ready = !self.add.exe.trim().is_empty();
+                            if widgets::accent_button(
+                                ui,
+                                Vec2::new(200.0, 36.0),
+                                "Ajouter le jeu",
+                                &pal,
+                                ready,
+                                Icon::Plus,
+                            )
+                            .clicked()
+                                && ready
+                            {
+                                submit = true;
+                            }
+                            if !ready {
+                                ui.add_space(8.0);
+                                ui.label(
+                                    RichText::new("indique l'exécutable pour valider")
+                                        .size(11.0)
+                                        .color(pal.text_faint),
+                                );
                             }
                         });
                     }
-
-                    ui.add_space(14.0);
-                    ui.horizontal(|ui| {
-                        if widgets::ghost_button(ui, "← Retour", &pal, Icon::None).clicked() {
-                            back = true;
-                        }
-                        ui.add_space(10.0);
-                        let ready = !self.add.exe.trim().is_empty();
-                        if widgets::accent_button(
-                            ui,
-                            Vec2::new(200.0, 36.0),
-                            "Ajouter le jeu",
-                            &pal,
-                            ready,
-                            Icon::Plus,
-                        )
-                        .clicked()
-                            && ready
-                        {
-                            submit = true;
-                        }
-                        if !ready {
-                            ui.add_space(8.0);
-                            ui.label(
-                                RichText::new("indique l'exécutable pour valider")
-                                    .size(11.0)
-                                    .color(pal.text_faint),
-                            );
-                        }
-                    });
                 }
-            }
-        });
+            });
         if modal.should_close() {
             close = true;
         }
@@ -525,10 +534,12 @@ impl QuarkApp {
         // hauteur calculée sur la place restante ne marchait pas non plus, la
         // fenêtre se dimensionnant elle-même sur son contenu.
         let page_height = (ctx.screen_rect().height() - 250.0).max(200.0);
-        let modal = egui::Modal::new(egui::Id::new("quark_settings")).show(ctx, |ui| {
+        let modal = egui::Modal::new(egui::Id::new("quark_settings"))
+            .frame(theme::modal_frame(&pal))
+            .show(ctx, |ui| {
             ui.set_min_width(860.0);
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Paramètres").size(17.0).color(pal.text));
+                ui.label(RichText::new("Paramètres").size(21.0).strong().color(pal.text));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.label(
                         RichText::new("enregistrés automatiquement")
@@ -541,16 +552,21 @@ impl QuarkApp {
 
             // Une page par famille de réglages (les onglets passent à la ligne
             // sur une fenêtre étroite).
-            ui.horizontal_wrapped(|ui| {
-                for (tab, label) in SettingsTab::ALL {
-                    if widgets::tab(ui, label, self.settings_tab == tab, &pal).clicked() {
-                        self.settings_tab = tab;
-                    }
-                }
-            });
-            ui.add_space(8.0);
-            ui.separator();
-            ui.add_space(2.0);
+            egui::Frame::new()
+                .fill(pal.surface)
+                .corner_radius(theme::radius::PILL)
+                .inner_margin(egui::Margin::symmetric(4, 3))
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    ui.horizontal_wrapped(|ui| {
+                        for (tab, label) in SettingsTab::ALL {
+                            if widgets::tab(ui, label, self.settings_tab == tab, &pal).clicked() {
+                                self.settings_tab = tab;
+                            }
+                        }
+                    });
+                });
+            ui.add_space(6.0);
 
             egui::ScrollArea::vertical()
                 .id_salt("quark_settings_scroll")
@@ -1504,7 +1520,9 @@ impl QuarkApp {
         let pal = self.pal;
         let mut close = false;
         let mut do_import = false;
-        let modal = egui::Modal::new(egui::Id::new("quark_steam_import")).show(ctx, |ui| {
+        let modal = egui::Modal::new(egui::Id::new("quark_steam_import"))
+            .frame(theme::modal_frame(&pal))
+            .show(ctx, |ui| {
             ui.set_min_width(760.0);
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Importer depuis Steam").size(17.0).color(pal.text));
@@ -1666,18 +1684,21 @@ impl QuarkApp {
         let mut remove = false;
         let mut refresh_meta = false;
 
-        let modal = egui::Modal::new(egui::Id::new("quark_game_settings")).show(ctx, |ui| {
+        let modal = egui::Modal::new(egui::Id::new("quark_game_settings"))
+            .frame(theme::modal_frame(&pal))
+            .show(ctx, |ui| {
                 ui.set_min_width(660.0);
                 ui.label(
                     RichText::new(format!("Paramètres · {}", game.name))
-                        .size(17.0)
+                        .size(20.0)
+                        .strong()
                         .color(pal.text),
                 );
                 ui.add_space(10.0);
                 // Même règle que les paramètres globaux : la page laisse la
                 // place aux boutons du bas, sans les recouvrir.
                 egui::ScrollArea::vertical()
-                    .max_height((ctx.screen_rect().height() - 210.0).max(160.0))
+                    .max_height((ctx.screen_rect().height() - 250.0).max(160.0))
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
                 section(ui, "JEU", &pal);
@@ -2056,15 +2077,17 @@ impl QuarkApp {
         let accent = self.game_accent(&game);
 
         let max_height = (ctx.screen_rect().height() * 0.56).max(240.0);
-        let modal = egui::Modal::new(egui::Id::new("quark_customize")).show(ctx, |ui| {
-            ui.set_min_width(700.0);
-            ui.label(
-                RichText::new(format!("Personnaliser · {}", game.name))
-                    .size(17.0)
-                    .color(pal.text),
-            );
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
+        let modal = egui::Modal::new(egui::Id::new("quark_customize"))
+            .frame(theme::modal_frame(&pal))
+            .show(ctx, |ui| {
+                ui.set_min_width(700.0);
+                ui.label(
+                    RichText::new(format!("Personnaliser · {}", game.name))
+                        .size(17.0)
+                        .color(pal.text),
+                );
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
                 ui.label(RichText::new("Images").size(12.0).color(pal.text_dim));
                 widgets::info_button(
                     ui,
@@ -2073,144 +2096,150 @@ impl QuarkApp {
                      de ton disque, ou aucune (rendu de secours).",
                 );
             });
-            ui.add_space(10.0);
+                ui.add_space(10.0);
 
-            // Couleur de jeu : déduite de la couverture, rien à régler.
-            ui.horizontal(|ui| {
-                let (rect, _) = ui.allocate_exact_size(Vec2::new(16.0, 16.0), Sense::hover());
-                ui.painter_at(rect).rect_filled(rect, 3.0, accent);
-                ui.add_space(4.0);
-                ui.label(
-                    RichText::new("Couleur du jeu, déduite de la couverture")
-                        .size(11.0)
-                        .color(pal.text_faint),
-                );
-            });
-            ui.add_space(10.0);
+                // Couleur de jeu : déduite de la couverture, rien à régler.
+                ui.horizontal(|ui| {
+                    let (rect, _) = ui.allocate_exact_size(Vec2::new(16.0, 16.0), Sense::hover());
+                    ui.painter_at(rect).rect_filled(rect, 3.0, accent);
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new("Couleur du jeu, déduite de la couverture")
+                            .size(11.0)
+                            .color(pal.text_faint),
+                    );
+                });
+                ui.add_space(10.0);
 
-            egui::ScrollArea::vertical()
-                .id_salt("quark_customize_scroll")
-                .max_height(max_height)
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    for (asset, texture) in &handles {
-                        ui.horizontal(|ui| {
-                            let (rect, _) =
-                                ui.allocate_exact_size(Vec2::new(120.0, 68.0), Sense::hover());
-                            let painter = ui.painter_at(rect);
-                            painter.rect_filled(rect, 4.0, pal.surface);
-                            match texture {
-                                Some(texture) => {
-                                    crate::images::draw_cover(&painter, texture, rect);
+                egui::ScrollArea::vertical()
+                    .id_salt("quark_customize_scroll")
+                    .max_height(max_height)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for (asset, texture) in &handles {
+                            ui.horizontal(|ui| {
+                                let (rect, _) =
+                                    ui.allocate_exact_size(Vec2::new(120.0, 68.0), Sense::hover());
+                                let painter = ui.painter_at(rect);
+                                painter.rect_filled(rect, 4.0, pal.surface);
+                                match texture {
+                                    Some(texture) => {
+                                        crate::images::draw_cover(&painter, texture, rect);
+                                    }
+                                    None => {
+                                        painter.text(
+                                            rect.center(),
+                                            Align2::CENTER_CENTER,
+                                            "aucune image",
+                                            FontId::proportional(10.5),
+                                            pal.text_faint,
+                                        );
+                                    }
                                 }
-                                None => {
-                                    painter.text(
-                                        rect.center(),
-                                        Align2::CENTER_CENTER,
-                                        "aucune image",
-                                        FontId::proportional(10.5),
-                                        pal.text_faint,
-                                    );
-                                }
-                            }
-                            ui.add_space(12.0);
-                            ui.vertical(|ui| {
-                                ui.label(
-                                    RichText::new(asset.label().to_uppercase())
-                                        .size(11.0)
-                                        .color(pal.text_faint),
-                                );
-                                ui.add_space(2.0);
-                                ui.horizontal(|ui| {
-                                    if widgets::ghost_button(
-                                        ui,
-                                        "Proposer d'autres…",
-                                        &pal,
-                                        Icon::Refresh,
-                                    )
-                                    .clicked()
-                                    {
-                                        propose = Some(*asset);
-                                    }
-                                    if widgets::ghost_button(
-                                        ui,
-                                        "Choisir un fichier…",
-                                        &pal,
-                                        Icon::Folder,
-                                    )
-                                    .clicked()
-                                    {
-                                        browse = Some(*asset);
-                                    }
-                                    if texture.is_some()
-                                        && widgets::ghost_button(ui, "Retirer", &pal, Icon::Trash)
-                                            .clicked()
-                                    {
-                                        clear = Some(*asset);
-                                    }
-                                });
-                            });
-                        });
-                        ui.add_space(6.0);
-
-                        // Propositions du type en cours de modification.
-                        if kind == Some(*asset) {
-                            if loading {
-                                ui.horizontal(|ui| {
-                                    ui.spinner();
+                                ui.add_space(12.0);
+                                ui.vertical(|ui| {
                                     ui.label(
-                                        RichText::new("Recherche des propositions\u{2026}")
-                                            .size(12.0)
-                                            .color(pal.text_dim),
-                                    );
-                                });
-                            } else if let Some(plan) = &plan {
-                                let urls = plan.candidates(*asset);
-                                if urls.is_empty() {
-                                    ui.label(
-                                        RichText::new("aucune proposition trouvée")
-                                            .size(11.5)
+                                        RichText::new(asset.label().to_uppercase())
+                                            .size(11.0)
                                             .color(pal.text_faint),
                                     );
-                                } else {
-                                    ui.horizontal_wrapped(|ui| {
-                                        for (index, url) in urls.iter().enumerate() {
-                                            if artwork_choice(ui, &pal, url, false).clicked() {
-                                                pick = Some((*asset, index));
-                                            }
+                                    ui.add_space(2.0);
+                                    ui.horizontal(|ui| {
+                                        if widgets::ghost_button(
+                                            ui,
+                                            "Proposer d'autres…",
+                                            &pal,
+                                            Icon::Refresh,
+                                        )
+                                        .clicked()
+                                        {
+                                            propose = Some(*asset);
+                                        }
+                                        if widgets::ghost_button(
+                                            ui,
+                                            "Choisir un fichier…",
+                                            &pal,
+                                            Icon::Folder,
+                                        )
+                                        .clicked()
+                                        {
+                                            browse = Some(*asset);
+                                        }
+                                        if texture.is_some()
+                                            && widgets::ghost_button(
+                                                ui,
+                                                "Retirer",
+                                                &pal,
+                                                Icon::Trash,
+                                            )
+                                            .clicked()
+                                        {
+                                            clear = Some(*asset);
                                         }
                                     });
+                                });
+                            });
+                            ui.add_space(6.0);
+
+                            // Propositions du type en cours de modification.
+                            if kind == Some(*asset) {
+                                if loading {
+                                    ui.horizontal(|ui| {
+                                        ui.spinner();
+                                        ui.label(
+                                            RichText::new("Recherche des propositions\u{2026}")
+                                                .size(12.0)
+                                                .color(pal.text_dim),
+                                        );
+                                    });
+                                } else if let Some(plan) = &plan {
+                                    let urls = plan.candidates(*asset);
+                                    if urls.is_empty() {
+                                        ui.label(
+                                            RichText::new("aucune proposition trouvée")
+                                                .size(11.5)
+                                                .color(pal.text_faint),
+                                        );
+                                    } else {
+                                        ui.horizontal_wrapped(|ui| {
+                                            for (index, url) in urls.iter().enumerate() {
+                                                if artwork_choice(ui, &pal, url, false).clicked() {
+                                                    pick = Some((*asset, index));
+                                                }
+                                            }
+                                        });
+                                    }
                                 }
                             }
+                            ui.add_space(8.0);
                         }
-                        ui.add_space(8.0);
-                    }
 
-                    if let Some(message) = &error {
-                        ui.label(RichText::new(message).size(11.5).color(pal.danger));
+                        if let Some(message) = &error {
+                            ui.label(RichText::new(message).size(11.5).color(pal.danger));
+                        }
+                    });
+
+                ui.add_space(14.0);
+                ui.horizontal(|ui| {
+                    if widgets::accent_button(
+                        ui,
+                        Vec2::new(140.0, 34.0),
+                        "Fermer",
+                        &pal,
+                        true,
+                        Icon::None,
+                    )
+                    .clicked()
+                    {
+                        close = true;
+                    }
+                    ui.add_space(8.0);
+                    if widgets::ghost_button(ui, "Réglages du jeu…", &pal, Icon::Gear).clicked()
+                    {
+                        open_settings = true;
                     }
                 });
-
-            ui.add_space(14.0);
-            ui.horizontal(|ui| {
-                if widgets::accent_button(
-                    ui,
-                    Vec2::new(140.0, 34.0),
-                    "Fermer",
-                    &pal,
-                    true,
-                    Icon::None,
-                )
-                .clicked()
-                {
-                    close = true;
-                }
-                ui.add_space(8.0);
-                if widgets::ghost_button(ui, "Réglages du jeu…", &pal, Icon::Gear).clicked() {
-                    open_settings = true;
-                }
             });
-        });
         if modal.should_close() {
             close = true;
         }
@@ -2263,7 +2292,9 @@ impl QuarkApp {
         let mut cancel = false;
         let mut confirm = false;
 
-        let modal = egui::Modal::new(egui::Id::new("quark_confirm_remove")).show(ctx, |ui| {
+        let modal = egui::Modal::new(egui::Id::new("quark_confirm_remove"))
+            .frame(theme::modal_frame(&pal))
+            .show(ctx, |ui| {
                 ui.set_min_width(520.0);
                 ui.label(RichText::new(title).size(14.0));
                 if names.len() > 1 {
@@ -2655,24 +2686,25 @@ fn tags_editor(ui: &mut egui::Ui, pal: &Palette, tags: &mut Vec<String>) {
 }
 
 fn section(ui: &mut egui::Ui, title: &str, pal: &Palette) {
-    ui.add_space(12.0);
-    ui.label(RichText::new(title).size(11.0).color(pal.text_faint));
-    ui.add_space(2.0);
-    ui.separator();
-    ui.add_space(8.0);
+    // Même titre de section que les pages (petites capitales + filet).
+    ui.add_space(14.0);
+    widgets::section_title(ui, title, pal);
+    ui.add_space(6.0);
 }
 
 /// Titre de section avec son ⓘ : l'explication reste disponible au survol au
 /// lieu d'occuper une ligne de texte gris sous chaque réglage.
 fn section_hint(ui: &mut egui::Ui, title: &str, pal: &Palette, hint: &str) {
-    ui.add_space(12.0);
+    ui.add_space(14.0);
     ui.horizontal(|ui| {
-        ui.label(RichText::new(title).size(11.0).color(pal.text_faint));
+        let width = (ui.available_width() - 22.0).max(80.0);
+        ui.scope(|ui| {
+            ui.set_max_width(width);
+            widgets::section_title(ui, title, pal);
+        });
         widgets::info_button(ui, pal, hint);
     });
-    ui.add_space(2.0);
-    ui.separator();
-    ui.add_space(8.0);
+    ui.add_space(6.0);
 }
 
 fn info_line(ui: &mut egui::Ui, label: &str, value: &str, pal: &Palette) {

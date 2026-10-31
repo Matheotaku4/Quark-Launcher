@@ -20,11 +20,11 @@ use std::time::Duration;
 /// Durée du glissement d'une vignette du carrousel.
 const SLIDE_SECS: f32 = 0.34;
 /// Rayon des coins du carrousel.
-const CAROUSEL_RADIUS: f32 = 16.0;
+const CAROUSEL_RADIUS: f32 = 20.0;
 /// Rayon des coins des vignettes de la grille.
-const TILE_RADIUS: f32 = 10.0;
+const TILE_RADIUS: f32 = 12.0;
 /// Marge latérale de la page.
-const PADDING: f32 = 26.0;
+const PADDING: f32 = theme::space::PAGE;
 
 impl QuarkApp {
     pub(crate) fn home_pane(&mut self, ui: &mut egui::Ui) {
@@ -485,8 +485,8 @@ impl QuarkApp {
             .collect();
 
         let available = (ui.available_width() - PADDING * 2.0).max(240.0);
-        let gap = 14.0;
-        let columns = ((available + gap) / 154.0).floor().clamp(2.0, 7.0) as usize;
+        let gap = theme::space::GUTTER;
+        let columns = ((available + gap) / 156.0).floor().clamp(2.0, 7.0) as usize;
         let tile_w = ((available - gap * (columns as f32 - 1.0)) / columns as f32)
             .floor()
             .max(96.0);

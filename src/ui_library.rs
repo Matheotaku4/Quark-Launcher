@@ -1569,7 +1569,11 @@ fn status_section(
             ui.ctx()
                 .animate_bool_with_time(state_id.with("hover"), response.hovered(), 0.12);
         if hover > 0.0 {
-            painter.rect_filled(rect, 4.0, pal.surface_hover.gamma_multiply(hover));
+            painter.rect_filled(
+                rect,
+                theme::radius::SM,
+                pal.surface_hover.gamma_multiply(hover * 0.85),
+            );
         }
         // Chevron : vers le bas quand la section est ouverte, vers la droite
         // quand elle est repliée.
@@ -1614,12 +1618,24 @@ fn status_section(
             FontId::proportional(10.5),
             pal.text_dim,
         );
+        // Compteur dans une petite pastille : il se lit sans alourdir le titre.
+        let count_text = count.to_string();
+        let count_galley =
+            painter.layout_no_wrap(count_text.clone(), FontId::proportional(10.0), pal.text_dim);
+        let pill = Rect::from_center_size(
+            Pos2::new(
+                rect.right() - 8.0 - count_galley.size().x / 2.0,
+                rect.center().y,
+            ),
+            Vec2::new(count_galley.size().x + 12.0, 15.0),
+        );
+        painter.rect_filled(pill, theme::pill_radius(pill.height()), pal.surface);
         painter.text(
-            Pos2::new(rect.right() - 6.0, rect.center().y),
-            Align2::RIGHT_CENTER,
-            count.to_string(),
-            FontId::proportional(10.5),
-            pal.text_faint,
+            pill.center(),
+            Align2::CENTER_CENTER,
+            count_text,
+            FontId::proportional(10.0),
+            pal.text_dim,
         );
         if response.clicked() {
             toggled = Some(!open);
@@ -1662,30 +1678,38 @@ fn game_row(
 
     if hover > 0.0 {
         painter.rect_filled(
-            rect,
-            4.0,
+            rect.shrink2(Vec2::new(6.0, 1.0)),
+            theme::radius::MD,
             theme::lerp_color(Color32::TRANSPARENT, pal.surface_hover, hover),
         );
     }
     if missing {
         painter.rect_filled(
-            rect,
-            4.0,
+            rect.shrink2(Vec2::new(6.0, 1.0)),
+            theme::radius::MD,
             Color32::from_rgba_unmultiplied(0xD9, 0x41, 0x41, 26),
         );
         painter.rect_filled(
-            Rect::from_min_size(rect.left_top(), Vec2::new(3.0, rect.height())),
+            Rect::from_min_size(
+                Pos2::new(rect.left() + 6.0, rect.top() + 8.0),
+                Vec2::new(3.0, rect.height() - 16.0),
+            ),
             1.5,
             pal.danger,
         );
     }
     if mark > 0.0 {
-        painter.rect_filled(rect, 4.0, pal.row_selected.gamma_multiply(mark));
-        // Le trait d'accent grandit depuis le centre de la ligne.
-        let height = (rect.height() - 10.0) * mark;
+        painter.rect_filled(
+            rect.shrink2(Vec2::new(6.0, 1.0)),
+            theme::radius::MD,
+            pal.row_selected.gamma_multiply(mark),
+        );
+        // Le trait d'accent grandit depuis le centre de la ligne, posé à
+        // l'intérieur du fond arrondi.
+        let height = (rect.height() - 16.0) * mark;
         painter.rect_filled(
             Rect::from_min_size(
-                Pos2::new(rect.left(), rect.center().y - height / 2.0),
+                Pos2::new(rect.left() + 6.0, rect.center().y - height / 2.0),
                 Vec2::new(3.0, height),
             ),
             1.5,
@@ -1711,7 +1735,7 @@ fn game_row(
         // Icônes 1:1 et capsules larges occupent le même carré : l'image est
         // recadrée au centre (jamais comprimée), grâce au painter limité au
         // carré de la vignette.
-        Some(texture) => rounded_cover(ui, thumb_box, texture, 7.0),
+        Some(texture) => rounded_cover(ui, thumb_box, texture, 8.0),
         None => widgets::monogram(
             &painter,
             thumb_box,
@@ -1797,7 +1821,7 @@ fn game_tile(
     // Le survol « soulève » la tuile : la couverture se resserre d'un ou deux
     // pixels et un liseré s'allume. Tout est peint, la grille ne bouge pas.
     let cover_rect = rect.shrink(2.0 * hover);
-    painter.rect_filled(rect, 6.0, pal.surface);
+    painter.rect_filled(rect, theme::radius::MD, pal.surface);
     let cover = game
         .artwork
         .get(AssetKind::Cover)
@@ -1807,7 +1831,7 @@ fn game_tile(
     match texture {
         // Couverture recadrée au centre quand le format diffère (jamais
         // déformée), grâce au painter limité à la tuile.
-        Some(texture) => rounded_cover(ui, cover_rect, texture, 8.0),
+        Some(texture) => rounded_cover(ui, cover_rect, texture, 10.0),
         None => widgets::monogram(
             &painter,
             cover_rect,
@@ -1821,7 +1845,7 @@ fn game_tile(
     if accent > 0.0 {
         painter.rect_stroke(
             rect,
-            8.0,
+            theme::radius::MD,
             egui::Stroke::new((2.0 + mark).min(3.0), pal.accent.gamma_multiply(accent)),
             egui::StrokeKind::Inside,
         );
@@ -1829,7 +1853,7 @@ fn game_tile(
     if game.exe_missing() {
         painter.rect_stroke(
             rect,
-            8.0,
+            theme::radius::MD,
             egui::Stroke::new(2.0_f32, pal.danger),
             egui::StrokeKind::Inside,
         );

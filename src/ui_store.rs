@@ -2,12 +2,13 @@
 
 use crate::app::QuarkApp;
 use crate::steam_store::{StoreItem, StoreSection};
-use crate::theme::Palette;
+use crate::theme::{self, Palette};
+use crate::widgets::{self, Icon};
 use eframe::egui::{self, Align, Align2, FontId, Layout, RichText, Sense, Vec2};
 
-const PAGE_MARGIN: f32 = 28.0;
+const PAGE_MARGIN: f32 = theme::space::PAGE;
 const CARD_WIDTH: f32 = 228.0;
-const CARD_GAP: f32 = 12.0;
+const CARD_GAP: f32 = theme::space::GUTTER;
 const CARDS_PER_SECTION: usize = 24;
 
 impl QuarkApp {
@@ -51,26 +52,35 @@ impl QuarkApp {
                                 ui.add_space(16.0);
 
                                 ui.horizontal(|ui| {
-                                    let field_width = (ui.available_width() - 236.0).max(150.0);
-                                    let field = ui.add_sized(
-                                        Vec2::new(field_width, 34.0),
-                                        egui::TextEdit::singleline(&mut self.store_query)
-                                            .hint_text("Rechercher un jeu sur Steam…")
-                                            .font(FontId::proportional(14.0)),
+                                    let field_width = (ui.available_width() - 250.0).max(160.0);
+                                    let field = widgets::search_field(
+                                        ui,
+                                        &mut self.store_query,
+                                        "Rechercher un jeu sur Steam…",
+                                        field_width,
+                                        &pal,
                                     );
                                     do_search |= field.lost_focus()
                                         && ui.input(|input| input.key_pressed(egui::Key::Enter));
-                                    if ui
-                                        .add_enabled(
-                                            self.store_query.trim().len() >= 2
-                                                && !self.store_search_loading,
-                                            egui::Button::new("Rechercher"),
-                                        )
-                                        .clicked()
+                                    ui.add_space(8.0);
+                                    let ready = self.store_query.trim().len() >= 2
+                                        && !self.store_search_loading;
+                                    if widgets::accent_button(
+                                        ui,
+                                        Vec2::new(104.0, 30.0),
+                                        "Chercher",
+                                        &pal,
+                                        ready,
+                                        Icon::Search,
+                                    )
+                                    .clicked()
                                     {
                                         do_search = true;
                                     }
-                                    if ui.button("Actualiser").clicked() {
+                                    ui.add_space(4.0);
+                                    if widgets::ghost_button(ui, "Actualiser", &pal, Icon::Refresh)
+                                        .clicked()
+                                    {
                                         refresh = true;
                                     }
                                 });
@@ -226,12 +236,12 @@ fn hero_item(sections: &[StoreSection]) -> Option<StoreItem> {
 }
 
 fn heading(ui: &mut egui::Ui, text: &str, pal: &Palette, caption: Option<&str>) {
-    ui.add_space(20.0);
-    ui.label(RichText::new(text).size(12.0).strong().color(pal.text_dim));
+    ui.add_space(theme::space::SECTION);
+    widgets::section_title(ui, text, pal);
     if let Some(caption) = caption {
         ui.label(RichText::new(caption).size(10.5).color(pal.text_faint));
     }
-    ui.add_space(8.0);
+    ui.add_space(10.0);
 }
 
 fn hero_card(
@@ -246,13 +256,14 @@ fn hero_card(
     egui::Frame::new()
         .fill(pal.panel)
         .stroke(egui::Stroke::new(1.0_f32, pal.border))
-        .corner_radius(8.0)
-        .inner_margin(10.0)
+        .corner_radius(theme::radius::XL)
+        .inner_margin(12.0)
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 if let Some(url) = &item.artwork_url {
                     ui.add(
                         egui::Image::new(url)
+                            .corner_radius(theme::radius::MD)
                             .fit_to_exact_size(Vec2::new(image_width, image_width / 1.745)),
                     );
                 }
@@ -269,7 +280,7 @@ fn hero_card(
                     ui.add(
                         egui::Label::new(
                             RichText::new(&item.name)
-                                .size(22.0)
+                                .size(24.0)
                                 .strong()
                                 .color(pal.text),
                         )
@@ -281,10 +292,22 @@ fn hero_card(
                             .size(11.5)
                             .color(pal.text_faint),
                     );
+                    // Les mêmes repères que les cartes : la colonne de droite
+                    // du bandeau ne reste pas vide sous le bouton.
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if item.linux_available == Some(true) {
+                            chip_label(ui, pal, "Linux natif");
+                        }
+                        if let Some(peak) = item.players_peak {
+                            chip_label(ui, pal, &format!("{} joueurs simultanés", thousands(peak)));
+                        }
+                    });
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
                         price_widgets(ui, pal, item, true);
-                        if ui.button("Voir sur Steam").clicked() {
+                        ui.add_space(6.0);
+                        if widgets::ghost_button(ui, "Voir sur Steam", pal, Icon::None).clicked() {
                             *open_item = Some(item.clone());
                         }
                     });
@@ -322,8 +345,8 @@ fn card(ui: &mut egui::Ui, pal: &Palette, item: &StoreItem, open_item: &mut Opti
     egui::Frame::new()
         .fill(pal.panel)
         .stroke(egui::Stroke::new(1.0_f32, pal.border))
-        .corner_radius(6.0)
-        .inner_margin(8.0)
+        .corner_radius(theme::radius::LG)
+        .inner_margin(9.0)
         .show(ui, |ui| {
             // La grille est dessinée dans un `ui.horizontal` : sans ce
             // `vertical`, le contenu de la carte s'étalerait sur la ligne.
@@ -343,7 +366,11 @@ fn card_body(
     let art_size = Vec2::new(CARD_WIDTH - 16.0, (CARD_WIDTH - 16.0) / 1.745);
     match &item.artwork_url {
         Some(url) => {
-            ui.add(egui::Image::new(url).fit_to_exact_size(art_size));
+            ui.add(
+                egui::Image::new(url)
+                    .corner_radius(theme::radius::MD)
+                    .fit_to_exact_size(art_size),
+            );
         }
         None => {
             let (rect, _) = ui.allocate_exact_size(art_size, Sense::hover());
@@ -388,7 +415,7 @@ fn card_body(
         );
     }
     ui.add_space(4.0);
-    if ui.small_button("Voir sur Steam").clicked() {
+    if widgets::ghost_button(ui, "Voir sur Steam", pal, Icon::None).clicked() {
         *open_item = Some(item.clone());
     }
 }
@@ -406,8 +433,8 @@ fn price_widgets(ui: &mut egui::Ui, pal: &Palette, item: &StoreItem, large: bool
     if let Some(discount) = price.discount_percent {
         egui::Frame::new()
             .fill(pal.accent)
-            .corner_radius(3.0)
-            .inner_margin(egui::Margin::symmetric(5, 1))
+            .corner_radius(theme::radius::SM)
+            .inner_margin(egui::Margin::symmetric(6, 1))
             .show(ui, |ui| {
                 ui.label(
                     RichText::new(format!("-{discount} %"))
@@ -434,6 +461,17 @@ fn price_widgets(ui: &mut egui::Ui, pal: &Palette, item: &StoreItem, large: bool
                 .color(pal.text),
         );
     }
+}
+
+/// Petite pastille d'information posée sur une carte (Linux natif, joueurs).
+fn chip_label(ui: &mut egui::Ui, pal: &Palette, text: &str) {
+    egui::Frame::new()
+        .fill(pal.surface)
+        .corner_radius(theme::radius::SM)
+        .inner_margin(egui::Margin::symmetric(7, 2))
+        .show(ui, |ui| {
+            ui.label(RichText::new(text).size(10.0).color(pal.text_dim));
+        });
 }
 
 fn thousands(value: u32) -> String {

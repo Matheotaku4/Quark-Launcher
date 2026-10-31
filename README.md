@@ -9,6 +9,10 @@ with save snapshots through Ludusavi.
 
 ## Features
 
+- **One visual shell**: a rounded segmented navigation rail, a pill search field and pill
+  buttons everywhere, hairline section titles shared by the store, the dialogs and the
+  library, plus a single set of corner radii and spacings (`src/theme.rs`) so no window looks
+  like it belongs to another app. The palette itself is unchanged: AMOLED black stays black.
 - **Three tabs**: `Store` (Steam discovery), `Library`, and **Mes jeux** (owned and
   installed games across stores), plus a **Home** page reachable from the button above the
   game list. `Ctrl+Q` quits completely (tray icon included); the title bar and the executable
