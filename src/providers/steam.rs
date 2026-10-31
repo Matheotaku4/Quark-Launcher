@@ -27,6 +27,12 @@ struct OwnedEntry {
     name: String,
 }
 
+/// Couverture verticale publiée par Steam, sans clé ni API : le CDN public sert
+/// la même image que la bibliothèque Steam.
+pub fn cover_url(app_id: u32) -> String {
+    format!("https://cdn.cloudflare.steamstatic.com/steam/apps/{app_id}/library_600x900.jpg")
+}
+
 /// Convertit les jeux découverts sur disque en enregistrements provider.
 /// La fiche Quark n'est ni modifiée ni remplacée ; le lien est uniquement AppID.
 pub fn installed_games(
@@ -55,6 +61,8 @@ pub fn installed_games(
             owned: true,
             install_path: Some(steam.dir.clone()),
             custom_save_paths: Vec::new(),
+            cover_url: Some(cover_url(steam.app_id)),
+            install_exe: None,
             install_state: InstallState::Installed,
             quark_game_id: linked.map(|game| game.id.clone()),
             capabilities: Default::default(),
@@ -106,6 +114,8 @@ pub fn parse_owned(json: &str) -> Result<Vec<ProviderGame>, String> {
             owned: true,
             install_path: None,
             custom_save_paths: Vec::new(),
+            cover_url: Some(cover_url(entry.appid)),
+            install_exe: None,
             install_state: InstallState::Unknown,
             quark_game_id: None,
             capabilities: Default::default(),
@@ -164,6 +174,12 @@ pub fn merge_sync(
             }
             if record.quark_game_id.is_none() {
                 record.quark_game_id = old.quark_game_id.clone();
+            }
+            if record.cover_url.is_none() {
+                record.cover_url = old.cover_url.clone();
+            }
+            if record.install_exe.is_none() {
+                record.install_exe = old.install_exe.clone();
             }
             if record.last_synced.is_none() {
                 record.last_synced = old.last_synced;
@@ -328,6 +344,8 @@ mod tests {
             owned: true,
             install_path: Some(PathBuf::from("/steam/Portal 2")),
             custom_save_paths: Vec::new(),
+            cover_url: None,
+            install_exe: None,
             install_state: InstallState::Installed,
             quark_game_id: None,
             capabilities: Default::default(),
@@ -342,6 +360,8 @@ mod tests {
             owned: true,
             install_path: None,
             custom_save_paths: Vec::new(),
+            cover_url: None,
+            install_exe: None,
             install_state: InstallState::Unknown,
             quark_game_id: None,
             capabilities: Default::default(),
@@ -349,11 +369,9 @@ mod tests {
         };
         let merged = merge_sync(&[steam.clone(), epic.clone()], &[], None, &[]);
         assert_eq!(merged.len(), 2);
-        assert!(
-            merged
-                .iter()
-                .any(|game| game.key == steam.key && game.install_path == steam.install_path)
-        );
+        assert!(merged
+            .iter()
+            .any(|game| game.key == steam.key && game.install_path == steam.install_path));
         assert!(merged.iter().any(|game| game.key == epic.key));
     }
 

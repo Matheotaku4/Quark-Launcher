@@ -138,12 +138,21 @@ impl LegendaryAdapter {
         vec!["list-installed".into(), "--json".into()]
     }
 
+    /// Installation non interactive. Legendary pose ses questions par
+    /// `input()` sans détecter l'absence de terminal : sans `-y` (drapeau
+    /// global, donc avant la sous-commande) et sans `--skip-sdl`/`--skip-dlcs`,
+    /// la lecture échoue et l'installation ressort en erreur.
     pub fn install_args(app_name: &str, root: &std::path::Path) -> Vec<String> {
         vec![
+            "-y".into(),
             "install".into(),
             app_name.into(),
             "--base-path".into(),
             root.display().to_string(),
+            "--platform".into(),
+            "Windows".into(),
+            "--skip-sdl".into(),
+            "--skip-dlcs".into(),
         ]
     }
 
@@ -158,6 +167,9 @@ impl LegendaryAdapter {
     }
     pub fn achievements_args(app_name: &str) -> Vec<String> {
         vec!["achievements".into(), app_name.into(), "--json".into()]
+    }
+    pub fn info_args(app_name: &str) -> Vec<String> {
+        vec!["info".into(), app_name.into(), "--json".into()]
     }
     pub fn cloud_saves_args(app_name: &str) -> Vec<String> {
         vec!["sync-saves".into(), app_name.into()]
@@ -187,7 +199,9 @@ impl LegendaryAdapter {
     }
 
     pub fn supports_achievements(&self) -> CapabilityState {
-        CapabilityState::Unknown
+        // `legendary achievements <app> --json` existe depuis la 0.21.0 et la
+        // version épinglée est la 0.21.1.
+        CapabilityState::Supported
     }
 
     pub fn supports_cloud_saves(&self) -> CapabilityState {
@@ -302,6 +316,8 @@ pub fn parse_owned_csv(text: &str, fetched_at: i64) -> Result<Vec<ProviderGame>,
             owned: true,
             install_path: None,
             custom_save_paths: Vec::new(),
+            cover_url: None,
+            install_exe: None,
             install_state: InstallState::NotInstalled,
             quark_game_id: None,
             capabilities: Default::default(),
@@ -343,6 +359,8 @@ pub fn parse_owned_json(json: &str, fetched_at: i64) -> Result<Vec<ProviderGame>
             owned: true,
             install_path: None,
             custom_save_paths: Vec::new(),
+            cover_url: None,
+            install_exe: None,
             install_state: InstallState::NotInstalled,
             quark_game_id: None,
             capabilities: Default::default(),
@@ -358,6 +376,9 @@ pub fn parse_installed_json(json: &str, fetched_at: i64) -> Result<Vec<ProviderG
         app_name: String,
         title: String,
         install_path: PathBuf,
+        /// Chemin relatif au dossier installé, publié par Legendary.
+        #[serde(default)]
+        executable: Option<String>,
     }
     let entries: Vec<InstalledTitle> = serde_json::from_str(json)
         .map_err(|_| "sortie JSON d'installations Legendary invalide".to_string())?;
@@ -376,6 +397,13 @@ pub fn parse_installed_json(json: &str, fetched_at: i64) -> Result<Vec<ProviderG
         if !seen.insert(entry.app_name.clone()) {
             continue;
         }
+        let executable = entry
+            .executable
+            .as_deref()
+            .map(str::trim)
+            .filter(|executable| !executable.is_empty())
+            .map(|executable| entry.install_path.join(executable))
+            .filter(|path| path.is_file());
         games.push(ProviderGame {
             key: ProviderGameKey {
                 provider: Provider::Epic,
@@ -385,6 +413,8 @@ pub fn parse_installed_json(json: &str, fetched_at: i64) -> Result<Vec<ProviderG
             owned: true,
             install_path: Some(entry.install_path),
             custom_save_paths: Vec::new(),
+            cover_url: None,
+            install_exe: executable,
             install_state: InstallState::Installed,
             quark_game_id: None,
             capabilities: Default::default(),
@@ -392,6 +422,160 @@ pub fn parse_installed_json(json: &str, fetched_at: i64) -> Result<Vec<ProviderG
         });
     }
     Ok(games)
+}
+
+/// Couverture publiée par Epic dans les métadonnées du jeu
+/// (`metadata.keyImages`), en préférant le format vertical de la boutique.
+pub fn cover_from_info(text: &str) -> Result<String, String> {
+    let start = text
+        .find('{')
+        .ok_or_else(|| "fiche Epic illisible".to_string())?;
+    let root: serde_json::Value =
+        serde_json::from_str(&text[start..]).map_err(|_| "fiche Epic illisible".to_string())?;
+    let images = root
+        .get("metadata")
+        .and_then(|metadata| metadata.get("keyImages"))
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "fiche Epic sans images".to_string())?;
+    const PREFERENCE: [&str; 5] = [
+        "DieselGameBoxTall",
+        "DieselStoreFrontTall",
+        "DieselGameBox",
+        "Thumbnail",
+        "DieselStoreFrontWide",
+    ];
+    for wanted in PREFERENCE {
+        let found = images
+            .iter()
+            .find(|image| image.get("type").and_then(serde_json::Value::as_str) == Some(wanted))
+            .and_then(|image| image.get("url"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|url| url.starts_with("https://") || url.starts_with("http://"));
+        if let Some(url) = found {
+            return Ok(url.to_string());
+        }
+    }
+    Err("fiche Epic sans couverture".to_string())
+}
+
+/// Demande à Legendary la fiche d'un seul jeu : la sortie de `legendary info`
+/// reste petite, contrairement à la liste complète qui dépasse le plafond du
+/// runner. Le résultat est mémorisé par l'appelant.
+pub fn epic_cover_url(app_name: &str) -> Result<String, String> {
+    let adapter = LegendaryAdapter::new();
+    if !adapter.executable.is_file() {
+        return Err(
+            "Legendary n'est pas installé : la couverture Epic est indisponible".to_string(),
+        );
+    }
+    let output = super::runner::run(
+        adapter.command(LegendaryAdapter::info_args(app_name)),
+        Duration::from_secs(120),
+        None,
+    )?;
+    ensure_success(&output)?;
+    cover_from_info(&output.stdout)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AchievementRow {
+    pub name: String,
+    pub description: String,
+    pub unlocked: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AchievementInfo {
+    pub total: u32,
+    pub unlocked: u32,
+    pub rows: Vec<AchievementRow>,
+}
+
+/// Lit `legendary achievements <app> --json`. Legendary range les succès en
+/// quatre listes (terminés, en cours, non commencés, masqués) et publie les
+/// totaux séparément : les deux formes sont utilisées, avec repli sur la liste.
+pub fn parse_achievements(text: &str) -> Result<AchievementInfo, String> {
+    #[derive(serde::Deserialize)]
+    struct RawRow {
+        #[serde(default)]
+        name: String,
+        #[serde(default)]
+        display_name: Option<String>,
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default)]
+        unlocked: bool,
+    }
+    #[derive(serde::Deserialize)]
+    struct Raw {
+        #[serde(default)]
+        total_achievements: u32,
+        #[serde(default)]
+        user_unlocked: u32,
+        #[serde(default)]
+        completed: Vec<RawRow>,
+        #[serde(default)]
+        in_progress: Vec<RawRow>,
+        #[serde(default)]
+        uninitiated: Vec<RawRow>,
+        #[serde(default)]
+        hidden: Vec<RawRow>,
+    }
+    let start = text
+        .find('{')
+        .ok_or_else(|| "succès Epic illisibles".to_string())?;
+    let raw: Raw =
+        serde_json::from_str(&text[start..]).map_err(|_| "succès Epic illisibles".to_string())?;
+    let mut rows = Vec::new();
+    for list in [raw.completed, raw.in_progress, raw.uninitiated, raw.hidden] {
+        for row in list {
+            let name = row
+                .display_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .unwrap_or(row.name.trim())
+                .to_string();
+            if name.is_empty() {
+                continue;
+            }
+            rows.push(AchievementRow {
+                name,
+                description: row.description.unwrap_or_default().trim().to_string(),
+                unlocked: row.unlocked,
+            });
+        }
+    }
+    if rows.is_empty() && raw.total_achievements == 0 {
+        return Err("ce jeu Epic ne publie pas de succès".to_string());
+    }
+    let mut info = AchievementInfo {
+        total: raw.total_achievements.max(rows.len() as u32),
+        unlocked: raw.user_unlocked,
+        rows,
+    };
+    if info.unlocked == 0 {
+        info.unlocked = info.rows.iter().filter(|row| row.unlocked).count() as u32;
+    }
+    info.unlocked = info.unlocked.min(info.total);
+    Ok(info)
+}
+
+pub fn epic_achievements(app_name: &str) -> Result<AchievementInfo, String> {
+    let adapter = LegendaryAdapter::new();
+    if !adapter.executable.is_file() {
+        return Err(
+            "Legendary n'est pas installé : les succès Epic sont indisponibles".to_string(),
+        );
+    }
+    let output = super::runner::run(
+        adapter.command(LegendaryAdapter::achievements_args(app_name)),
+        Duration::from_secs(120),
+        None,
+    )?;
+    ensure_success(&output)?;
+    parse_achievements(&output.stdout)
 }
 
 pub fn merge_epic(existing: &[ProviderGame], refreshed_epic: &[ProviderGame]) -> Vec<ProviderGame> {
@@ -420,6 +604,12 @@ pub fn merge_epic_with_verified_installs(
             }
             if game.quark_game_id.is_none() {
                 game.quark_game_id = previous.quark_game_id.clone();
+            }
+            if game.cover_url.is_none() {
+                game.cover_url = previous.cover_url.clone();
+            }
+            if game.install_exe.is_none() {
+                game.install_exe = previous.install_exe.clone();
             }
             if game.capabilities.achievements == CapabilityState::Unknown {
                 game.capabilities.achievements = previous.capabilities.achievements.clone();
@@ -628,6 +818,8 @@ Empty,,1.0,False\n";
             owned: true,
             install_path: None,
             custom_save_paths: Vec::new(),
+            cover_url: None,
+            install_exe: None,
             install_state: InstallState::Unknown,
             quark_game_id: None,
             capabilities: Default::default(),
@@ -642,6 +834,8 @@ Empty,,1.0,False\n";
             owned: true,
             install_path: None,
             custom_save_paths: Vec::new(),
+            cover_url: None,
+            install_exe: None,
             install_state: InstallState::Unknown,
             quark_game_id: None,
             capabilities: Default::default(),
@@ -669,6 +863,8 @@ Empty,,1.0,False\n";
             owned: true,
             install_path: Some(install_path.clone()),
             custom_save_paths: Vec::new(),
+            cover_url: None,
+            install_exe: None,
             install_state: InstallState::Installed,
             quark_game_id: Some("quark-1".into()),
             capabilities: Default::default(),
@@ -745,6 +941,8 @@ Empty,,1.0,False\n";
             owned: true,
             install_path: Some(old_path),
             custom_save_paths: Vec::new(),
+            cover_url: None,
+            install_exe: None,
             install_state: InstallState::Installed,
             quark_game_id: Some("quark-id".into()),
             capabilities: Default::default(),
@@ -803,10 +1001,17 @@ Empty,,1.0,False\n";
                 PathBuf::from("/Games With Space").as_path()
             ),
             vec![
+                // `-y` est global : sans lui, Legendary attend des réponses au
+                // clavier, qu'il n'a pas dans un processus sans terminal.
+                "-y",
                 "install",
                 "Game; $(touch x)",
                 "--base-path",
-                "/Games With Space"
+                "/Games With Space",
+                "--platform",
+                "Windows",
+                "--skip-sdl",
+                "--skip-dlcs"
             ]
         );
     }

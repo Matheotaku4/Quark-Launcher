@@ -101,12 +101,23 @@ impl GogAdapter {
         super::runner::run(self.command(args), self.timeout, cancellation)
     }
 
+    /// Téléchargement : plusieurs gigaoctets, donc le délai d'inventaire (60 s)
+    /// tuerait gogdl en pleine écriture.
+    pub fn run_install(
+        &self,
+        args: impl IntoIterator<Item = String>,
+        cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Result<CommandOutput, String> {
+        super::runner::run(
+            self.command(args),
+            Duration::from_secs(6 * 60 * 60),
+            cancellation,
+        )
+    }
+
     /// Bibliothèque possédée, lue via l'API publique de GOG avec les jetons
     /// écrits par gogdl (qui ne sait pas lister une bibliothèque).
-    pub fn sync_library(
-        &self,
-        fetched_at: i64,
-    ) -> Result<Vec<super::model::ProviderGame>, String> {
+    pub fn sync_library(&self, fetched_at: i64) -> Result<Vec<super::model::ProviderGame>, String> {
         let tokens = super::gog_library::usable_tokens(&self.auth_config, crate::config::now_ts())?;
         let owned = super::gog_library::library(&tokens.access_token)?;
         Ok(super::gog_library::to_games(&owned, fetched_at))
@@ -121,12 +132,28 @@ impl GogAdapter {
         CapabilityState::Supported
     }
 
+    /// `--path` est le dossier **parent** : gogdl y ajoute le nom de dossier
+    /// publié par `gogdl info` (`folder_name`). DLC et langue sont explicites
+    /// pour que rien ne dépende d'un choix interactif.
     pub fn install_args(game_id: &str, destination: &Path, platform: &str) -> Vec<String> {
         vec![
             "download".into(),
             game_id.into(),
             "--path".into(),
             destination.display().to_string(),
+            "--platform".into(),
+            platform.into(),
+            "--lang".into(),
+            "en-US".into(),
+            "--skip-dlcs".into(),
+        ]
+    }
+
+    /// Taille et nom de dossier du téléchargement (`gogdl info` sort du JSON).
+    pub fn info_args(game_id: &str, platform: &str) -> Vec<String> {
+        vec![
+            "info".into(),
+            game_id.into(),
             "--platform".into(),
             platform.into(),
         ]
@@ -172,6 +199,65 @@ impl GogAdapter {
     }
 }
 
+/// Nom du dossier d'installation publié par `gogdl info`.
+pub fn folder_from_info(text: &str) -> Result<String, String> {
+    let start = text
+        .find('{')
+        .ok_or_else(|| "réponse gogdl illisible".to_string())?;
+    let root: serde_json::Value =
+        serde_json::from_str(&text[start..]).map_err(|_| "réponse gogdl illisible".to_string())?;
+    root.get("folder_name")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && !name.contains('/') && !name.contains('\0'))
+        .map(str::to_string)
+        .ok_or_else(|| "gogdl ne publie pas de dossier pour ce jeu".to_string())
+}
+
+/// Exécutable le plus plausible dans un dossier GOG installé : le plus court
+/// chemin `.exe` sous la racine, sinon un binaire Linux portant le nom du jeu.
+pub fn find_executable(root: &Path, title: &str) -> Option<PathBuf> {
+    fn walk(dir: &Path, depth: usize, found: &mut Vec<PathBuf>) {
+        if depth > 3 || found.len() > 40 {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, depth + 1, found);
+            } else if path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| {
+                    extension.eq_ignore_ascii_case("exe") || extension.is_empty()
+                })
+            {
+                found.push(path);
+            }
+        }
+    }
+    let mut candidates = Vec::new();
+    walk(root, 0, &mut candidates);
+    let normalized = title.to_lowercase();
+    candidates.sort_by_key(|path| path.components().count());
+    let by_name = candidates.iter().find(|path| {
+        path.file_stem()
+            .and_then(|stem| stem.to_str())
+            .is_some_and(|stem| {
+                let stem = stem.to_lowercase();
+                stem.len() > 3 && (normalized.contains(&stem) || stem.contains(&normalized))
+            })
+    });
+    by_name.cloned().or_else(|| {
+        candidates
+            .into_iter()
+            .find(|path| path.extension().is_some())
+    })
+}
+
 /// Fusionne la bibliothèque GOG rafraîchie sans perdre l'état local.
 pub fn merge_gog(existing: &[ProviderGame], refreshed: &[ProviderGame]) -> Vec<ProviderGame> {
     let mut merged: Vec<ProviderGame> = existing
@@ -181,10 +267,19 @@ pub fn merge_gog(existing: &[ProviderGame], refreshed: &[ProviderGame]) -> Vec<P
         .collect();
     for incoming in refreshed {
         let mut game = incoming.clone();
-        if let Some(previous) = existing.iter().find(|previous| previous.key == incoming.key) {
+        if let Some(previous) = existing
+            .iter()
+            .find(|previous| previous.key == incoming.key)
+        {
             game.custom_save_paths = previous.custom_save_paths.clone();
             if game.quark_game_id.is_none() {
                 game.quark_game_id = previous.quark_game_id.clone();
+            }
+            if game.cover_url.is_none() {
+                game.cover_url = previous.cover_url.clone();
+            }
+            if game.install_exe.is_none() {
+                game.install_exe = previous.install_exe.clone();
             }
             if previous.install_state == InstallState::Installed
                 && previous
@@ -230,7 +325,10 @@ mod tests {
                 "--path",
                 "/Games With Space",
                 "--platform",
-                "windows"
+                "windows",
+                "--lang",
+                "en-US",
+                "--skip-dlcs"
             ]
         );
     }

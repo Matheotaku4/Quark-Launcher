@@ -5,9 +5,8 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{
-    Arc,
     atomic::{AtomicBool, Ordering},
-    mpsc,
+    mpsc, Arc,
 };
 use std::thread;
 use std::time::{Duration, Instant};
@@ -29,6 +28,32 @@ pub struct CommandOutput {
     pub stdout: String,
     pub stderr: String,
     pub exit_code: Option<i32>,
+}
+
+/// Motif lisible d'un échec d'outil : la dernière ligne de sortie non vide,
+/// bornée, et sans les lignes qui pourraient citer une adresse de compte. Sans
+/// elle, un échec d'installation ne disait rien d'utile.
+pub fn failure_hint(output: &CommandOutput) -> String {
+    let line = output
+        .stderr
+        .lines()
+        .chain(output.stdout.lines())
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter(|line| !line.contains('@'))
+        .next_back();
+    let Some(line) = line else {
+        return match output.exit_code {
+            Some(code) => format!("code de sortie {code}"),
+            None => "aucune sortie".to_string(),
+        };
+    };
+    let line = line.trim_start_matches(|c: char| c == '[' || c == ' ');
+    let mut hint: String = line.chars().take(160).collect();
+    if line.chars().count() > 160 {
+        hint.push('\u{2026}');
+    }
+    hint
 }
 
 pub fn run(
@@ -144,6 +169,7 @@ fn read_capped(reader: &mut impl Read) -> std::io::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn cmd(args: &[&str]) -> ProviderCommand {
@@ -238,6 +264,23 @@ mod tests {
         let output = run(command, Duration::from_secs(1), None).unwrap();
         assert!(output.stdout.is_empty());
         assert!(output.stderr.is_empty());
+    }
+
+    #[test]
+    fn un_echec_cite_la_derniere_ligne_utile_sans_adresse_de_compte() {
+        let output = CommandOutput {
+            stdout: String::new(),
+            stderr: "[Core] INFO: Logging in as player@example.com\n[Core] ERROR: disk full\n\n"
+                .to_string(),
+            exit_code: Some(1),
+        };
+        assert_eq!(failure_hint(&output), "Core] ERROR: disk full");
+        let silent = CommandOutput {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: Some(3),
+        };
+        assert_eq!(failure_hint(&silent), "code de sortie 3");
     }
 
     #[test]

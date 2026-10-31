@@ -160,6 +160,8 @@ mod tests {
             owned: true,
             install_path: None,
             custom_save_paths: Vec::new(),
+            cover_url: None,
+            install_exe: None,
             install_state: InstallState::NotInstalled,
             quark_game_id: None,
             capabilities: Default::default(),

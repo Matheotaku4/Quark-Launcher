@@ -2,7 +2,7 @@
 
 use crate::artwork::{self, AssetPlan, GameMetadata, SearchHit, SearchOutcome};
 use crate::config::{
-    Artwork, AssetKind, Game, Library, ProtonMode, ThemeMode, ViewMode, human_playtime,
+    human_playtime, Artwork, AssetKind, Game, Library, ProtonMode, ThemeMode, ViewMode,
 };
 use crate::disk::{self, DiskReport};
 use crate::news::{self, NewsItem};
@@ -17,7 +17,7 @@ use crate::widgets::{self, Icon};
 use eframe::egui::{self, Align, Align2, FontId, Layout, RichText, Sense, Stroke, Vec2};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
-use std::sync::mpsc::{Receiver, TryRecvError, channel};
+use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -251,6 +251,7 @@ pub enum PickerTarget {
     /// Image choisie sur le disque pour un artwork du jeu personnalisé.
     CustomArtwork(AssetKind),
     EpicInstall,
+    GogInstall,
     SaveFolder(crate::providers::ProviderGameKey),
 }
 
@@ -404,6 +405,24 @@ pub struct SaveBackgroundJob {
     pub rx: Receiver<Result<crate::saves::BackupRecord, String>>,
 }
 
+/// Succès d'un jeu de boutique, lus à la demande.
+#[derive(Clone, Debug)]
+pub enum AchievementsState {
+    Loading,
+    Ready(crate::providers::legendary::AchievementInfo),
+    Failed(String),
+}
+
+/// Bannière en cours de fondu : l'image du jeu précédent reste dessinée
+/// par-dessus la nouvelle pendant quelques dixièmes de seconde, si bien que la
+/// fiche change de jeu sans à-coup.
+#[derive(Clone, Debug)]
+pub struct HeroFade {
+    pub game_id: String,
+    pub from: Option<PathBuf>,
+    pub started: Instant,
+}
+
 pub struct QuarkApp {
     pub lib: Library,
     pub pal: Palette,
@@ -514,6 +533,9 @@ pub struct QuarkApp {
     /// Début de l'animation d'entrée de la page visible (changement d'onglet
     /// ou de vue) : les grilles s'y accrochent pour apparaître en cascade.
     pub page_at: Instant,
+    /// Dernière bannière affichée dans la fiche, pour le fondu enchaîné.
+    pub hero_shown: Option<PathBuf>,
+    pub hero_fade: Option<HeroFade>,
     /// Dernier onglet et dernière vue rendus, pour détecter un changement.
     last_tab: Tab,
     last_view: ViewMode,
@@ -557,6 +579,41 @@ pub struct QuarkApp {
     pub gog_sync_rx: Option<Receiver<Result<Vec<crate::providers::ProviderGame>, String>>>,
     /// Onglet de boutique actif dans « Mes jeux » (None = toutes).
     pub my_games_store: Option<crate::providers::Provider>,
+    /// Recherche libre dans les jeux possédés.
+    pub my_games_query: String,
+    /// Couvertures de boutiques manquantes, téléchargées une par une.
+    pub provider_cover_job: Option<
+        Receiver<(
+            crate::providers::ProviderGameKey,
+            Result<(PathBuf, Option<String>), String>,
+        )>,
+    >,
+    pub provider_cover_queue: VecDeque<crate::providers::ProviderGameKey>,
+    /// Couvertures déjà tentées : une boutique en échec n'est pas réessayée en
+    /// boucle à chaque image.
+    pub provider_cover_tried: std::collections::HashSet<crate::providers::ProviderGameKey>,
+    /// Dernier relevé de couvertures manquantes : la liste n'est pas reparcourue
+    /// à chaque image.
+    pub provider_cover_scan_at: Option<Instant>,
+    /// Installation GOG (gogdl), même principe que l'installation Epic.
+    pub gog_install_pending: Option<crate::providers::ProviderGameKey>,
+    pub gog_installing: Option<crate::providers::ProviderGameKey>,
+    pub gog_install_rx: Option<
+        Receiver<(
+            crate::providers::ProviderGameKey,
+            Result<crate::providers::ProviderGame, String>,
+        )>,
+    >,
+    /// Succès Epic lus à la demande (jamais au démarrage).
+    pub achievements: HashMap<crate::providers::ProviderGameKey, AchievementsState>,
+    pub achievements_job: Option<
+        Receiver<(
+            crate::providers::ProviderGameKey,
+            Result<crate::providers::legendary::AchievementInfo, String>,
+        )>,
+    >,
+    /// Fenêtre des succès ouverte, s'il y en a une.
+    pub achievements_open: Option<crate::providers::ProviderGameKey>,
     /// Synchronisation automatique lancée une seule fois, après l'affichage.
     pub startup_sync_done: bool,
     pub frames_alive: u32,
@@ -676,6 +733,8 @@ impl QuarkApp {
             carousel_at: Instant::now(),
             home_at: Instant::now(),
             page_at: Instant::now(),
+            hero_shown: None,
+            hero_fade: None,
             last_tab: Tab::Library,
             last_view: ViewMode::List,
             blurs: crate::images::BlurCache::default(),
@@ -696,6 +755,17 @@ impl QuarkApp {
             gog_sync_error: None,
             gog_sync_rx: None,
             my_games_store: None,
+            my_games_query: String::new(),
+            provider_cover_job: None,
+            provider_cover_queue: VecDeque::new(),
+            provider_cover_scan_at: None,
+            provider_cover_tried: std::collections::HashSet::new(),
+            gog_install_pending: None,
+            gog_installing: None,
+            gog_install_rx: None,
+            achievements: HashMap::new(),
+            achievements_job: None,
+            achievements_open: None,
             startup_sync_done: false,
             frames_alive: 0,
             epic_owned_fallback: None,
@@ -790,6 +860,9 @@ impl QuarkApp {
         self.poll_epic_sync(ctx);
         self.poll_gog_sync(ctx);
         self.poll_epic_install(ctx);
+        self.poll_gog_install(ctx);
+        self.poll_provider_covers(ctx);
+        self.poll_achievements(ctx);
         self.poll_save_jobs(ctx);
         self.poll_save_background_jobs(ctx);
         self.poll_store(ctx);
@@ -797,7 +870,11 @@ impl QuarkApp {
             self.ensure_store(ctx);
         }
 
-        if self.epic_install_rx.is_some() {
+        if self.epic_install_rx.is_some()
+            || self.gog_install_rx.is_some()
+            || self.provider_cover_job.is_some()
+            || self.achievements_job.is_some()
+        {
             ctx.request_repaint_after(Duration::from_millis(120));
         }
         if self.add.scan.running || self.add.scan.search_rx.is_some() {
@@ -1141,6 +1218,7 @@ impl QuarkApp {
             }
             PickerTarget::CustomArtwork(kind) => self.import_artwork(kind, path),
             PickerTarget::EpicInstall => self.start_epic_install(ctx, path),
+            PickerTarget::GogInstall => self.start_gog_install(ctx, path),
             PickerTarget::SaveFolder(key) => {
                 if let Some(game) = self
                     .lib
@@ -2172,6 +2250,7 @@ impl QuarkApp {
         self.game_settings_dialog(ctx);
         self.confirm_remove_dialog(ctx);
         self.logs_dialog(ctx);
+        self.achievements_dialog(ctx);
         self.save_backup_dialog(ctx);
         self.toasts_ui(ctx);
     }
@@ -3454,7 +3533,10 @@ impl QuarkApp {
                     None,
                 )?;
                 if output.exit_code != Some(0) {
-                    return Err("Legendary a échoué pendant l'installation".to_string());
+                    return Err(format!(
+                        "Legendary a échoué pendant l'installation ({})",
+                        crate::providers::runner::failure_hint(&output)
+                    ));
                 }
                 output = adapter.run(
                     crate::providers::legendary::LegendaryAdapter::installed_args(),
@@ -3519,6 +3601,7 @@ impl QuarkApp {
                     "{} installé et détecté localement",
                     installed.title
                 ));
+                self.adopt_provider_install(&key);
             }
             Ok((key, Err(error))) => {
                 self.epic_install_rx = None;
@@ -3569,6 +3652,469 @@ impl QuarkApp {
                 self.toast_error("Installation Epic interrompue; aucun succès n'a été enregistré");
             }
             Err(TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(120)),
+        }
+    }
+
+    /// Installation GOG depuis « Mes jeux » : gogdl télécharge dans un dossier
+    /// parent choisi, puis le jeu rejoint la bibliothèque Quark.
+    pub fn request_gog_install(
+        &mut self,
+        ctx: &egui::Context,
+        key: &crate::providers::ProviderGameKey,
+    ) {
+        if self.gog_install_rx.is_some() || self.gog_installing.is_some() {
+            return;
+        }
+        let Some(game) = self
+            .lib
+            .provider_library
+            .games
+            .iter()
+            .find(|game| &game.key == key)
+            .cloned()
+        else {
+            return;
+        };
+        if key.provider != crate::providers::Provider::Gog || !game.owned {
+            self.toast_error("Installation GOG indisponible pour ce jeu");
+            return;
+        }
+        if !crate::providers::tools::ManagedToolId::Gogdl
+            .installed_path()
+            .is_file()
+        {
+            self.toast_error("gogdl n'est pas installé : Paramètres → Boutiques & outils");
+            return;
+        }
+        self.gog_install_pending = Some(key.clone());
+        self.pick_directory(ctx, crate::config::home_dir(), PickerTarget::GogInstall);
+    }
+
+    fn start_gog_install(&mut self, ctx: &egui::Context, destination: PathBuf) {
+        let Some(key) = self.gog_install_pending.take() else {
+            return;
+        };
+        if !destination.is_dir() {
+            self.toast_error("Dossier de destination GOG invalide");
+            return;
+        }
+        let Some(game) = self
+            .lib
+            .provider_library
+            .games
+            .iter()
+            .find(|game| game.key == key)
+            .cloned()
+        else {
+            return;
+        };
+        self.gog_installing = Some(key.clone());
+        if let Some(record) = self
+            .lib
+            .provider_library
+            .games
+            .iter_mut()
+            .find(|game| game.key == key)
+        {
+            record.install_state = crate::providers::InstallState::Installing;
+        }
+        self.touch();
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        let title = game.title.clone();
+        std::thread::spawn(move || {
+            let adapter =
+                crate::providers::gog::GogAdapter::new(crate::providers::gog::auth_config_path());
+            let result = (|| {
+                std::fs::create_dir_all(&destination)
+                    .map_err(|_| "impossible de préparer la destination GOG choisie".to_string())?;
+                let mut operation = crate::providers::operations::InstallOperation::new(
+                    key.clone(),
+                    destination.clone(),
+                );
+                operation.start();
+                // gogdl ajoute lui-même le nom de dossier du jeu : `info` le
+                // publie, ce qui évite de chercher au hasard après coup.
+                let info = adapter.run(
+                    crate::providers::gog::GogAdapter::info_args(&key.product_id, "windows"),
+                    None,
+                )?;
+                let folder = crate::providers::gog::folder_from_info(&info.stdout)?;
+                let output = adapter.run_install(
+                    crate::providers::gog::GogAdapter::install_args(
+                        &key.product_id,
+                        &destination,
+                        "windows",
+                    ),
+                    None,
+                )?;
+                if output.exit_code != Some(0) {
+                    return Err(format!(
+                        "gogdl a échoué pendant l'installation ({})",
+                        crate::providers::runner::failure_hint(&output)
+                    ));
+                }
+                let install_path = destination.join(&folder);
+                if !install_path.is_dir() {
+                    return Err("installation terminée sans dossier de jeu".to_string());
+                }
+                operation.complete_verified(install_path.clone())?;
+                let executable = crate::providers::gog::find_executable(&install_path, &title);
+                let installed = crate::providers::ProviderGame {
+                    key: key.clone(),
+                    title,
+                    owned: true,
+                    install_path: Some(install_path),
+                    custom_save_paths: Vec::new(),
+                    cover_url: None,
+                    install_exe: executable,
+                    install_state: crate::providers::InstallState::Installed,
+                    quark_game_id: None,
+                    capabilities: crate::providers::GameCapabilities {
+                        achievements: crate::providers::CapabilityState::Unsupported(
+                            "GOG ne publie les succès qu'auprès de Galaxy, sans identifiant client \
+                             public"
+                                .into(),
+                        ),
+                        ..Default::default()
+                    },
+                    last_synced: Some(crate::config::now_ts()),
+                };
+                Ok(installed)
+            })();
+            let _ = tx.send((key, result));
+            repaint.request_repaint();
+        });
+        self.gog_install_rx = Some(rx);
+        self.toast_info(format!(
+            "Installation GOG de {} lancée par gogdl",
+            game.title
+        ));
+        ctx.request_repaint_after(Duration::from_millis(120));
+    }
+
+    fn poll_gog_install(&mut self, ctx: &egui::Context) {
+        let Some(result) = self.gog_install_rx.as_ref().map(Receiver::try_recv) else {
+            return;
+        };
+        match result {
+            Ok((key, Ok(installed))) => {
+                self.gog_install_rx = None;
+                self.gog_installing = None;
+                if let Some(record) = self
+                    .lib
+                    .provider_library
+                    .games
+                    .iter_mut()
+                    .find(|game| game.key == key)
+                {
+                    record.install_state = crate::providers::InstallState::Installed;
+                    record.install_path = installed.install_path.clone();
+                    record.install_exe = installed.install_exe.clone();
+                }
+                self.touch();
+                self.adopt_provider_install(&key);
+            }
+            Ok((key, Err(error))) => {
+                self.gog_install_rx = None;
+                self.gog_installing = None;
+                if let Some(record) = self
+                    .lib
+                    .provider_library
+                    .games
+                    .iter_mut()
+                    .find(|game| game.key == key)
+                {
+                    record.install_state = if record
+                        .install_path
+                        .as_ref()
+                        .is_some_and(|path| path.is_dir())
+                    {
+                        crate::providers::InstallState::Installed
+                    } else {
+                        crate::providers::InstallState::Failed
+                    };
+                }
+                self.touch();
+                self.toast_error(format!("Installation GOG non confirmée : {error}"));
+            }
+            Err(TryRecvError::Disconnected) => {
+                self.gog_install_rx = None;
+                if let Some(key) = self.gog_installing.take() {
+                    if let Some(record) = self
+                        .lib
+                        .provider_library
+                        .games
+                        .iter_mut()
+                        .find(|game| game.key == key)
+                    {
+                        record.install_state = crate::providers::InstallState::Unknown;
+                    }
+                    self.touch();
+                }
+                self.toast_error("Installation GOG interrompue; aucun succès n'a été enregistré");
+            }
+            Err(TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(120)),
+        }
+    }
+
+    /// Ajoute un jeu de boutique installé à la bibliothèque Quark : c'est ce qui
+    /// le fait apparaître dans la grille, avec sa couverture de boutique.
+    pub(crate) fn adopt_provider_install(&mut self, key: &crate::providers::ProviderGameKey) {
+        let Some(record) = self
+            .lib
+            .provider_library
+            .games
+            .iter()
+            .find(|game| &game.key == key)
+            .cloned()
+        else {
+            return;
+        };
+        if record.install_state != crate::providers::InstallState::Installed {
+            return;
+        }
+        if !record
+            .install_path
+            .as_ref()
+            .is_some_and(|path| path.is_dir())
+        {
+            return;
+        }
+        if let Some(id) = record
+            .quark_game_id
+            .clone()
+            .filter(|id| self.lib.get(id).is_some())
+        {
+            self.selected = Some(id);
+            self.touch();
+            return;
+        }
+        let settings = self.lib.settings.clone();
+        let mut game = Game::new(
+            record.title.clone(),
+            record
+                .install_exe
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default(),
+        );
+        game.args = settings.default_args.trim().to_string();
+        game.prefix = settings
+            .default_prefix
+            .clone()
+            .filter(|prefix| !prefix.trim().is_empty());
+        game.anticheat = settings.default_anticheat;
+        game.launch = settings.default_launch.clone();
+        game.proton_log = settings.default_proton_log;
+        game.umu = settings.default_umu;
+        game.env = settings.default_env.clone();
+        if let Some(cover) = crate::providers::covers::cached(key) {
+            game.artwork.set(AssetKind::Cover, cover);
+        }
+        let id = game.id.clone();
+        let title = game.name.clone();
+        self.lib.games.push(game);
+        if let Some(provider) = self
+            .lib
+            .provider_library
+            .games
+            .iter_mut()
+            .find(|game| &game.key == key)
+        {
+            provider.quark_game_id = Some(id.clone());
+        }
+        self.selected = Some(id);
+        self.touch();
+        if record.install_exe.is_none() {
+            self.toast_info(format!(
+                "{title} ajouté à la bibliothèque · renseigne son exécutable dans les réglages du jeu"
+            ));
+        } else {
+            self.toast_info(format!("{title} ajouté à la bibliothèque"));
+        }
+    }
+
+    /// Couvertures manquantes des jeux affichés : téléchargées une par une,
+    /// jamais au démarrage, et seulement pour l'onglet visible.
+    pub(crate) fn queue_provider_covers(
+        &mut self,
+        ctx: &egui::Context,
+        games: &[crate::providers::ProviderGame],
+    ) {
+        if self.provider_cover_job.is_some() {
+            return;
+        }
+        if self
+            .provider_cover_scan_at
+            .is_some_and(|scan| scan.elapsed() < Duration::from_secs(2))
+        {
+            return;
+        }
+        self.provider_cover_scan_at = Some(Instant::now());
+        let legendary_ready = crate::providers::tools::ManagedToolId::Legendary
+            .installed_path()
+            .is_file();
+        self.provider_cover_queue.clear();
+        for game in games {
+            if self.provider_cover_queue.len() >= 8 {
+                break;
+            }
+            if crate::providers::covers::cached(&game.key).is_some()
+                || self.provider_cover_tried.contains(&game.key)
+            {
+                continue;
+            }
+            // Sans URL connue, seul Epic peut encore en fournir une (par
+            // `legendary info`) : Steam et GOG la publient à la synchronisation.
+            if game.cover_url.is_none()
+                && !(game.key.provider == crate::providers::Provider::Epic && legendary_ready)
+            {
+                continue;
+            }
+            self.provider_cover_queue.push_back(game.key.clone());
+        }
+        self.start_next_cover(ctx);
+    }
+
+    fn start_next_cover(&mut self, ctx: &egui::Context) {
+        if self.provider_cover_job.is_some() {
+            return;
+        }
+        let Some(key) = self.provider_cover_queue.pop_front() else {
+            return;
+        };
+        let Some(game) = self
+            .lib
+            .provider_library
+            .games
+            .iter()
+            .find(|game| game.key == key)
+            .cloned()
+        else {
+            return;
+        };
+        self.provider_cover_tried.insert(key.clone());
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let result = crate::providers::covers::ensure(&game);
+            let _ = tx.send((key, result));
+            repaint.request_repaint();
+        });
+        self.provider_cover_job = Some(rx);
+        ctx.request_repaint_after(Duration::from_millis(150));
+    }
+
+    fn poll_provider_covers(&mut self, ctx: &egui::Context) {
+        let Some(result) = self.provider_cover_job.as_ref().map(Receiver::try_recv) else {
+            return;
+        };
+        match result {
+            Ok((key, Ok((_path, Some(url))))) => {
+                if let Some(game) = self
+                    .lib
+                    .provider_library
+                    .games
+                    .iter_mut()
+                    .find(|game| game.key == key)
+                {
+                    if game.cover_url.as_deref() != Some(url.as_str()) {
+                        game.cover_url = Some(url);
+                        self.touch();
+                    }
+                }
+            }
+            Ok((key, Ok((_path, None)))) => {
+                // Couverture déjà connue : rien à mémoriser.
+                let _ = key;
+            }
+            Ok((_key, Err(_))) => {
+                // Une couverture manquante laisse le monogramme : ce n'est pas
+                // une erreur à afficher, et le jeu n'est pas réessayé.
+            }
+            Err(TryRecvError::Disconnected) => {}
+            Err(TryRecvError::Empty) => {
+                ctx.request_repaint_after(Duration::from_millis(150));
+                return;
+            }
+        }
+        self.provider_cover_job = None;
+        self.start_next_cover(ctx);
+    }
+
+    /// Succès Epic, lus seulement quand la fenêtre est demandée.
+    pub(crate) fn request_achievements(
+        &mut self,
+        ctx: &egui::Context,
+        key: &crate::providers::ProviderGameKey,
+    ) {
+        self.achievements_open = Some(key.clone());
+        if matches!(
+            self.achievements.get(key),
+            Some(AchievementsState::Ready(_)) | Some(AchievementsState::Loading)
+        ) {
+            return;
+        }
+        let Some(game) = self
+            .lib
+            .provider_library
+            .games
+            .iter()
+            .find(|game| &game.key == key)
+            .cloned()
+        else {
+            return;
+        };
+        if game.key.provider != crate::providers::Provider::Epic {
+            return;
+        }
+        if !crate::providers::tools::ManagedToolId::Legendary
+            .installed_path()
+            .is_file()
+        {
+            self.achievements.insert(
+                key.clone(),
+                AchievementsState::Failed(
+                    "Legendary n'est pas installé : Paramètres → Boutiques & outils".into(),
+                ),
+            );
+            return;
+        }
+        self.achievements
+            .insert(key.clone(), AchievementsState::Loading);
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        let product_id = key.product_id.clone();
+        let sent_key = key.clone();
+        std::thread::spawn(move || {
+            let result = crate::providers::legendary::epic_achievements(&product_id);
+            let _ = tx.send((sent_key, result));
+            repaint.request_repaint();
+        });
+        self.achievements_job = Some(rx);
+        ctx.request_repaint_after(Duration::from_millis(150));
+    }
+
+    fn poll_achievements(&mut self, ctx: &egui::Context) {
+        let Some(result) = self.achievements_job.as_ref().map(Receiver::try_recv) else {
+            return;
+        };
+        match result {
+            Ok((key, Ok(info))) => {
+                self.achievements
+                    .insert(key, AchievementsState::Ready(info));
+                self.achievements_job = None;
+            }
+            Ok((key, Err(error))) => {
+                self.achievements
+                    .insert(key, AchievementsState::Failed(error));
+                self.achievements_job = None;
+            }
+            Err(TryRecvError::Disconnected) => {
+                self.achievements_job = None;
+            }
+            Err(TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(150)),
         }
     }
 

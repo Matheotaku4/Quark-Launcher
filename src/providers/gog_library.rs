@@ -4,7 +4,9 @@
 //! l'API publique de GOG, comme le fait Heroic. Les jetons ne sortent jamais de
 //! ce module : les erreurs ne contiennent ni code de retour ni contenu HTTP.
 
-use super::model::{InstallState, Provider, ProviderGame, ProviderGameKey};
+use super::model::{
+    CapabilityState, GameCapabilities, InstallState, Provider, ProviderGame, ProviderGameKey,
+};
 use serde_json::Value;
 use std::path::Path;
 use std::time::Duration;
@@ -33,6 +35,8 @@ pub struct GogTokens {
 pub struct OwnedGame {
     pub id: String,
     pub title: String,
+    /// Couverture verticale publiée par GOG (`images.background` + suffixe).
+    pub cover_url: Option<String>,
 }
 
 fn client() -> reqwest::blocking::Client {
@@ -41,6 +45,31 @@ fn client() -> reqwest::blocking::Client {
 
 fn http_timeout() -> Duration {
     Duration::from_secs(25)
+}
+
+/// Couverture verticale GOG : la fiche produit publie une image d'arrière-plan
+/// (URL relative au protocole) dont le même identifiant sert une `cover` 342×482.
+pub fn cover_from_images(images: Option<&Value>) -> Option<String> {
+    let background = images
+        .and_then(|images| images.get("background"))
+        .and_then(Value::as_str)?
+        .trim();
+    if background.is_empty() {
+        return None;
+    }
+    let absolute = if background.starts_with("//") {
+        format!("https:{background}")
+    } else if background.starts_with("http://") || background.starts_with("https://") {
+        background.to_string()
+    } else {
+        return None;
+    };
+    let base = absolute
+        .rsplit_once('.')
+        .filter(|(_, extension)| extension.len() <= 4)
+        .map(|(base, _)| base)
+        .unwrap_or(&absolute);
+    Some(format!("{base}_glx_vertical_cover.webp"))
 }
 
 /// Extrait les jetons du fichier écrit par gogdl.
@@ -83,7 +112,10 @@ pub fn read_tokens(text: &str) -> Result<GogTokens, String> {
             return Ok(GogTokens {
                 access_token,
                 refresh_token,
-                expires_in: object.get("expires_in").and_then(Value::as_i64).unwrap_or(0),
+                expires_in: object
+                    .get("expires_in")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0),
                 login_time: object
                     .get("loginTime")
                     .and_then(Value::as_f64)
@@ -229,7 +261,8 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
 /// enregistrée dans le fichier gogdl si nécessaire.
 pub fn usable_tokens(auth_path: &Path, now: i64) -> Result<GogTokens, String> {
     let text = std::fs::read_to_string(auth_path).map_err(|_| {
-        "session GOG absente : connecte la boutique dans Paramètres → Boutiques & outils".to_string()
+        "session GOG absente : connecte la boutique dans Paramètres → Boutiques & outils"
+            .to_string()
     })?;
     let tokens = read_tokens(&text)?;
     if !tokens_are_expired(&tokens, now) {
@@ -303,7 +336,11 @@ pub fn parse_products(body: &str) -> Result<Vec<OwnedGame>, String> {
         if title.is_empty() || id.is_empty() {
             continue;
         }
-        games.push(OwnedGame { id, title });
+        games.push(OwnedGame {
+            id,
+            title,
+            cover_url: cover_from_images(entry.get("images")),
+        });
     }
     games.sort_by(|left, right| left.title.to_lowercase().cmp(&right.title.to_lowercase()));
     games.dedup_by(|left, right| left.id == right.id);
@@ -380,12 +417,13 @@ fn filtered_products(token: &str) -> Result<Vec<OwnedGame>, String> {
             if title.is_empty() || id.is_empty() || is_movie {
                 continue;
             }
-            games.push(OwnedGame { id, title });
+            games.push(OwnedGame {
+                id,
+                title,
+                cover_url: cover_from_images(entry.get("images")),
+            });
         }
-        let total_pages = root
-            .get("totalPages")
-            .and_then(Value::as_u64)
-            .unwrap_or(1);
+        let total_pages = root.get("totalPages").and_then(Value::as_u64).unwrap_or(1);
         if u64::from(page) >= total_pages || page >= MAX_PAGES || entries.is_empty() {
             break;
         }
@@ -452,9 +490,17 @@ pub fn to_games(entries: &[OwnedGame], fetched_at: i64) -> Vec<ProviderGame> {
             owned: true,
             install_path: None,
             custom_save_paths: Vec::new(),
+            cover_url: entry.cover_url.clone(),
+            install_exe: None,
             install_state: InstallState::NotInstalled,
             quark_game_id: None,
-            capabilities: Default::default(),
+            capabilities: GameCapabilities {
+                achievements: CapabilityState::Unsupported(
+                    "GOG ne publie les succès qu'auprès de Galaxy, sans identifiant client public"
+                        .into(),
+                ),
+                cloud_saves: CapabilityState::Unknown,
+            },
             last_synced: Some(fetched_at),
         })
         .collect()
@@ -493,7 +539,9 @@ mod tests {
         assert!(read_tokens("{}").unwrap_err().contains("absente"));
         assert!(read_tokens("pas du json").is_err());
         // Un refus de gogdl (`{"error": true}`) n'est pas une session.
-        assert!(read_tokens(r#"{"error": true}"#).unwrap_err().contains("absente"));
+        assert!(read_tokens(r#"{"error": true}"#)
+            .unwrap_err()
+            .contains("absente"));
     }
 
     #[test]
@@ -554,11 +602,13 @@ mod tests {
             vec![
                 OwnedGame {
                     id: "2".into(),
-                    title: "alpha".into()
+                    title: "alpha".into(),
+                    cover_url: None
                 },
                 OwnedGame {
                     id: "1".into(),
-                    title: "Zebra".into()
+                    title: "Zebra".into(),
+                    cover_url: None
                 }
             ]
         );
@@ -568,7 +618,8 @@ mod tests {
             parse_products(page).unwrap(),
             vec![OwnedGame {
                 id: "9".into(),
-                title: "Page Game".into()
+                title: "Page Game".into(),
+                cover_url: None
             }]
         );
         assert!(parse_products("nope").is_err());
@@ -580,6 +631,7 @@ mod tests {
             &[OwnedGame {
                 id: "42".into(),
                 title: "Game".into(),
+                cover_url: None,
             }],
             99,
         );

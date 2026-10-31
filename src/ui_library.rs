@@ -14,6 +14,7 @@ use eframe::egui::{
     self, Align, Align2, Color32, FontId, Layout, Pos2, Rect, RichText, Sense, Vec2,
 };
 use std::path::PathBuf;
+use std::time::Instant;
 
 impl QuarkApp {
     pub(crate) fn library_tab(&mut self, ctx: &egui::Context) {
@@ -723,6 +724,40 @@ impl QuarkApp {
             0.22,
         );
         let slide = (1.0 - entrance) * 10.0;
+        // La bannière et le fond flouté changeaient d'un coup d'un jeu à
+        // l'autre : l'ancienne image reste donc peinte quelques dixièmes de
+        // seconde par-dessus la nouvelle, les deux se fondant ensemble.
+        let current_hero = game
+            .artwork
+            .get(AssetKind::Hero)
+            .filter(|path| path.exists())
+            .cloned();
+        if !matches!(&self.hero_fade, Some(fade) if fade.game_id == game.id) {
+            self.hero_fade = Some(crate::app::HeroFade {
+                game_id: game.id.clone(),
+                from: self.hero_shown.clone().filter(|path| path.exists()),
+                started: Instant::now(),
+            });
+        }
+        self.hero_shown = current_hero.clone();
+        let fade_left = self
+            .hero_fade
+            .as_ref()
+            .map(|fade| (fade.started.elapsed().as_secs_f32() / 0.38).clamp(0.0, 1.0))
+            .unwrap_or(1.0);
+        let previous_hero = if fade_left < 1.0 {
+            self.hero_fade
+                .as_ref()
+                .and_then(|fade| fade.from.clone())
+                .filter(|path| path.exists())
+        } else {
+            None
+        };
+        // Seul le fondu en cours demande des images : une fiche immobile ne
+        // repeint pas en boucle.
+        if previous_hero.is_some() && fade_left < 1.0 {
+            ui.ctx().request_repaint();
+        }
         // Lien externe demandé par un clic (ProtonDB) : ouvert après le rendu,
         // pour ne pas lancer de navigateur au milieu de la mise en page.
         let mut open_url: Option<String> = None;
@@ -756,6 +791,13 @@ impl QuarkApp {
                 let area = Rect::from_min_max(ui.cursor().min, ui.max_rect().max);
                 let painter = ui.painter_at(area);
                 draw_cover(&painter, &texture, area);
+                if let Some(previous) = &previous_hero {
+                    if let Some(old) = self.blurred_texture(ui.ctx(), previous) {
+                        let mut painter = ui.painter_at(area);
+                        painter.set_opacity(1.0 - fade_left);
+                        draw_cover(&painter, &old, area);
+                    }
+                }
                 // Voile dégradé (maillage à quatre sommets, donc dégradé lisse
                 // sans bandes) : léger derrière la bannière, dense vers le bas
                 // pour que les actualités se détachent. La bannière elle-même
@@ -819,6 +861,13 @@ impl QuarkApp {
                             // dépassent sont rognés par le painter. La bannière
                             // garde son bas net : aucun fondu vers le noir.
                             draw_cover(&painter, &texture, hero);
+                            if let Some(previous) = &previous_hero {
+                                if let Some(old) = self.texture(ui.ctx(), previous) {
+                                    let mut painter = ui.painter_at(hero);
+                                    painter.set_opacity(1.0 - fade_left);
+                                    draw_cover(&painter, &old, hero);
+                                }
+                            }
                         } else {
                             // Sans bannière, un aplat teinté et la lettre du
                             // jeu : l'espace reste habité au lieu de ressembler

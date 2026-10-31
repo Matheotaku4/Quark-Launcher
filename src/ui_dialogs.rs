@@ -3086,6 +3086,193 @@ impl QuarkApp {
     // Journal de session
     // -----------------------------------------------------------------------
 
+    // -----------------------------------------------------------------------
+    // Succès d'un jeu de boutique (Epic, via Legendary)
+    // -----------------------------------------------------------------------
+
+    pub(crate) fn achievements_dialog(&mut self, ctx: &egui::Context) {
+        let Some(key) = self.achievements_open.clone() else {
+            return;
+        };
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.achievements_open = None;
+            return;
+        }
+        let pal = self.pal;
+        let title = self
+            .lib
+            .provider_library
+            .games
+            .iter()
+            .find(|game| game.key == key)
+            .map(|game| game.title.clone())
+            .unwrap_or_else(|| key.product_id.clone());
+        let state = self.achievements.get(&key).cloned();
+        let max_height = (ctx.screen_rect().height() * 0.5).max(200.0);
+        let mut close = false;
+
+        let modal = egui::Modal::new(egui::Id::new("quark_achievements"))
+            .frame(
+                egui::Frame::new()
+                    .fill(pal.bg)
+                    .stroke(egui::Stroke::new(1.0_f32, pal.border))
+                    .corner_radius(12.0)
+                    .inner_margin(16.0),
+            )
+            .show(ctx, |ui| {
+                ui.set_min_width(560.0);
+                ui.set_max_width((ctx.screen_rect().width() - 160.0).clamp(420.0, 720.0));
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(format!("Succès \u{b7} {title}"))
+                            .size(17.0)
+                            .color(pal.text),
+                    );
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if widgets::icon_button(ui, 26.0, Icon::Close, &pal, "Fermer").clicked() {
+                            close = true;
+                        }
+                    });
+                });
+                ui.add_space(10.0);
+
+                match state {
+                    None | Some(crate::app::AchievementsState::Loading) => {
+                        ui.horizontal(|ui| {
+                            ui.add(egui::Spinner::new().size(15.0));
+                            ui.add_space(6.0);
+                            ui.label(
+                                RichText::new("Lecture des succès auprès d'Epic\u{2026}")
+                                    .size(12.0)
+                                    .color(pal.text_dim),
+                            );
+                        });
+                        ctx.request_repaint_after(std::time::Duration::from_millis(200));
+                    }
+                    Some(crate::app::AchievementsState::Failed(message)) => {
+                        ui.label(RichText::new(message).size(12.5).color(pal.text_dim));
+                        ui.add_space(6.0);
+                        ui.label(
+                            RichText::new(
+                                "Les succès demandent une session Epic connectée (Paramètres \u{2192} \
+                                 Boutiques & outils) et un jeu qui en publie.",
+                            )
+                            .size(11.0)
+                            .color(pal.text_faint),
+                        );
+                    }
+                    Some(crate::app::AchievementsState::Ready(info)) => {
+                        if info.total == 0 {
+                            ui.label(
+                                RichText::new("Ce jeu ne publie aucun succès.")
+                                    .size(12.5)
+                                    .color(pal.text_dim),
+                            );
+                        } else {
+                            let ratio = info.unlocked as f32 / info.total as f32;
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new(format!(
+                                        "{} / {} succès débloqués",
+                                        info.unlocked, info.total
+                                    ))
+                                    .size(12.5)
+                                    .color(pal.text),
+                                );
+                                ui.with_layout(
+                                    Layout::right_to_left(Align::Center),
+                                    |ui| {
+                                        ui.label(
+                                            RichText::new(format!(
+                                                "{:.0} %",
+                                                ratio * 100.0
+                                            ))
+                                            .size(11.0)
+                                            .color(pal.text_faint),
+                                        );
+                                    },
+                                );
+                            });
+                            ui.add_space(6.0);
+                            let (bar, _) = ui.allocate_exact_size(
+                                Vec2::new(ui.available_width(), 5.0),
+                                Sense::hover(),
+                            );
+                            ui.painter().rect_filled(bar, 2.5, pal.border);
+                            ui.painter().rect_filled(
+                                Rect::from_min_size(
+                                    bar.min,
+                                    Vec2::new(bar.width() * ratio.clamp(0.0, 1.0), bar.height()),
+                                ),
+                                2.5,
+                                pal.accent,
+                            );
+                            ui.add_space(10.0);
+
+                            let mut rows: Vec<&crate::providers::legendary::AchievementRow> =
+                                info.rows.iter().collect();
+                            rows.sort_by(|left, right| {
+                                right
+                                    .unlocked
+                                    .cmp(&left.unlocked)
+                                    .then_with(|| left.name.cmp(&right.name))
+                            });
+                            egui::ScrollArea::vertical()
+                                .id_salt("quark_achievements_scroll")
+                                .max_height(max_height)
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    for row in rows {
+                                        ui.horizontal(|ui| {
+                                            let (dot, _) = ui.allocate_exact_size(
+                                                Vec2::splat(14.0),
+                                                Sense::hover(),
+                                            );
+                                            ui.painter().circle_filled(
+                                                dot.center(),
+                                                4.0,
+                                                if row.unlocked {
+                                                    pal.accent
+                                                } else {
+                                                    pal.border
+                                                },
+                                            );
+                                            ui.add_space(2.0);
+                                            ui.vertical(|ui| {
+                                                ui.spacing_mut().item_spacing.y = 1.0;
+                                                ui.label(
+                                                    RichText::new(&row.name)
+                                                        .size(12.0)
+                                                        .color(if row.unlocked {
+                                                            pal.text
+                                                        } else {
+                                                            pal.text_dim
+                                                        }),
+                                                );
+                                                if !row.description.is_empty() {
+                                                    ui.label(
+                                                        RichText::new(&row.description)
+                                                            .size(10.5)
+                                                            .color(pal.text_faint),
+                                                    );
+                                                }
+                                            });
+                                        });
+                                        ui.add_space(6.0);
+                                    }
+                                });
+                        }
+                    }
+                }
+            });
+        if modal.should_close() {
+            close = true;
+        }
+        if close {
+            self.achievements_open = None;
+        }
+    }
+
     pub(crate) fn logs_dialog(&mut self, ctx: &egui::Context) {
         let Some((game_id, lines, truncated, error, path)) = self.logs.as_ref().map(|logs| {
             (

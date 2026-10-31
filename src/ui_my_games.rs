@@ -4,7 +4,7 @@
 //! se parcourt d'un coup d'œil, et la synchronisation n'est plus ici (elle se
 //! fait au démarrage et dans Paramètres → Boutiques & outils).
 
-use crate::app::{QuarkApp, SettingsTab};
+use crate::app::{QuarkApp, SettingsTab, Tab};
 use crate::providers::{InstallState, Provider, ProviderGame};
 use crate::theme;
 use eframe::egui::{self, Align, Align2, Layout, Pos2, Rect, RichText, Sense, Vec2};
@@ -25,6 +25,10 @@ impl QuarkApp {
         let mut merge_keys: Vec<crate::providers::ProviderGameKey> = Vec::new();
         let mut split_key: Option<crate::providers::ProviderGameKey> = None;
         let mut install_epic: Option<crate::providers::ProviderGameKey> = None;
+        let mut install_gog: Option<crate::providers::ProviderGameKey> = None;
+        let mut open_game: Option<crate::providers::ProviderGameKey> = None;
+        let mut adopt: Option<crate::providers::ProviderGameKey> = None;
+        let mut show_achievements: Option<crate::providers::ProviderGameKey> = None;
         let mut sync_after_handoff = false;
 
         let busy = self.steam_sync_loading || self.epic_sync_loading || self.gog_sync_loading;
@@ -101,6 +105,16 @@ impl QuarkApp {
                                             if widgets_button(ui, "Boutiques & outils", &pal) {
                                                 open_settings = true;
                                             }
+                                            ui.add_space(8.0);
+                                            ui.add_sized(
+                                                Vec2::new(220.0, 30.0),
+                                                egui::TextEdit::singleline(
+                                                    &mut self.my_games_query,
+                                                )
+                                                .id(egui::Id::new("quark_my_games_search"))
+                                                .hint_text("Rechercher un jeu")
+                                                .font(egui::FontId::proportional(12.5)),
+                                            );
                                         },
                                     );
                                 });
@@ -171,34 +185,45 @@ impl QuarkApp {
                                 }
                                 ui.add_space(10.0);
 
-                                let games: Vec<ProviderGame> = all_games
-                                    .iter()
-                                    .filter(|game| selected.is_none_or(|p| game.key.provider == p))
-                                    .cloned()
-                                    .collect();
+                                let needle = self.my_games_query.trim().to_string();
+                                let games = visible_games(&all_games, selected, &needle);
                                 if games.is_empty() {
                                     ui.add_space(20.0);
                                     ui.label(
-                                        RichText::new("Aucun jeu de boutique synchronisé")
-                                            .size(16.0)
-                                            .color(pal.text),
+                                        RichText::new(if needle.is_empty() {
+                                            "Aucun jeu de boutique synchronisé".to_string()
+                                        } else {
+                                            format!("Aucun jeu ne correspond à « {needle} »")
+                                        })
+                                        .size(16.0)
+                                        .color(pal.text),
                                     );
                                     ui.add_space(5.0);
                                     ui.label(
-                                        RichText::new(
+                                        RichText::new(if needle.is_empty() {
                                             "Connecte une boutique dans Paramètres → Boutiques & outils : \
-                                             la synchronisation suit automatiquement.",
-                                        )
+                                             la synchronisation suit automatiquement."
+                                                .to_string()
+                                        } else {
+                                            "Le filtre porte sur les jeux possédés des boutiques \
+                                             synchronisées ; efface-le pour tout revoir."
+                                                .to_string()
+                                        })
                                         .size(12.0)
                                         .color(pal.text_dim),
                                     );
                                 } else {
+                                    self.queue_provider_covers(ui.ctx(), &games);
                                     self.provider_grid(
                                         ui,
                                         &pal,
                                         &games,
                                         &mut install,
                                         &mut install_epic,
+                                        &mut install_gog,
+                                        &mut adopt,
+                                        &mut show_achievements,
+                                        &mut open_game,
                                         &mut preview_save,
                                         &mut inventory_save,
                                         &mut choose_save_folder,
@@ -320,6 +345,36 @@ impl QuarkApp {
                 .retain(|group| group.members.len() > 1);
             self.touch();
         }
+        if let Some(key) = install_gog {
+            self.request_gog_install(ctx, &key);
+        }
+        if let Some(key) = show_achievements {
+            self.request_achievements(ctx, &key);
+        }
+        if let Some(key) = adopt {
+            self.adopt_provider_install(&key);
+        }
+        if let Some(key) = open_game {
+            let quark_id = self
+                .lib
+                .provider_library
+                .games
+                .iter()
+                .find(|game| game.key == key)
+                .and_then(|game| game.quark_game_id.clone())
+                .filter(|id| self.lib.get(id).is_some());
+            match quark_id {
+                Some(id) => {
+                    self.selected = Some(id);
+                    self.tab = Tab::Library;
+                    self.home = false;
+                }
+                None => self.toast_info(
+                    "Ce jeu est installé mais pas encore dans la bibliothèque : installe-le ou \
+                     utilise « Ajouter à la bibliothèque »",
+                ),
+            }
+        }
         if let Some(app_id) = install {
             match crate::providers::steam::request_install(app_id) {
                 Ok(()) => {
@@ -348,6 +403,10 @@ impl QuarkApp {
         games: &[ProviderGame],
         install: &mut Option<u32>,
         install_epic: &mut Option<crate::providers::ProviderGameKey>,
+        install_gog: &mut Option<crate::providers::ProviderGameKey>,
+        adopt: &mut Option<crate::providers::ProviderGameKey>,
+        achievements: &mut Option<crate::providers::ProviderGameKey>,
+        open: &mut Option<crate::providers::ProviderGameKey>,
         preview_save: &mut Option<crate::providers::ProviderGameKey>,
         inventory_save: &mut Option<crate::providers::ProviderGameKey>,
         choose_save_folder: &mut Option<crate::providers::ProviderGameKey>,
@@ -382,7 +441,7 @@ impl QuarkApp {
                     if appear < 1.0 {
                         ui.ctx().request_repaint();
                     }
-                    let choice = provider_card(
+                    provider_card(
                         ui,
                         pal,
                         game,
@@ -391,12 +450,15 @@ impl QuarkApp {
                         texture.as_ref(),
                         &mut *install,
                         &mut *install_epic,
+                        &mut *install_gog,
+                        &mut *adopt,
+                        &mut *achievements,
+                        &mut *open,
                         &mut *preview_save,
                         &mut *inventory_save,
                         &mut *choose_save_folder,
                         &mut *remove_save_folder,
                     );
-                    let _ = choice;
                 }
             });
             ui.add_space(gap);
@@ -404,9 +466,13 @@ impl QuarkApp {
         }
     }
 
-    /// Couverture d'un jeu de boutique : celle du jeu Quark de même identifiant
-    /// Steam, ou de même titre. Aucun téléchargement n'est déclenché ici.
+    /// Couverture d'un jeu de boutique : d'abord celle téléchargée depuis la
+    /// boutique (Steam, GOG, Epic), sinon celle du jeu Quark de même identifiant
+    /// Steam ou de même titre. Aucun téléchargement n'est déclenché ici.
     fn cover_for(&self, game: &ProviderGame) -> Option<PathBuf> {
+        if let Some(path) = crate::providers::covers::cached(&game.key) {
+            return Some(path);
+        }
         let app_id = game.key.product_id.parse::<u32>().ok();
         let matching = self.lib.games.iter().find(|candidate| {
             candidate
@@ -506,6 +572,10 @@ fn provider_card(
     texture: Option<&egui::TextureHandle>,
     install: &mut Option<u32>,
     install_epic: &mut Option<crate::providers::ProviderGameKey>,
+    install_gog: &mut Option<crate::providers::ProviderGameKey>,
+    adopt: &mut Option<crate::providers::ProviderGameKey>,
+    achievements: &mut Option<crate::providers::ProviderGameKey>,
+    open: &mut Option<crate::providers::ProviderGameKey>,
     preview_save: &mut Option<crate::providers::ProviderGameKey>,
     inventory_save: &mut Option<crate::providers::ProviderGameKey>,
     choose_save_folder: &mut Option<crate::providers::ProviderGameKey>,
@@ -607,6 +677,9 @@ fn provider_card(
                         installed,
                         install,
                         install_epic,
+                        install_gog,
+                        adopt,
+                        achievements,
                         preview_save,
                         inventory_save,
                         choose_save_folder,
@@ -617,11 +690,83 @@ fn provider_card(
         },
     );
 
+    // Double-clic : installe le jeu s'il ne l'est pas encore, sinon l'ouvre
+    // dans la bibliothèque. C'est le geste attendu d'une grille de jeux.
+    if response.double_clicked() {
+        let app_id = game.key.product_id.parse::<u32>().ok();
+        let legendary_ready = crate::providers::tools::ManagedToolId::Legendary
+            .installed_path()
+            .is_file();
+        let gogdl_ready = crate::providers::tools::ManagedToolId::Gogdl
+            .installed_path()
+            .is_file();
+        let busy = matches!(
+            game.install_state,
+            InstallState::Installing | InstallState::Updating | InstallState::Repairing
+        );
+        if installed {
+            *open = Some(game.key.clone());
+        } else if busy {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(400));
+        } else if game.owned && game.key.provider == Provider::Steam && app_id.is_some() {
+            *install = app_id;
+        } else if game.owned && game.key.provider == Provider::Epic && legendary_ready {
+            *install_epic = Some(game.key.clone());
+        } else if game.owned && game.key.provider == Provider::Gog && gogdl_ready {
+            *install_gog = Some(game.key.clone());
+        } else {
+            *open = Some(game.key.clone());
+        }
+    }
     response.on_hover_text(format!(
-        "{} · {} · clic droit pour les actions",
+        "{} · {} · double-clic pour installer ou ouvrir · menu Actions",
         game.title,
         provider_name(game.key.provider)
     ));
+}
+
+/// Jeux de boutique à afficher : onglet de boutique, recherche par titre (sans
+/// tenir compte des accents ni de la casse) et tri alphabétique. « Toutes » se
+/// lit donc dans le même ordre que chaque onglet de boutique.
+fn visible_games(
+    games: &[ProviderGame],
+    provider: Option<Provider>,
+    query: &str,
+) -> Vec<ProviderGame> {
+    let needle = fold_case(query.trim());
+    let mut visible: Vec<ProviderGame> = games
+        .iter()
+        .filter(|game| provider.is_none_or(|p| game.key.provider == p))
+        .filter(|game| needle.is_empty() || fold_case(&game.title).contains(&needle))
+        .cloned()
+        .collect();
+    visible.sort_by(|left, right| {
+        fold_case(&left.title)
+            .cmp(&fold_case(&right.title))
+            .then_with(|| left.key.product_id.cmp(&right.key.product_id))
+    });
+    visible
+}
+
+/// Minuscules sans accents, pour que « Hollow Knight » se trouve en tapant
+/// « hollow » comme « pokemon » trouve « Pokémon ».
+fn fold_case(text: &str) -> String {
+    // Minuscules d'abord : « Échos » doit devenir « echos » comme « échos ».
+    text.to_lowercase()
+        .chars()
+        .flat_map(|c| match c {
+            'à' | 'á' | 'â' | 'ä' | 'ã' | 'å' => "a".chars().collect::<Vec<_>>(),
+            'ç' => vec!['c'],
+            'è' | 'é' | 'ê' | 'ë' => vec!['e'],
+            'ì' | 'í' | 'î' | 'ï' => vec!['i'],
+            'ñ' => vec!['n'],
+            'ò' | 'ó' | 'ô' | 'ö' | 'õ' => vec!['o'],
+            'ù' | 'ú' | 'û' | 'ü' => vec!['u'],
+            'ý' | 'ÿ' => vec!['y'],
+            other => other.to_lowercase().collect(),
+        })
+        .collect()
 }
 
 fn buffer_or(provider: &Provider) -> &'static str {
@@ -649,6 +794,9 @@ fn actions_menu(
     installed: bool,
     install: &mut Option<u32>,
     install_epic: &mut Option<crate::providers::ProviderGameKey>,
+    install_gog: &mut Option<crate::providers::ProviderGameKey>,
+    adopt: &mut Option<crate::providers::ProviderGameKey>,
+    achievements: &mut Option<crate::providers::ProviderGameKey>,
     preview_save: &mut Option<crate::providers::ProviderGameKey>,
     inventory_save: &mut Option<crate::providers::ProviderGameKey>,
     choose_save_folder: &mut Option<crate::providers::ProviderGameKey>,
@@ -665,8 +813,12 @@ fn actions_menu(
         game.owned && game.key.provider == Provider::Steam && !installed && app_id.is_some();
     let epic_installable =
         game.owned && game.key.provider == Provider::Epic && !installed && legendary_ready;
-    let has_row_actions =
-        steam_installable || epic_installable || installed || !game.custom_save_paths.is_empty();
+    let gogdl_ready = crate::providers::tools::ManagedToolId::Gogdl
+        .installed_path()
+        .is_file();
+    let gog_installable =
+        game.owned && game.key.provider == Provider::Gog && !installed && gogdl_ready;
+    let has_row_actions = game.owned || installed || !game.custom_save_paths.is_empty();
     if !has_row_actions {
         let _ = pal;
         return;
@@ -683,6 +835,17 @@ fn actions_menu(
                 *install_epic = Some(game.key.clone());
                 ui.close();
             }
+            if gog_installable && ui.button("Installer via gogdl").clicked() {
+                *install_gog = Some(game.key.clone());
+                ui.close();
+            }
+            if installed
+                && game.quark_game_id.is_none()
+                && ui.button("Ajouter à la bibliothèque").clicked()
+            {
+                *adopt = Some(game.key.clone());
+                ui.close();
+            }
             if installed && ludusavi_ready {
                 if ui.button("Aperçu sauvegarde").clicked() {
                     *preview_save = Some(game.key.clone());
@@ -692,6 +855,30 @@ fn actions_menu(
                     *inventory_save = Some(game.key.clone());
                     ui.close();
                 }
+            }
+            ui.separator();
+            match game.key.provider {
+                Provider::Epic if legendary_ready => {
+                    if ui.button("Succès…").clicked() {
+                        *achievements = Some(game.key.clone());
+                        ui.close();
+                    }
+                }
+                Provider::Epic => {
+                    ui.add_enabled(
+                        false,
+                        egui::Button::new("Succès…").min_size(Vec2::new(0.0, 20.0)),
+                    )
+                    .on_disabled_hover_text("Legendary n'est pas installé");
+                }
+                Provider::Gog => {
+                    ui.add_enabled(false, egui::Button::new("Succès…"))
+                        .on_disabled_hover_text(
+                        "GOG ne publie les succès qu'auprès de Galaxy, sans identifiant client \
+                             public : Quark ne peut pas les lire",
+                    );
+                }
+                Provider::Steam => {}
             }
             if installed && ui.button("Dossiers de sauvegarde…").clicked() {
                 *choose_save_folder = Some(game.key.clone());
@@ -706,4 +893,48 @@ fn actions_menu(
             }
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::providers::{Provider, ProviderGame, ProviderGameKey};
+
+    fn game(provider: Provider, id: &str, title: &str) -> ProviderGame {
+        ProviderGame {
+            key: ProviderGameKey {
+                provider,
+                product_id: id.into(),
+            },
+            title: title.into(),
+            owned: true,
+            ..ProviderGame::default()
+        }
+    }
+
+    #[test]
+    fn la_liste_est_triee_par_nom_et_filtree_par_recherche() {
+        let games = vec![
+            game(Provider::Steam, "1", "The Witcher 3"),
+            game(Provider::Gog, "2", "Cyberpunk 2077"),
+            game(Provider::Steam, "3", "Échos du passé"),
+        ];
+        let titles = |list: Vec<ProviderGame>| -> Vec<String> {
+            list.into_iter().map(|game| game.title).collect()
+        };
+        assert_eq!(
+            titles(visible_games(&games, None, "")),
+            vec!["Cyberpunk 2077", "Échos du passé", "The Witcher 3"]
+        );
+        // Accents et casse ignorés, sur le titre seulement.
+        assert_eq!(
+            titles(visible_games(&games, None, "ECHOS")),
+            vec!["Échos du passé"]
+        );
+        assert_eq!(
+            titles(visible_games(&games, Some(Provider::Steam), "")),
+            vec!["Échos du passé", "The Witcher 3"]
+        );
+        assert!(visible_games(&games, None, "zelda").is_empty());
+    }
 }

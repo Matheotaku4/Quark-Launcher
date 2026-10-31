@@ -3,6 +3,7 @@
 //! Les adaptateurs concrets (Steam, Epic, GOG) restent dans des modules
 //! séparés ; ces types ne contiennent aucune donnée d'authentification.
 
+pub mod covers;
 pub mod credentials;
 pub mod gog;
 pub mod gog_library;

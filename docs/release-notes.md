@@ -1,3 +1,37 @@
+## Quark 1.0.3 — « Mes jeux » : tri, recherche, couvertures et installations Epic/GOG
+
+- **Tri et recherche** : les onglets de **Mes jeux** (y compris **Toutes**) sont triés par nom,
+  accents et casse ignorés, et un champ *Rechercher un jeu* filtre les jeux possédés au fil de
+  la frappe. Le filtre ne s'applique qu'aux titres des boutiques synchronisées et s'efface d'un
+  clic.
+- **Couvertures des boutiques** : chaque carte affiche la jaquette verticale du jeu — Steam
+  depuis son CDN, GOG depuis les images produit (`images.background` + suffixe vertical), Epic
+  via `legendary info`. Téléchargées une par une à l'ouverture de la page, mises en cache sur
+  disque et mémorisées pour ne pas être redemandées ; à défaut, le monogramme reste affiché.
+- **Installation Epic réparée** : « Installation Epic non confirmée » venait de Legendary
+  attendant des réponses clavier alors que le processus n'a pas de terminal. L'appel passe
+  désormais par `-y` (global) avec `--skip-sdl --skip-dlcs --platform Windows`. En cas d'échec,
+  le message cite la dernière ligne utile de l'outil (les lignes pouvant contenir une adresse de
+  compte sont écartées) au lieu d'un simple « a échoué ».
+- **Installation GOG** : `gogdl info` donne le nom du dossier, puis `gogdl download` installe
+  dans le dossier choisi, sans invite interactive et avec un délai adapté au téléchargement.
+- **Double-clic sur une carte** : installe le jeu s'il ne l'est pas encore (Steam, Epic ou GOG
+  selon la boutique et l'outil installé), sinon ouvre sa fiche dans la bibliothèque.
+- **Installations adoptées** : après une installation réussie, Quark crée la fiche du jeu —
+  réglages par défaut, couverture et lien boutique — pour qu'il apparaisse dans la
+  bibliothèque, prêt à lancer.
+- **Succès Epic** : *Actions → Succès…* lit `legendary achievements <app> --json` et affiche
+  débloqués/total, une barre de progression et la liste complète. **GOG** ne publie ses succès
+  qu'auprès de Galaxy, sans identifiant client public : l'entrée reste désactivée et l'explique.
+- **Fiche de jeu** : la bannière et le fond flouté se fondent enchaînés au changement de jeu
+  (0,38 s) au lieu de changer d'un coup ; la fiche ne redemande des images que pendant la
+  transition.
+
+Limites assumées : les installations Epic et GOG ainsi que les succès Epic n'ont pas pu être
+exécutés avec de vrais comptes — les arguments, les parseurs et les états d'échec sont couverts
+par des tests, mais le chemin réseau complet demande un essai manuel. Les succès GOG restent
+hors de portée de Quark.
+
 ## Quark 1.0.2 — synchronisation GOG, « Mes jeux » par boutique et réglages clarifiés
 
 - **Synchronisation GOG** : gogdl n'expose aucune commande de liste. Quark lit donc sa session,

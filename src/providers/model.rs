@@ -63,6 +63,12 @@ pub struct ProviderGame {
     #[serde(default)]
     pub custom_save_paths: Vec<PathBuf>,
     pub install_state: InstallState,
+    /// Image de couverture publiée par la boutique (jamais un secret).
+    #[serde(default)]
+    pub cover_url: Option<String>,
+    /// Exécutable relatif au dossier installé, quand la boutique le publie.
+    #[serde(default)]
+    pub install_exe: Option<PathBuf>,
     /// Identifiant de la fiche Quark associée, si elle existe.
     pub quark_game_id: Option<String>,
     pub capabilities: GameCapabilities,
@@ -80,6 +86,8 @@ impl Default for ProviderGame {
             owned: false,
             install_path: None,
             custom_save_paths: Vec::new(),
+            cover_url: None,
+            install_exe: None,
             install_state: InstallState::Unknown,
             quark_game_id: None,
             capabilities: GameCapabilities::default(),

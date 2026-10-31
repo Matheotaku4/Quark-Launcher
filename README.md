@@ -198,7 +198,11 @@ with save snapshots through Ludusavi.
 - **Mes jeux**: Steam (read from local `appmanifest_*.acf`), Epic (through Legendary) and
   GOG (through the GOG API) games in one grid — owned, installed, or both — with one tab per
   store and a counter, the detected install path, and what the store can actually do. The
-  same game on two stores can be **merged** into one row and **split** again.
+  same game on two stores can be **merged** into one row and **split** again. Every tab is
+  **sorted by name**, a **search field** filters owned titles as you type (accents and case
+  ignored), and each card shows the store's **vertical cover** — Steam from its CDN, GOG from
+  the product images, Epic through `legendary info` — cached on disk and fetched one at a time
+  when the page is open. A missing cover falls back to a monogram instead of a blank tile.
 - **Store sync starts on its own**: once the interface is up, every connected store is
   refreshed in the background. **Settings → Stores & tools** opens on a *Sync* section with a
   button per store, *Sync all*, the number of games, the last sync time and any error;
@@ -207,14 +211,20 @@ with save snapshots through Ludusavi.
   has no list command at all: Quark refreshes the gogdl session token and asks the GOG API
   (`embed.gog.com/user/data/games`, then `api.gog.com/products` in batches) directly.
 - **Installs are delegated, never faked**: *Installer via Steam* hands the AppID to the Steam
-  client (`steam://install/<id>`) and then rescans; *Installer via Legendary* installs into
-  the folder you choose and only marks the game **Installé** once a matching local directory
-  has been found. A dialog closing or a process exiting is never taken as proof.
+  client (`steam://install/<id>`) and then rescans; *Installer via Legendary* and *Installer
+  via gogdl* install into the folder you choose and only mark the game **Installé** once a
+  matching local directory has been found. A dialog closing or a process exiting is never
+  taken as proof. Legendary runs non-interactively (`-y --skip-sdl --skip-dlcs`, Windows
+  platform): without a terminal its prompts made every install fail. A **double-click** on a
+  card installs the game, and a successful install creates the matching Quark entry
+  (default settings, cover, store link) so the game lands in the library ready to play.
 - **Save folders and snapshots from the same page**: custom save folders per installation,
   Ludusavi preview, backup, backup inventory and restore — see *Save files* below.
-- **Deliberately absent**: achievements and cloud saves. No verified source is wired for
-  them, so Quark shows nothing rather than empty results or invented capabilities. GOG games
-  can be listed but not installed yet.
+- **Achievements**: **Succès…** reads a game's achievements from `legendary achievements
+  <app> --json` and shows unlocked/total, a progress bar and the full list. **Cloud saves are
+  deliberately absent** — no verified source is wired, so Quark shows nothing rather than
+  invented capabilities. GOG publishes achievements only to Galaxy, with no public client
+  ID, so the GOG entry stays disabled and says why.
 
 ## Build
 
@@ -353,8 +363,8 @@ Saves are handled per provider installation, not per title:
   Ludusavi call exists only inside that confirmed flow.
 
 Achievements and cloud saves are **not** offered: no verified source is wired for either, so
-nothing is claimed or displayed as empty. GOG games can be synced into **Mes jeux**;
-installing them is not wired yet.
+nothing is claimed or displayed as empty. GOG games can be synced into **Mes jeux** and
+installed with gogdl; their achievements stay out of reach.
 
 The full manual check — real Ludusavi binary, exact commands, expected JSON and pass/fail
 criteria — is in [`docs/verification/ludusavi-config.md`](docs/verification/ludusavi-config.md).
