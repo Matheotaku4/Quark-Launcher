@@ -271,30 +271,49 @@ impl QuarkApp {
         }
     }
 
-    /// Couverture d'un jeu tout juste ajouté à la bibliothèque : téléchargée
-    /// en arrière-plan, puis posée sur la fiche Quark.
+    /// Jaquette et bannière d'un jeu ajouté à la bibliothèque : téléchargées
+    /// en arrière-plan, puis posées sur la fiche Quark. Les images déjà
+    /// présentes (personnalisées ou importées) ne sont jamais remplacées.
     pub(crate) fn poll_adopt_cover(&mut self) {
         let Some((game_id, _key, rx)) = self.adopt_cover_job.as_ref() else {
             return;
         };
         match rx.try_recv() {
-            Ok((result, key)) => {
-                if let Ok((path, url)) = result {
-                    let game_id = game_id.clone();
-                    if let Some(game) = self.lib.get_mut(&game_id) {
-                        game.artwork.set(AssetKind::Cover, path);
-                    }
-                    if let Some(record) = self
-                        .lib
-                        .provider_library
-                        .games
-                        .iter_mut()
-                        .find(|game| game.key == key)
-                    {
-                        if url.is_some() {
-                            record.cover_url = url;
+            Ok((art, key)) => {
+                let game_id = game_id.clone();
+                let mut changed = false;
+                if let Some(game) = self.lib.get_mut(&game_id) {
+                    for (kind, image) in [
+                        (AssetKind::Cover, art.cover.as_ref()),
+                        (AssetKind::Hero, art.hero.as_ref()),
+                    ] {
+                        let missing = game
+                            .artwork
+                            .get(kind)
+                            .is_none_or(|path| !path.exists());
+                        if missing {
+                            if let Some((path, _)) = image {
+                                game.artwork.set(kind, path.clone());
+                                changed = true;
+                            }
                         }
                     }
+                }
+                if let Some(record) = self
+                    .lib
+                    .provider_library
+                    .games
+                    .iter_mut()
+                    .find(|game| game.key == key)
+                {
+                    if let Some((_, url)) = art.cover.as_ref() {
+                        if url.is_some() && record.cover_url != *url {
+                            record.cover_url = url.clone();
+                            changed = true;
+                        }
+                    }
+                }
+                if changed {
                     self.touch();
                 }
                 self.adopt_cover_job = None;
@@ -309,5 +328,6 @@ impl QuarkApp {
         self.poll_session_bridge(ctx);
         self.poll_gog_unlock(ctx);
         self.poll_adopt_cover();
+        self.ensure_provider_artwork(ctx);
     }
 }

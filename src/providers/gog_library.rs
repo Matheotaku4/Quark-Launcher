@@ -100,28 +100,50 @@ fn parse_cover(body: &str) -> Result<String, String> {
         .ok_or_else(|| "fiche GOG sans couverture".to_string())
 }
 
-/// Jaquette verticale d'un jeu possédé, demandée à l'API v2 (publique, sans
-/// session).
-pub fn cover_url(product_id: &str) -> Result<String, String> {
+fn parse_hero(body: &str) -> Result<String, String> {
+    let root: Value = serde_json::from_str(body).map_err(|_| "fiche GOG illisible".to_string())?;
+    root.get("_links")
+        .and_then(|links| links.get("backgroundImage"))
+        .and_then(|image| image.get("href"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|url| url.starts_with("https://") || url.starts_with("http://"))
+        .map(str::to_string)
+        .ok_or_else(|| "fiche GOG sans illustration large".to_string())
+}
+
+fn product_body(product_id: &str) -> Result<String, String> {
     if product_id.is_empty() || !product_id.chars().all(|c| c.is_ascii_digit()) {
-        return Err("identifiant GOG invalide pour la couverture".to_string());
+        return Err("identifiant GOG invalide".to_string());
     }
     let response = client()
         .get(format!("{API_URL}/v2/games/{product_id}"))
         .query(&[("locale", LOCALE)])
         .timeout(http_timeout())
         .send()
-        .map_err(|_| "GOG injoignable pour la couverture".to_string())?;
+        .map_err(|_| "GOG injoignable pour les images".to_string())?;
     if !response.status().is_success() {
         return Err(format!(
-            "GOG a refusé la fiche de couverture (HTTP {})",
+            "GOG a refusé la fiche du jeu (HTTP {})",
             response.status().as_u16()
         ));
     }
-    let body = response
+    response
         .text()
-        .map_err(|_| "fiche GOG illisible".to_string())?;
+        .map_err(|_| "fiche GOG illisible".to_string())
+}
+
+/// Jaquette verticale d'un jeu possédé, demandée à l'API v2 (publique, sans
+/// session).
+pub fn cover_url(product_id: &str) -> Result<String, String> {
+    let body = product_body(product_id)?;
     parse_cover(&body)
+}
+
+/// Illustration large (bannière) d'un jeu GOG.
+pub fn hero_url(product_id: &str) -> Result<String, String> {
+    let body = product_body(product_id)?;
+    parse_hero(&body)
 }
 
 /// Extrait les jetons du fichier écrit par gogdl.
@@ -1083,6 +1105,13 @@ mod tests {
         );
         assert!(parse_cover(r#"{"_links":{}}"#).is_err());
         assert!(cover_url("pas-un-id").is_err());
+        // La bannière est l'illustration large, jamais la jaquette dérivée.
+        assert_eq!(
+            parse_hero(body).unwrap(),
+            "https://images.gog-statics.com/bg.jpg"
+        );
+        assert!(parse_hero(r#"{"_links":{}}"#).is_err());
+        assert!(hero_url("pas-un-id").is_err());
     }
 
     #[test]

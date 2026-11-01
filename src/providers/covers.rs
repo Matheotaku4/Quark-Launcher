@@ -53,13 +53,30 @@ pub fn cache_path(key: &ProviderGameKey) -> PathBuf {
     ))
 }
 
-/// Couverture déjà téléchargée (fichier non vide), ou rien.
-pub fn cached(key: &ProviderGameKey) -> Option<PathBuf> {
-    let path = cache_path(key);
-    let usable = std::fs::metadata(&path)
+/// Bannière large d'un jeu de boutique, dans le même cache que la jaquette.
+pub fn hero_cache_path(key: &ProviderGameKey) -> PathBuf {
+    cache_dir().join(format!(
+        "hero-{}-{}.png",
+        provider_stem(key.provider),
+        safe_id(&key.product_id)
+    ))
+}
+
+fn cached_file(path: &Path) -> Option<PathBuf> {
+    let usable = std::fs::metadata(path)
         .map(|meta| meta.len() > 512)
         .unwrap_or(false);
-    usable.then_some(path)
+    usable.then(|| path.to_path_buf())
+}
+
+/// Couverture déjà téléchargée (fichier non vide), ou rien.
+pub fn cached(key: &ProviderGameKey) -> Option<PathBuf> {
+    cached_file(&cache_path(key))
+}
+
+/// Bannière déjà téléchargée (fichier non vide), ou rien.
+pub fn cached_hero(key: &ProviderGameKey) -> Option<PathBuf> {
+    cached_file(&hero_cache_path(key))
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -97,38 +114,50 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
 /// (jpeg, webp) n'a plus d'importance, et une image illisible est refusée
 /// plutôt que mise en cache.
 pub fn download(url: &str, key: &ProviderGameKey) -> Result<PathBuf, String> {
+    download_as(url, &cache_path(key), false)
+}
+
+/// Télécharge la bannière large, en refusant une image verticale : sans ce
+/// contrôle, une jaquette se retrouvait étirée derrière la fiche du jeu.
+pub fn download_hero(url: &str, key: &ProviderGameKey) -> Result<PathBuf, String> {
+    download_as(url, &hero_cache_path(key), true)
+}
+
+fn download_as(url: &str, path: &Path, wide: bool) -> Result<PathBuf, String> {
     if !(url.starts_with("https://") || url.starts_with("http://")) {
-        return Err("couverture de boutique sans adresse valide".to_string());
+        return Err("image de boutique sans adresse valide".to_string());
     }
     let response = crate::artwork::http()
         .get(url)
         .timeout(Duration::from_secs(30))
         .send()
-        .map_err(|_| "couverture de boutique injoignable".to_string())?;
+        .map_err(|_| "image de boutique injoignable".to_string())?;
     if !response.status().is_success() {
         return Err(format!(
-            "couverture refusée par la boutique (HTTP {})",
+            "image refusée par la boutique (HTTP {})",
             response.status().as_u16()
         ));
     }
     let bytes = response
         .bytes()
-        .map_err(|_| "couverture de boutique illisible".to_string())?;
+        .map_err(|_| "image de boutique illisible".to_string())?;
     if bytes.len() > 12 * 1024 * 1024 {
-        return Err("couverture de boutique trop volumineuse".to_string());
+        return Err("image de boutique trop volumineuse".to_string());
     }
     let image = image::load_from_memory(&bytes)
-        .map_err(|_| "couverture de boutique illisible".to_string())?;
+        .map_err(|_| "image de boutique illisible".to_string())?;
     if image.width() < 96 || image.height() < 96 {
-        return Err("couverture de boutique trop petite".to_string());
+        return Err("image de boutique trop petite".to_string());
+    }
+    if wide && image.width() <= image.height() {
+        return Err("la boutique n'a pas fourni de bannière large".to_string());
     }
     let mut buffer = Cursor::new(Vec::new());
     image
         .write_to(&mut buffer, image::ImageFormat::Png)
-        .map_err(|_| "couverture de boutique non convertible".to_string())?;
-    let path = cache_path(key);
-    write_atomic(&path, &buffer.into_inner())?;
-    Ok(path)
+        .map_err(|_| "image de boutique non convertible".to_string())?;
+    write_atomic(path, &buffer.into_inner())?;
+    Ok(path.to_path_buf())
 }
 
 /// Couverture d'un jeu : celle du cache, sinon résolue auprès de la boutique
@@ -138,6 +167,21 @@ pub fn download(url: &str, key: &ProviderGameKey) -> Result<PathBuf, String> {
 /// GOG est toujours résolu par son API v2 : les fiches produits ne publient
 /// qu'une image d'arrière-plan, dont l'identifiant ne sert pas la jaquette
 /// verticale — l'ancienne déduction affichait l'image d'un autre jeu.
+/// Toutes les images d'un jeu de boutique : jaquette et bannière. Les deux
+/// téléchargements sont indépendants ; l'un peut réussir sans l'autre.
+#[derive(Debug, Default)]
+pub struct ProviderArt {
+    pub cover: Option<(PathBuf, Option<String>)>,
+    pub hero: Option<(PathBuf, Option<String>)>,
+}
+
+pub fn ensure_all(game: &ProviderGame) -> ProviderArt {
+    ProviderArt {
+        cover: ensure(game).ok(),
+        hero: ensure_hero(game).ok(),
+    }
+}
+
 pub fn ensure(game: &ProviderGame) -> Result<(PathBuf, Option<String>), String> {
     if let Some(path) = cached(&game.key) {
         return Ok((path, None));
@@ -186,6 +230,52 @@ pub fn ensure(game: &ProviderGame) -> Result<(PathBuf, Option<String>), String> 
         .unwrap_or_else(|| "aucune couverture disponible".to_string()))
 }
 
+/// Bannière large d'un jeu : image officielle de la boutique, sinon bannière
+/// Steam du même titre. Une jaquette verticale n'est jamais utilisée ici.
+pub fn ensure_hero(game: &ProviderGame) -> Result<(PathBuf, Option<String>), String> {
+    if let Some(path) = cached_hero(&game.key) {
+        return Ok((path, None));
+    }
+    let mut errors: Vec<String> = Vec::new();
+    let candidate = match game.key.provider {
+        Provider::Steam => steam_hero_url(&game.key.product_id),
+        Provider::Gog => match super::gog_library::hero_url(&game.key.product_id) {
+            Ok(url) => Some(url),
+            Err(error) => {
+                errors.push(error);
+                None
+            }
+        },
+        Provider::Epic => match super::legendary::epic_hero_url(&game.key.product_id) {
+            Ok(url) => Some(url),
+            Err(error) => {
+                errors.push(error);
+                None
+            }
+        },
+    };
+    if let Some(url) = candidate {
+        match download_hero(&url, &game.key) {
+            Ok(path) => return Ok((path, Some(url))),
+            Err(error) => errors.push(error),
+        }
+    }
+    if game.key.provider != Provider::Steam {
+        if let Some((_url, app_id)) = steam_fallback(&game.title) {
+            if let Some(url) = steam_hero_url(&app_id.to_string()) {
+                match download_hero(&url, &game.key) {
+                    Ok(path) => return Ok((path, Some(url))),
+                    Err(error) => errors.push(error),
+                }
+            }
+        }
+    }
+    Err(errors
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| "aucune bannière disponible".to_string()))
+}
+
 /// Jaquette verticale d'un jeu Steam à partir de son AppID.
 pub fn steam_cover_url(app_id: &str) -> Option<String> {
     let app_id = app_id.trim();
@@ -194,6 +284,17 @@ pub fn steam_cover_url(app_id: &str) -> Option<String> {
     }
     Some(format!(
         "https://cdn.cloudflare.steamstatic.com/steam/apps/{app_id}/library_600x900.jpg"
+    ))
+}
+
+/// Bannière large d'un jeu Steam à partir de son AppID.
+pub fn steam_hero_url(app_id: &str) -> Option<String> {
+    let app_id = app_id.trim();
+    if app_id.is_empty() || !app_id.chars().all(|character| character.is_ascii_digit()) {
+        return None;
+    }
+    Some(format!(
+        "https://cdn.cloudflare.steamstatic.com/steam/apps/{app_id}/library_hero.jpg"
     ))
 }
 
@@ -273,6 +374,18 @@ mod tests {
         );
         assert!(steam_cover_url("app_123").is_none());
         assert!(steam_cover_url("").is_none());
+        assert_eq!(
+            steam_hero_url("620").unwrap(),
+            "https://cdn.cloudflare.steamstatic.com/steam/apps/620/library_hero.jpg"
+        );
+        assert!(steam_hero_url("app_123").is_none());
+        assert_ne!(
+            hero_cache_path(&key(Provider::Steam, "620")),
+            cache_path(&key(Provider::Steam, "620"))
+        );
+        assert!(
+            hero_cache_path(&key(Provider::Steam, "620")).ends_with("hero-steam-620.png")
+        );
         assert_eq!(
             normalize("The Witcher 3: Wild Hunt"),
             "the witcher 3 wild hunt"

@@ -45,6 +45,34 @@ pub struct SteamSyncOutcome {
     owned: Option<Result<Vec<crate::providers::ProviderGame>, String>>,
 }
 
+/// État d'une source dans la fenêtre « chercher ce jeu ailleurs ».
+pub enum SiteSearchState {
+    Pending,
+    Ready(Vec<crate::game_search::SiteHit>),
+    Failed(String),
+}
+
+/// Recherche d'un jeu de la boutique sur les cinq sites de téléchargement.
+pub struct SiteSearchJob {
+    pub title: String,
+    pub query: String,
+    pub steam_url: String,
+    pub states: Vec<(crate::game_search::SearchSite, SiteSearchState)>,
+    pub pending: usize,
+    pub rx: Receiver<(
+        crate::game_search::SearchSite,
+        Result<Vec<crate::game_search::SiteHit>, String>,
+    )>,
+}
+
+/// Vrai si la fiche n'a pas encore sa jaquette ou sa bannière. Un chemin
+/// enregistré mais disparu du disque compte comme manquant.
+fn needs_provider_art(artwork: &Artwork) -> bool {
+    [AssetKind::Cover, AssetKind::Hero]
+        .iter()
+        .any(|kind| artwork.get(*kind).is_none_or(|path| !path.exists()))
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ToastKind {
     Info,
@@ -455,6 +483,8 @@ pub struct QuarkApp {
     pub selected: Option<String>,
     pub filter: String,
     pub store_query: String,
+    /// Recherche multi-sites ouverte depuis une carte de la boutique.
+    pub site_search: Option<SiteSearchJob>,
     pub store_snapshot: Option<crate::steam_store::StoreSnapshot>,
     pub store_stale: bool,
     pub store_loading: bool,
@@ -625,15 +655,20 @@ pub struct QuarkApp {
     /// Échecs par jeu : une erreur passagère (réseau, cache en cours d'écriture)
     /// est retentée, mais pas indéfiniment.
     pub provider_cover_failures: HashMap<crate::providers::ProviderGameKey, u8>,
-    /// Couverture demandée après l'ajout d'un jeu installé à la bibliothèque.
+    /// Images demandées après l'ajout d'un jeu installé à la bibliothèque.
     pub adopt_cover_job: Option<(
         String,
         crate::providers::ProviderGameKey,
         Receiver<(
-            Result<(PathBuf, Option<String>), String>,
+            crate::providers::covers::ProviderArt,
             crate::providers::ProviderGameKey,
         )>,
     )>,
+    /// Jeux de boutique dont la bannière a déjà été demandée : un échec réseau
+    /// ne provoque pas une nouvelle requête à chaque image.
+    pub provider_art_tried: std::collections::HashSet<crate::providers::ProviderGameKey>,
+    /// Dernier balayage des jeux liés à une boutique sans bannière.
+    pub provider_art_scan_at: Option<Instant>,
     /// Pont local des succès de session (127.0.0.1, jeton par lancement).
     pub bridge: Option<crate::achievements_bridge::Bridge>,
     pub bridge_rx: Option<Receiver<crate::achievements_bridge::Report>>,
@@ -764,6 +799,7 @@ impl QuarkApp {
             tab: Tab::Library,
             filter: String::new(),
             store_query: String::new(),
+            site_search: None,
             store_snapshot,
             store_stale,
             store_loading: false,
@@ -853,6 +889,8 @@ impl QuarkApp {
             provider_cover_tried: std::collections::HashSet::new(),
             provider_cover_failures: HashMap::new(),
             adopt_cover_job: None,
+            provider_art_tried: std::collections::HashSet::new(),
+            provider_art_scan_at: None,
             bridge: None,
             bridge_rx: None,
             session_unlocks: crate::session_sync::load_session_unlocks(),
@@ -988,6 +1026,7 @@ impl QuarkApp {
         self.poll_save_jobs(ctx);
         self.poll_save_background_jobs(ctx);
         self.poll_store(ctx);
+        self.poll_site_search(ctx);
         if self.tab == Tab::Store && !self.store_offline_mode {
             self.ensure_store(ctx);
         }
@@ -998,6 +1037,10 @@ impl QuarkApp {
             || self.achievements_job.is_some()
             || self.gog_unlock_job.is_some()
             || self.adopt_cover_job.is_some()
+            || self
+                .site_search
+                .as_ref()
+                .is_some_and(|search| search.pending > 0)
             || self.epic_install_progress.is_some()
             || self.install_request.is_some()
             || self.gog_install_progress.is_some()
@@ -3927,12 +3970,78 @@ impl QuarkApp {
         }
     }
 
-    pub fn open_store_item(&mut self, item: &crate::steam_store::StoreItem) {
-        // URL de fiche générée localement à partir de l'AppID; aucun lien reçu
-        // dans la réponse storefront n'est exécuté.
-        let url = format!("https://store.steampowered.com/app/{}", item.app_id);
-        if let Err(error) = crate::news::open_in_browser(&url) {
-            self.toast_error(format!("Ouverture de Steam impossible : {error}"));
+    /// Ouvre la recherche d'un jeu de la boutique sur les cinq sites de
+    /// téléchargement. Les résultats arrivent séparément, source par source.
+    pub fn open_site_search(
+        &mut self,
+        ctx: &egui::Context,
+        item: &crate::steam_store::StoreItem,
+    ) {
+        let query = item.name.trim().to_string();
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        for site in crate::game_search::SearchSite::ALL {
+            let tx = tx.clone();
+            let query = query.clone();
+            let repaint = repaint.clone();
+            std::thread::spawn(move || {
+                let result = crate::game_search::search(site, &query);
+                let _ = tx.send((site, result));
+                repaint.request_repaint();
+            });
+        }
+        drop(tx);
+        self.site_search = Some(SiteSearchJob {
+            title: item.name.clone(),
+            query,
+            steam_url: format!("https://store.steampowered.com/app/{}", item.app_id),
+            states: crate::game_search::SearchSite::ALL
+                .iter()
+                .copied()
+                .map(|site| (site, SiteSearchState::Pending))
+                .collect(),
+            pending: crate::game_search::SearchSite::ALL.len(),
+            rx,
+        });
+        ctx.request_repaint();
+    }
+
+    fn poll_site_search(&mut self, ctx: &egui::Context) {
+        let mut updates = Vec::new();
+        if let Some(job) = self.site_search.as_mut() {
+            loop {
+                match job.rx.try_recv() {
+                    Ok((site, result)) => {
+                        job.pending = job.pending.saturating_sub(1);
+                        updates.push((site, result));
+                    }
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        if job.pending > 0 {
+                            for (_, state) in &mut job.states {
+                                if matches!(state, SiteSearchState::Pending) {
+                                    *state = SiteSearchState::Failed(
+                                        "recherche interrompue".to_string(),
+                                    );
+                                }
+                            }
+                            job.pending = 0;
+                        }
+                        break;
+                    }
+                }
+            }
+            for (site, result) in updates {
+                if let Some((_, state)) = job.states.iter_mut().find(|(known, _)| *known == site) {
+                    *state = match result {
+                        Ok(hits) => SiteSearchState::Ready(hits),
+                        Err(error) => SiteSearchState::Failed(error),
+                    };
+                }
+            }
+            if job.pending > 0 {
+                ctx.request_repaint_after(Duration::from_millis(150));
+            }
         }
     }
 
@@ -4759,6 +4868,15 @@ impl QuarkApp {
             .clone()
             .filter(|id| self.lib.get(id).is_some())
         {
+            // Une fiche liée avant l'arrivée des bannières n'a que sa
+            // jaquette : on complète l'image manquante sans la remplacer.
+            if self
+                .lib
+                .get(&id)
+                .is_some_and(|game| needs_provider_art(&game.artwork))
+            {
+                self.start_provider_art(ctx, &record, &id);
+            }
             self.selected = Some(id);
             self.touch();
             return;
@@ -4789,8 +4907,14 @@ impl QuarkApp {
                         game.exe = exe.display().to_string();
                     }
                 }
-                if let Some(cover) = crate::providers::covers::cached(key) {
-                    game.artwork.set(AssetKind::Cover, cover);
+                if game
+                    .artwork
+                    .get(AssetKind::Cover)
+                    .is_none_or(|path| !path.exists())
+                {
+                    if let Some(cover) = crate::providers::covers::cached(key) {
+                        game.artwork.set(AssetKind::Cover, cover);
+                    }
                 }
             }
             if let Some(provider) = self
@@ -4801,6 +4925,13 @@ impl QuarkApp {
                 .find(|game| &game.key == key)
             {
                 provider.quark_game_id = Some(id.clone());
+            }
+            if self
+                .lib
+                .get(&id)
+                .is_some_and(|game| needs_provider_art(&game.artwork))
+            {
+                self.start_provider_art(ctx, &record, &id);
             }
             self.selected = Some(id);
             self.toast_info(format!(
@@ -4840,21 +4971,7 @@ impl QuarkApp {
             game.artwork.set(AssetKind::Cover, cover);
         }
         let id = game.id.clone();
-        // Sans couverture locale, elle est récupérée en arrière-plan : la
-        // fiche ne s'ouvre pas sur un monogramme alors que la boutique en
-        // publie une.
-        if crate::providers::covers::cached(key).is_none() && self.adopt_cover_job.is_none() {
-            let record = record.clone();
-            let sent_key = key.clone();
-            let (tx, rx) = channel();
-            let repaint = ctx.clone();
-            std::thread::spawn(move || {
-                let result = crate::providers::covers::ensure(&record);
-                let _ = tx.send((result, sent_key));
-                repaint.request_repaint();
-            });
-            self.adopt_cover_job = Some((id.clone(), key.clone(), rx));
-        }
+        let needs_art = needs_provider_art(&game.artwork);
         let title = game.name.clone();
         self.lib.games.push(game);
         if let Some(provider) = self
@@ -4866,6 +4983,9 @@ impl QuarkApp {
         {
             provider.quark_game_id = Some(id.clone());
         }
+        if needs_art {
+            self.start_provider_art(ctx, &record, &id);
+        }
         self.selected = Some(id);
         self.touch();
         if record.install_exe.is_none() {
@@ -4874,6 +4994,72 @@ impl QuarkApp {
             ));
         } else {
             self.toast_info(format!("{title} ajouté à la bibliothèque"));
+        }
+    }
+
+    /// Lance le téléchargement de la jaquette et de la bannière d'un jeu de
+    /// boutique. Un seul job à la fois : les images arrivent dans le cache,
+    /// puis sont posées sur la fiche qui les attend.
+    fn start_provider_art(
+        &mut self,
+        ctx: &egui::Context,
+        record: &crate::providers::ProviderGame,
+        game_id: &str,
+    ) {
+        if self.adopt_cover_job.is_some() {
+            return;
+        }
+        self.provider_art_tried.insert(record.key.clone());
+        let key = record.key.clone();
+        let record = record.clone();
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        let sent_key = key.clone();
+        std::thread::spawn(move || {
+            let art = crate::providers::covers::ensure_all(&record);
+            let _ = tx.send((art, sent_key));
+            repaint.request_repaint();
+        });
+        self.adopt_cover_job = Some((game_id.to_string(), key, rx));
+    }
+
+    /// Complète en arrière-plan les fiches déjà liées à une boutique mais
+    /// dépourvues de bannière. Un jeu à la fois, sans requête en boucle.
+    pub(crate) fn ensure_provider_artwork(&mut self, ctx: &egui::Context) {
+        if self.adopt_cover_job.is_some()
+            || self
+                .provider_art_scan_at
+                .is_some_and(|scan| scan.elapsed() < Duration::from_secs(20))
+        {
+            return;
+        }
+        self.provider_art_scan_at = Some(Instant::now());
+        let mut candidate = None;
+        for record in &self.lib.provider_library.games {
+            // Les imports Steam ont déjà leurs images ; ce rattrapage vise les
+            // fiches Epic/GOG liées avant l'import de la bannière.
+            if !matches!(
+                record.key.provider,
+                crate::providers::Provider::Epic | crate::providers::Provider::Gog
+            ) || record.install_state != crate::providers::InstallState::Installed
+                || self.provider_art_tried.contains(&record.key)
+            {
+                continue;
+            }
+            let needs = record
+                .quark_game_id
+                .as_ref()
+                .and_then(|id| self.lib.get(id))
+                .is_some_and(|game| needs_provider_art(&game.artwork));
+            if needs {
+                candidate = Some(record.clone());
+                break;
+            }
+        }
+        if let Some(record) = candidate {
+            if let Some(id) = record.quark_game_id.clone() {
+                self.start_provider_art(ctx, &record, &id);
+            }
         }
     }
 

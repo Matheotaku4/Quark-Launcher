@@ -40,9 +40,11 @@ with save snapshots through Ludusavi, an in-game overlay and F12 screenshots.
 - **Missing executable**: launching a game whose `.exe` no longer exists is refused with a
   clear message, and the game stays **highlighted in red** in the list, the grid and its page
   until the path is fixed.
-- **Memory that stays flat**: artwork textures are decoded once and cached, but the cache is
-  capped at 96 entries — the least recently used are freed first — so browsing a large
-  library no longer makes memory climb indefinitely. Settings → About shows the resident
+- **Memory that stays flat, even with 660 games**: the library grid builds and decodes only
+  the rows on screen instead of preparing every cover up front; artwork textures are decoded
+  once and cached, but the cache is capped at 96 entries — the least recently used are freed
+  first. A large library therefore no longer piles up hundreds of textures, and the cards keep
+  their regular spacing from the first row to the last. Settings → About shows the resident
   memory and the number of textures currently held.
 - **Adding a game in two steps**:
   1. type the game name — Quark searches **Steam** (public `storesearch` API) then
@@ -195,6 +197,14 @@ with save snapshots through Ludusavi, an in-game overlay and F12 screenshots.
   Steam Web API key and SteamID64 are configured — the section says which source was used,
   and your profile is never sent to Steam. These Steam endpoints are undocumented and
   handled as best-effort: a malformed response is reported, never cached as an empty store.
+- **Search a store game on five download sites**: clicking a card, a deal or the featured
+  game opens an in-app search for its title on **AnkerGames**, **AstralGames**,
+  **GameBounty**, **Kryoto** and **scene.cat**. Each source is queried in its own thread and
+  fills its section as soon as it answers, with title, size/version or release category, and
+  a link that opens the page in your browser. AnkerGames, GameBounty and Kryoto expose JSON
+  search endpoints, scene.cat returns its results in HTML, and AstralGames' JavaScript-only
+  search page is read through a text reader. Quark never downloads a file from those sites;
+  if a source fails or returns nothing, a button opens its own search page.
 - **Mes jeux**: Steam (read from local `appmanifest_*.acf`), Epic (through Legendary) and
   GOG (through the GOG API) games in one grid — owned, installed, or both — with one tab per
   store and a counter, the detected install path, and what the store can actually do. The
@@ -228,8 +238,9 @@ with save snapshots through Ludusavi, an in-game overlay and F12 screenshots.
   taken as proof. Legendary runs non-interactively (`-y --skip-sdl --skip-dlcs`, Windows
   platform): without a terminal its prompts made every install fail. A **double-click** on a
   card opens an installed game or prepares the install sheet, and a successful install creates
-  the matching Quark entry (default settings, cover, store link) so the game lands in the
-  library ready to play. While an install runs, **Mes jeux** shows its own progress bar —
+  the matching Quark entry (default settings, **cover and wide banner**, store link) so the
+  game lands in the library ready to play. A linked game that only had its poster is completed
+  in the background, without replacing images you chose yourself. While an install runs, **Mes jeux** shows its own progress bar —
   percentage, step, size, speed, ETA in **MB/s** parsed from Legendary/gogdl output — with a
   **Cancel** button. Covers are imported as soon as the game is adopted, in the background,
   without blocking the page.
@@ -538,6 +549,7 @@ checked after every change, including on a machine without a display server.
 ```bash
 target/release/quark --ui preview.png                        # 1360x860, current config
 target/release/quark --ui grid.png --view grid --demo        # built-in demo library
+target/release/quark --ui grid660.png --demo --demo-count 660 --view grid  # large library
 target/release/quark --ui hover.png --demo --hover 160,340   # pointer over a row
 target/release/quark --ui anim.png --demo --frames 3         # mid-transition frame
 target/release/quark --ui home.png --demo --home             # home page and carousel
@@ -547,9 +559,9 @@ target/release/quark --ui logs.png --demo --dialog logs
 
 Options: `--size WxH`, `--scale N`, `--frames N`, `--view list|grid`, `--tab library|store|my-games`,
 `--theme amoled|graphite`, `--select <game>`, `--info`, `--running`,
-`--dialog none|add|artwork|exe|scan|settings|settings-defaults|settings-env|settings-proton|settings-providers|settings-artworks|settings-stats|settings-disk|settings-about|game|logs|customize|remove|updates|steam|overlay`, `--hover X,Y`,
+`--dialog none|add|artwork|exe|scan|settings|settings-defaults|settings-env|settings-proton|settings-providers|settings-artworks|settings-stats|settings-disk|settings-about|game|logs|customize|remove|updates|steam|overlay|install|site-search`, `--hover X,Y`,
 `--click X,Y`, `--button left|right`, `--key up|down|left|right|enter|escape`, `--marked`,
-`--home`, `--demo`.
+`--home`, `--demo`, `--demo-count N`.
 
 `--click` and `--key` send real input events, so a render also checks the interactions:
 `--key down` really moves the selection, `--click X,Y` really presses a button.
@@ -583,7 +595,8 @@ src/ui_home.rs      Home page: recent-games carousel, Continue, sorted library g
 src/ui_library.rs   Library tab: list/grid column + game pane (banner, Play, news, ProtonDB)
 src/ui_my_games.rs  Mes jeux: per-store tabs and grid, downloads panel, uninstall, duplicate merge, save folders
 src/overlay.rs      in-game HUD, X11 F12 shortcut, screenshots, chime and desktop notifications
-src/ui_store.rs     Store tab: specials, search, local recommendations, price display
+src/ui_store.rs     Store tab: specials, search, local recommendations, price display, multi-site results
+src/game_search.rs  five download-site adapters and their JSON/HTML parsers
 src/steam_store.rs  Steam Store catalogue, regional prices, local cache, recommendation ranking
 src/providers/      provider model, Steam/Epic/GOG adapters, playtime, achievements, managed tools, installs
 src/saves/          Ludusavi: isolated config merge, preview, backup, inventory, restore

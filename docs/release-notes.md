@@ -1,3 +1,36 @@
+## Quark 1.0.7 — 660 jeux espacés, recherche multi-sites et bannières importées
+
+- **Grille virtualisée** : la vue grille ne construit et ne décode plus que les lignes
+  visibles. Avec 660 jeux, les 660 jaquettes n'étaient téléchargées qu'une fois, mais elles
+  restaient toutes retenues dans un `Vec` de textures : la mémoire montait de plusieurs
+  centaines de mégaoctets et les cartes finissaient par se chevaucher. Les lignes ont aussi
+  une hauteur fixe de 44 px sous la jaquette, ce qui garde un espace régulier entre les jeux
+  et empêche le titre de déborder sur la rangée suivante. `--demo-count 660` permet de
+  reproduire cette bibliothèque au rendu hors écran.
+- **Recherche multi-sites depuis la boutique** : un clic sur un jeu de la boutique ouvre une
+  fenêtre qui cherche son titre sur **ankergames.net**, **astralgames.net**,
+  **gamebounty.world**, **kryo.to** et **scene.cat**. Chaque source répond séparément :
+  AnkerGames, GameBounty et Kryoto par leur API JSON, scene.cat par son HTML, AstralGames via
+  son lecteur de page. Les résultats affichent le titre, la taille, la version ou la catégorie,
+  et s'ouvrent dans le navigateur. **Voir sur Steam** reste disponible, et un bouton de repli
+  ouvre la recherche du site quand l'adaptateur échoue ou ne trouve rien. Quark ne télécharge
+  aucun fichier depuis ces sites.
+- **Bannière importée avec la jaquette** : l'adoption d'un jeu Epic/GOG récupère désormais
+  **deux** images — la jaquette verticale et l'illustration large (`backgroundImage` GOG,
+  `DieselStoreFrontWide`/`OfferImageWide` Epic, `library_hero` Steam). Les jeux déjà liés qui
+  n'avaient que leur poster sont complétés en arrière-plan, une fiche à la fois, sans jamais
+  écraser une image personnalisée. Une image verticale est refusée comme bannière.
+- **Vérifications** : `cargo test --offline` (218 tests) et
+  `cargo build --release --locked --offline` passent. Les cinq adaptateurs ont reçu de vraies
+  réponses réseau pour « Cyberpunk 2077 », et le parcours complet « Portal 2 » depuis une carte
+  de la boutique a été rendu avec les résultats filtrés des cinq sources. Le rendu de 660 jeux
+  a été contrôlé en 1360×860 et 1024×640.
+
+Limites : les résultats réels des cinq sites dépendent de leur disponibilité et de leur mise
+en page ; AstralGames passe par un lecteur tiers puisque sa recherche est rendue en
+JavaScript. Les bannières Epic/GOG n'ont pas pu être vérifiées avec un vrai compte dans cet
+environnement ; les parseurs et le cache sont testés, et le repli Steam reste disponible.
+
 ## Quark 1.0.6 — installations confirmées, grilles légères et images des succès
 
 - **Confirmer avant d'installer** : un clic gauche ou droit sur une carte Epic/GOG non

@@ -5,9 +5,10 @@
 //! soulèvent au survol et portent leur remise sur l'image : la page se parcourt
 //! comme une devanture, pas comme un tableau.
 
-use crate::app::QuarkApp;
+use crate::app::{QuarkApp, SiteSearchState};
 use crate::steam_store::{StoreItem, StoreSection};
 use crate::theme::Palette;
+use crate::widgets::{self, Icon};
 use eframe::egui::{
     self, Align, Align2, Color32, FontId, Layout, Pos2, Rect, RichText, Sense, Vec2,
 };
@@ -273,9 +274,295 @@ impl QuarkApp {
             self.refresh_store(ctx);
         }
         if let Some(item) = open_item {
-            self.open_store_item(&item);
+            self.open_site_search(ctx, &item);
+        }
+        self.site_search_modal(ctx);
+    }
+}
+
+impl QuarkApp {
+    /// Fenêtre de recherche multi-sites ouverte au clic sur un jeu de la
+    /// boutique. Chaque source remplit sa section dès que sa réponse arrive.
+    pub(crate) fn site_search_modal(&mut self, ctx: &egui::Context) {
+        let (close, open_url) = {
+            let Some(job) = self.site_search.as_ref() else {
+                return;
+            };
+            let pal = self.pal;
+            let mut close = false;
+            let mut open_url: Option<String> = None;
+            let screen = ctx.screen_rect();
+            let width = (screen.width() * 0.82).clamp(640.0, 920.0);
+            let height = (screen.height() * 0.80).clamp(440.0, 760.0);
+            let modal = egui::Modal::new(egui::Id::new("quark_site_search"))
+                .backdrop_color(Color32::from_black_alpha(190))
+                .frame(
+                    egui::Frame::new()
+                        .fill(pal.bg)
+                        .stroke(egui::Stroke::new(1.0_f32, pal.border))
+                        .corner_radius(14.0)
+                        .inner_margin(egui::Margin::same(18)),
+                )
+                .show(ctx, |ui| {
+                    ui.set_min_size(Vec2::new(width, height));
+                    ui.set_max_size(Vec2::new(width, height));
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            ui.label(
+                                RichText::new("RECHERCHE MULTI-SITES")
+                                    .size(10.5)
+                                    .strong()
+                                    .color(pal.accent),
+                            );
+                            ui.label(
+                                RichText::new(&job.title)
+                                    .size(21.0)
+                                    .strong()
+                                    .color(pal.text),
+                            );
+                            ui.label(
+                                RichText::new(
+                                    "5 sites · chaque résultat s'ouvre dans le navigateur",
+                                )
+                                .size(11.0)
+                                .color(pal.text_dim),
+                            );
+                        });
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if widgets::icon_button(
+                                ui,
+                                30.0,
+                                Icon::Close,
+                                &pal,
+                                "Fermer (Échap)",
+                            )
+                            .clicked()
+                            {
+                                close = true;
+                            }
+                        });
+                    });
+                    ui.add_space(10.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Voir sur Steam").clicked() {
+                            open_url = Some(job.steam_url.clone());
+                        }
+                        if job.pending > 0 {
+                            ui.add(egui::Spinner::new().size(12.0));
+                            ui.label(
+                                RichText::new(format!(
+                                    "{} source(s) en cours…",
+                                    job.pending
+                                ))
+                                .size(10.5)
+                                .color(pal.text_faint),
+                            );
+                            ui.ctx()
+                                .request_repaint_after(std::time::Duration::from_millis(140));
+                        } else {
+                            ui.label(
+                                RichText::new("Recherche terminée")
+                                    .size(10.5)
+                                    .color(pal.text_faint),
+                            );
+                        }
+                    });
+                    ui.add_space(8.0);
+                    ui.separator();
+                    egui::ScrollArea::vertical()
+                        .id_salt("quark_site_search_scroll")
+                        .auto_shrink([false, false])
+                        .max_height((height - 92.0).max(160.0))
+                        .show(ui, |ui| {
+                            for (site, state) in &job.states {
+                                ui.add_space(12.0);
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(site.label())
+                                            .size(13.5)
+                                            .strong()
+                                            .color(site_color(*site)),
+                                    );
+                                    ui.label(
+                                        RichText::new(site.host())
+                                            .size(10.0)
+                                            .color(pal.text_faint),
+                                    );
+                                    let status = match state {
+                                        SiteSearchState::Pending => {
+                                            "recherche…".to_string()
+                                        }
+                                        SiteSearchState::Ready(hits) => {
+                                            format!("{} résultat(s)", hits.len())
+                                        }
+                                        SiteSearchState::Failed(_) => {
+                                            "indisponible".to_string()
+                                        }
+                                    };
+                                    ui.with_layout(
+                                        Layout::right_to_left(Align::Center),
+                                        |ui| {
+                                            ui.label(
+                                                RichText::new(status)
+                                                    .size(10.0)
+                                                    .color(pal.text_faint),
+                                            );
+                                        },
+                                    );
+                                });
+                                ui.add_space(3.0);
+                                match state {
+                                    SiteSearchState::Pending => {
+                                        ui.horizontal(|ui| {
+                                            ui.add(egui::Spinner::new().size(11.0));
+                                            ui.label(
+                                                RichText::new("Interrogation du site…")
+                                                    .size(11.5)
+                                                    .color(pal.text_dim),
+                                            );
+                                        });
+                                    }
+                                    SiteSearchState::Ready(hits) if hits.is_empty() => {
+                                        ui.horizontal(|ui| {
+                                            ui.label(
+                                                RichText::new(
+                                                    "Aucun résultat pour ce titre.",
+                                                )
+                                                .size(11.5)
+                                                .color(pal.text_faint),
+                                            );
+                                            if ui
+                                                .small_button(format!(
+                                                    "Chercher sur {}",
+                                                    site.host()
+                                                ))
+                                                .clicked()
+                                            {
+                                                open_url =
+                                                    Some(site.search_url(&job.query));
+                                            }
+                                        });
+                                    }
+                                    SiteSearchState::Ready(hits) => {
+                                        for hit in hits {
+                                            if search_hit_row(ui, &pal, hit) {
+                                                open_url = Some(hit.url.clone());
+                                            }
+                                            ui.add_space(3.0);
+                                        }
+                                    }
+                                    SiteSearchState::Failed(error) => {
+                                        ui.label(
+                                            RichText::new(error)
+                                                .size(11.0)
+                                                .color(pal.danger),
+                                        );
+                                        if ui
+                                            .small_button(format!(
+                                                "Ouvrir la recherche sur {}",
+                                                site.host()
+                                            ))
+                                            .clicked()
+                                        {
+                                            open_url =
+                                                Some(site.search_url(&job.query));
+                                        }
+                                    }
+                                }
+                            }
+                            ui.add_space(14.0);
+                            ui.label(
+                                RichText::new(
+                                    "Quark ne télécharge aucun fichier depuis ces sites : les liens sont ouverts dans ton navigateur.",
+                                )
+                                .size(10.0)
+                                .color(pal.text_faint),
+                            );
+                        });
+                });
+            (modal.should_close() || close, open_url)
+        };
+        if let Some(url) = open_url {
+            if let Err(error) = crate::news::open_in_browser(&url) {
+                self.toast_error(format!("Ouverture du lien impossible : {error}"));
+            }
+        }
+        if close {
+            self.site_search = None;
         }
     }
+}
+
+fn site_color(site: crate::game_search::SearchSite) -> Color32 {
+    match site {
+        crate::game_search::SearchSite::AnkerGames => Color32::from_rgb(0xFF, 0x8A, 0x4C),
+        crate::game_search::SearchSite::AstralGames => Color32::from_rgb(0xC6, 0x8C, 0xFF),
+        crate::game_search::SearchSite::GameBounty => Color32::from_rgb(0xF5, 0xC2, 0x4B),
+        crate::game_search::SearchSite::Kryoto => Color32::from_rgb(0x5D, 0xD4, 0xE8),
+        crate::game_search::SearchSite::SceneCat => Color32::from_rgb(0x7C, 0xD9, 0x92),
+    }
+}
+
+fn search_hit_row(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    hit: &crate::game_search::SiteHit,
+) -> bool {
+    let width = ui.available_width();
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 46.0), Sense::click());
+    let hover = ui.ctx().animate_bool_with_time(
+        egui::Id::new(("quark-site-hit", hit.url.as_str())),
+        response.hovered(),
+        0.12,
+    );
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(
+        rect,
+        7.0,
+        crate::theme::lerp_color(pal.surface, pal.surface_hover, hover),
+    );
+    painter.rect_stroke(
+        rect,
+        7.0,
+        egui::Stroke::new(1.0_f32, pal.border.gamma_multiply(0.9 + 0.1 * hover)),
+        egui::StrokeKind::Inside,
+    );
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(rect.shrink2(Vec2::new(11.0, 0.0)))
+            .layout(Layout::top_down(Align::Min)),
+        |ui| {
+            ui.add_space(6.0);
+            ui.add(
+                egui::Label::new(
+                    RichText::new(&hit.title)
+                        .size(12.5)
+                        .strong()
+                        .color(pal.text),
+                )
+                .truncate(),
+            );
+            ui.label(
+                RichText::new(if hit.detail.is_empty() {
+                    "Voir la fiche du site"
+                } else {
+                    &hit.detail
+                })
+                .size(10.0)
+                .color(pal.text_dim),
+            );
+        },
+    );
+    painter.text(
+        Pos2::new(rect.right() - 16.0, rect.center().y),
+        Align2::RIGHT_CENTER,
+        "↗",
+        FontId::proportional(13.0),
+        pal.text_faint,
+    );
+    let clicked = response.clicked();
+    let _ = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    clicked
 }
 
 /// Titre de page avec filet d'accent et une ligne d'explication.
@@ -545,7 +832,7 @@ fn hero_card(
     if response.clicked() {
         *open_item = Some(item.clone());
     }
-    response.on_hover_text("Ouvrir la page Steam du jeu");
+    response.on_hover_text("Chercher ce jeu sur les sites de téléchargement");
 }
 
 /// Rangée de cartes compactes, une par remise.
@@ -780,7 +1067,7 @@ fn card(ui: &mut egui::Ui, pal: &Palette, item: &StoreItem, open_item: &mut Opti
     if response.clicked() {
         *open_item = Some(item.clone());
     }
-    response.on_hover_text("Ouvrir la page Steam du jeu");
+    response.on_hover_text("Chercher ce jeu sur les sites de téléchargement");
 }
 
 fn price_widgets(ui: &mut egui::Ui, pal: &Palette, item: &StoreItem, large: bool) {

@@ -521,22 +521,78 @@ pub fn cover_from_metadata(text: &str) -> Result<String, String> {
         .ok_or_else(|| "métadonnées Epic sans couverture".to_string())
 }
 
+/// Illustration large publiée par Epic : elle sert de bannière dans la fiche.
+pub fn hero_from_key_images(images: &[serde_json::Value]) -> Option<String> {
+    const PREFERENCE: [&str; 4] = [
+        "DieselStoreFrontWide",
+        "OfferImageWide",
+        "DieselGameBox",
+        "Thumbnail",
+    ];
+    for wanted in PREFERENCE {
+        let found = images
+            .iter()
+            .find(|image| image.get("type").and_then(serde_json::Value::as_str) == Some(wanted))
+            .and_then(|image| image.get("url"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|url| url.starts_with("https://") || url.starts_with("http://"));
+        if let Some(url) = found {
+            return Some(url.to_string());
+        }
+    }
+    None
+}
+
+fn hero_root(root: &serde_json::Value) -> Option<String> {
+    key_images(root).and_then(|images| hero_from_key_images(images))
+}
+
+pub fn hero_from_info(text: &str) -> Result<String, String> {
+    let start = text
+        .find('{')
+        .ok_or_else(|| "fiche Epic illisible".to_string())?;
+    let root: serde_json::Value =
+        serde_json::from_str(&text[start..]).map_err(|_| "fiche Epic illisible".to_string())?;
+    hero_root(&root).ok_or_else(|| "fiche Epic sans illustration large".to_string())
+}
+
+pub fn hero_from_metadata(text: &str) -> Result<String, String> {
+    let root: serde_json::Value =
+        serde_json::from_str(text).map_err(|_| "métadonnées Epic illisibles".to_string())?;
+    hero_root(&root).ok_or_else(|| "métadonnées Epic sans illustration large".to_string())
+}
+
 /// Couverture Epic. `legendary info --json` ne publie **pas** `keyImages` —
 /// seulement quelques champs choisis : la sortie ne suffisait donc jamais.
 /// En revanche, il rafraîchit le cache de métadonnées du jeu, qui contient la
 /// fiche catalogue complète. On lit ce cache d'abord, puis on le provoque.
 pub fn epic_cover_url(app_name: &str) -> Result<String, String> {
+    epic_asset_url(app_name, cover_from_metadata, cover_from_info, "couverture")
+}
+
+/// Bannière large Epic, avec le même cache de métadonnées que la couverture.
+pub fn epic_hero_url(app_name: &str) -> Result<String, String> {
+    epic_asset_url(app_name, hero_from_metadata, hero_from_info, "bannière")
+}
+
+fn epic_asset_url(
+    app_name: &str,
+    from_metadata: fn(&str) -> Result<String, String>,
+    from_info: fn(&str) -> Result<String, String>,
+    label: &str,
+) -> Result<String, String> {
     let cache = metadata_path(app_name);
     if let Ok(text) = std::fs::read_to_string(&cache) {
-        if let Ok(url) = cover_from_metadata(&text) {
+        if let Ok(url) = from_metadata(&text) {
             return Ok(url);
         }
     }
     let adapter = LegendaryAdapter::new();
     if !adapter.executable.is_file() {
-        return Err(
-            "Legendary n'est pas installé : la couverture Epic est indisponible".to_string(),
-        );
+        return Err(format!(
+            "Legendary n'est pas installé : la {label} Epic est indisponible"
+        ));
     }
     let output = super::runner::run(
         adapter.command(LegendaryAdapter::info_args(app_name)),
@@ -545,12 +601,12 @@ pub fn epic_cover_url(app_name: &str) -> Result<String, String> {
     )?;
     ensure_success(&output)?;
     if let Ok(text) = std::fs::read_to_string(&cache) {
-        if let Ok(url) = cover_from_metadata(&text) {
+        if let Ok(url) = from_metadata(&text) {
             return Ok(url);
         }
     }
     // Anciennes versions de Legendary : la fiche peut arriver sur stdout.
-    cover_from_info(&output.stdout)
+    from_info(&output.stdout)
 }
 
 pub use super::achievements::{AchievementInfo, AchievementRow};
@@ -946,6 +1002,13 @@ mod tests {
         assert!(cover_from_metadata("pas du json").is_err());
         // La sortie de `legendary info` sans keyImages ne suffit pas.
         assert!(cover_from_info(r#"{"game":{"app_name":"x"}}"#).is_err());
+        // La bannière prend l'image large, pas la boîte verticale.
+        assert_eq!(
+            hero_from_metadata(cached).unwrap(),
+            "https://cdn1.epicgames.com/wide.jpg"
+        );
+        assert!(hero_from_metadata(r#"{"metadata":{}}"#).is_err());
+        assert!(hero_from_info(r#"{"game":{"app_name":"x"}}"#).is_err());
     }
 
     #[test]

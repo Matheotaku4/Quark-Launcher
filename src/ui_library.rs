@@ -13,7 +13,6 @@ use crate::widgets::{self, Icon};
 use eframe::egui::{
     self, Align, Align2, Color32, FontId, Layout, Pos2, Rect, RichText, Sense, Vec2,
 };
-use std::path::PathBuf;
 use std::time::Instant;
 
 impl QuarkApp {
@@ -60,16 +59,17 @@ impl QuarkApp {
     }
 
     /// Grille pleine largeur (vue grille) : toutes les couvertures, sans fiche.
+    ///
+    /// Seules les lignes visibles sont construites et décodées. Avec 660 jeux,
+    /// précharger toutes les jaquettes puis les garder dans un `Vec` empêchait
+    /// le cache de libérer les textures : la mémoire montait de plusieurs
+    /// centaines de mégaoctets et la grille finissait par se chevaucher.
     fn grid_page(&mut self, ui: &mut egui::Ui) {
         let pal = self.pal;
         let ids = self.display_ids();
-        // Entrée de page : le contenu se fond et les tuiles montent l'une après
-        // l'autre. L'âge est remis à zéro à chaque changement d'onglet ou de vue.
         let age = self.page_at.elapsed().as_secs_f32();
         let total = self.lib.games.len();
         ui.add_space(14.0);
-        // Les commandes (ajout, vues) vivent dans la barre du haut, pas ici :
-        // la grille ne garde que son compteur.
         ui.horizontal(|ui| {
             ui.add_space(24.0);
             ui.label(
@@ -99,55 +99,39 @@ impl QuarkApp {
             return;
         }
 
-        // Même rendu que l'accueil : couvertures arrondies, titre, temps de jeu.
-        let mut paths: Vec<Option<PathBuf>> = Vec::with_capacity(ids.len());
-        for id in &ids {
-            paths.push(
-                self.lib
-                    .get(id)
-                    .and_then(|game| game.artwork.get(AssetKind::Cover))
-                    .filter(|path| path.exists())
-                    .cloned(),
-            );
-        }
-        let covers: Vec<Option<egui::TextureHandle>> = paths
-            .iter()
-            .map(|path| {
-                path.as_ref()
-                    .and_then(|path| self.texture_thumb(ui.ctx(), path))
-            })
-            .collect();
+        let padding = 24.0;
+        let gap = 16.0;
+        let available = (ui.available_width() - padding * 2.0).max(240.0);
+        let columns = ((available + gap) / 172.0).floor().clamp(2.0, 8.0) as usize;
+        let tile_w = ((available - gap * (columns as f32 - 1.0)) / columns as f32)
+            .floor()
+            .max(110.0);
+        let cover_h = tile_w * theme::COVER_RATIO;
+        // 44 px sous la jaquette : le titre et l'éventuel avertissement
+        // « exécutable introuvable » gardent leur propre ligne.
+        let row_h = cover_h + 44.0;
+        let step = row_h + gap;
+        let rows = ids.len().div_ceil(columns);
 
         let mut opened: Option<String> = None;
         egui::ScrollArea::vertical()
             .id_salt("quark_grid_page")
             .auto_shrink([false, false])
-            .show(ui, |ui| {
+            .show_rows(ui, step, rows, |ui, row_range| {
                 let fade = (age / 0.16).clamp(0.0, 1.0);
                 if fade < 1.0 {
                     ui.ctx().request_repaint();
                 }
                 ui.set_opacity(fade);
-                let padding = 24.0;
-                let gap = 16.0;
-                let available = (ui.available_width() - padding * 2.0).max(240.0);
-                let columns = ((available + gap) / 172.0).floor().clamp(2.0, 8.0) as usize;
-                // Arrondi vers le bas : les fractions de pixel s'accumulaient
-                // de colonne en colonne et poussaient la dernière hors écran.
-                let tile_w = ((available - gap * (columns as f32 - 1.0)) / columns as f32)
-                    .floor()
-                    .max(110.0);
-                let cover_h = tile_w * theme::COVER_RATIO;
-                let row_h = cover_h + 36.0;
-                let mut index = 0usize;
-                while index < ids.len() {
+                for row in row_range {
                     ui.horizontal(|ui| {
                         // L'espacement par défaut d'egui s'ajoutait à la marge
                         // et aux gouttières : la dernière colonne dépassait.
                         ui.spacing_mut().item_spacing.x = 0.0;
                         ui.add_space(padding);
                         for slot in 0..columns {
-                            let Some(id) = ids.get(index + slot) else {
+                            let index = row * columns + slot;
+                            let Some(id) = ids.get(index) else {
                                 break;
                             };
                             let Some(game) = self.lib.get(id).cloned() else {
@@ -158,7 +142,7 @@ impl QuarkApp {
                             }
                             let (tile, response) =
                                 ui.allocate_exact_size(Vec2::new(tile_w, row_h), Sense::click());
-                            let order = (index + slot) as f32;
+                            let order = index as f32;
                             let appear = ((age - order * 0.02) / 0.3).clamp(0.0, 1.0);
                             if appear < 1.0 {
                                 ui.ctx().request_repaint();
@@ -183,20 +167,26 @@ impl QuarkApp {
                                     pal.surface
                                 },
                             );
-                            match covers.get(index + slot).and_then(|cover| cover.as_ref()) {
+                            // La texture n'est demandée que pour cette tuile
+                            // visible : les lignes hors écran ne coûtent rien.
+                            let texture = game
+                                .artwork
+                                .get(AssetKind::Cover)
+                                .filter(|path| path.exists())
+                                .and_then(|path| self.texture_thumb(ui.ctx(), path));
+                            match texture.as_ref() {
                                 Some(texture) => {
                                     rounded_cover_tinted(
                                         ui,
                                         cover,
                                         texture,
                                         10.0,
-                                        Color32::from_white_alpha((appear * 255.0).round() as u8),
+                                        Color32::from_white_alpha(
+                                            (appear * 255.0).round() as u8
+                                        ),
                                     );
                                 }
                                 None => {
-                                    // Monogramme plein cadre, comme une
-                                    // couverture : toutes les affiches occupent
-                                    // exactement la même surface.
                                     widgets::monogram(
                                         &painter,
                                         cover,
@@ -233,7 +223,7 @@ impl QuarkApp {
                             painter.galley(
                                 Pos2::new(
                                     tile.left(),
-                                    cover.bottom() + if missing { 21.0 } else { 7.0 },
+                                    cover.bottom() + if missing { 23.0 } else { 8.0 },
                                 ),
                                 galley,
                                 title_color,
@@ -252,9 +242,7 @@ impl QuarkApp {
                         }
                     });
                     ui.add_space(gap);
-                    index += columns;
                 }
-                ui.add_space(20.0);
             });
         if let Some(id) = opened {
             self.overlay = Some(id.clone());

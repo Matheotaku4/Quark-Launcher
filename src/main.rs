@@ -8,6 +8,7 @@ mod app;
 mod artwork;
 mod config;
 mod disk;
+mod game_search;
 mod icon;
 mod images;
 mod news;
@@ -209,6 +210,13 @@ fn cli(args: &[String]) -> Option<i32> {
                         Some(frames) => opts.frames = frames,
                         None => {
                             eprintln!("--frames attend un entier (ex. 20)");
+                            return Some(2);
+                        }
+                    },
+                    "--demo-count" => match value.as_deref().and_then(|v| v.parse::<usize>().ok()) {
+                        Some(count) => opts.demo_count = Some(count.clamp(1, 2_000)),
+                        None => {
+                            eprintln!("--demo-count attend un entier (ex. 660)");
                             return Some(2);
                         }
                     },

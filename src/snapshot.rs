@@ -52,6 +52,9 @@ pub struct SnapshotOptions {
     pub right_click: bool,
     pub providers_demo: bool,
     pub providers_error: bool,
+    /// Bibliothèque de démonstration agrandie : sert à vérifier les grilles
+    /// avec plusieurs centaines de jeux (le rendu réel en compte 660).
+    pub demo_count: Option<usize>,
 }
 
 impl Default for SnapshotOptions {
@@ -77,6 +80,7 @@ impl Default for SnapshotOptions {
             right_click: false,
             providers_demo: false,
             providers_error: false,
+            demo_count: None,
         }
     }
 }
@@ -88,9 +92,10 @@ pub const HELP: &str = "\
       [--select <jeu>] [--info] [--running] [--marked] [--home]\n\
       [--dialog none|add|artwork|exe|scan|settings|settings-defaults|\n\
       settings-env|settings-artworks|settings-stats|settings-disk|\n\
-      settings-about|game|logs|updates|customize|remove|steam|overlay|install]\n\
+      settings-about|game|logs|updates|customize|remove|steam|overlay|install|\n\
+      site-search]\n\
       [--hover X,Y] [--click X,Y] [--button left|right]\n\
-      [--key up|down|left|right|enter|escape] [--demo]\n\
+      [--key up|down|left|right|enter|escape] [--demo] [--demo-count N]\n\
       --demo : bibliothèque de démonstration avec artworks factices (la\n\
       configuration réelle n'est ni lue ni écrite)\n";
 
@@ -107,6 +112,14 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
     let mut app = QuarkApp::new(&ctx);
     if opts.demo {
         app.lib = demo_library()?;
+        if let Some(count) = opts.demo_count {
+            let source = app
+                .lib
+                .games
+                .iter()
+                .find_map(|game| game.artwork.get(AssetKind::Cover).cloned());
+            app.lib.games = demo_large_library(count, source.as_deref())?;
+        }
         app.selected = app.lib.games.first().map(|g| g.id.clone());
         app.filter.clear();
         // Runtimes factices : la VM n'a ni Steam ni Proton.
@@ -526,6 +539,77 @@ fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
                 .ok_or_else(|| "aucun jeu sélectionné".to_string())?;
             app.lib.settings.view = ViewMode::Grid;
             app.overlay = Some(id);
+        }
+        "site-search" => {
+            use crate::game_search::{SearchSite, SiteHit};
+            let hit = |title: &str, url: &str, detail: &str| SiteHit {
+                title: title.to_string(),
+                url: url.to_string(),
+                detail: detail.to_string(),
+                cover: None,
+            };
+            let states = vec![
+                (
+                    SearchSite::AnkerGames,
+                    vec![
+                        hit(
+                            "Cyberpunk 2077",
+                            "https://ankergames.net/game/cyberpunk-2077",
+                            "72,5 Go · v2.5 Hotfix",
+                        ),
+                        hit(
+                            "Cyberpunk 2077: Ultimate Edition",
+                            "https://ankergames.net/game/cyberpunk-2077-ultimate",
+                            "116,1 Go · v2.5",
+                        ),
+                    ],
+                ),
+                (
+                    SearchSite::AstralGames,
+                    vec![hit(
+                        "Cyberpunk 2077",
+                        "https://astralgames.net/game/cyberpunk-2077",
+                        "",
+                    )],
+                ),
+                (
+                    SearchSite::GameBounty,
+                    vec![
+                        hit(
+                            "Cyberpunk 2077",
+                            "https://gamebounty.world/cp2077-free-pc-download",
+                            "116.1GB · Build 26161058",
+                        ),
+                        hit(
+                            "Cyberpunk 2077: Phantom Liberty",
+                            "https://gamebounty.world/cp2077-phantom-liberty-free-pc-download",
+                            "58,4 Go · Build 26161058",
+                        ),
+                    ],
+                ),
+                (
+                    SearchSite::Kryoto,
+                    vec![hit(
+                        "Cyberpunk 2077",
+                        "https://kryo.to/game/cyberpunk-2077",
+                        "CD PROJEKT RED · 2020",
+                    )],
+                ),
+                (SearchSite::SceneCat, Vec::new()),
+            ];
+            let (_tx, rx) = std::sync::mpsc::channel();
+            app.tab = crate::app::Tab::Store;
+            app.site_search = Some(crate::app::SiteSearchJob {
+                title: "Cyberpunk 2077".to_string(),
+                query: "Cyberpunk 2077".to_string(),
+                steam_url: "https://store.steampowered.com/app/1091500".to_string(),
+                states: states
+                    .into_iter()
+                    .map(|(site, hits)| (site, crate::app::SiteSearchState::Ready(hits)))
+                    .collect(),
+                pending: 0,
+                rx,
+            });
         }
         "install" => {
             let game = app
@@ -1318,6 +1402,30 @@ fn demo_runtimes() -> Vec<ProtonRuntime> {
         });
     }
     out
+}
+
+/// Bibliothèque factice de `count` jeux avec 660 chemins de jaquette
+/// distincts : le cache de miniatures est ainsi réellement sollicité, comme
+/// avec une grande bibliothèque Steam.
+fn demo_large_library(count: usize, cover: Option<&Path>) -> Result<Vec<Game>, String> {
+    let root = crate::config::data_dir().join("demo-art-large");
+    std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+    let mut games = Vec::with_capacity(count);
+    for index in 0..count {
+        let mut game = Game::new(
+            format!("Jeu de démonstration {index:03}"),
+            "/bin/true",
+        );
+        if let Some(cover) = cover {
+            let path = root.join(format!("cover-{index:04}.png"));
+            if !path.exists() {
+                std::fs::hard_link(cover, &path).map_err(|err| err.to_string())?;
+            }
+            game.artwork.set(AssetKind::Cover, path);
+        }
+        games.push(game);
+    }
+    Ok(games)
 }
 
 fn demo_game(
