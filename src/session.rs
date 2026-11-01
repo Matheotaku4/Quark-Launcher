@@ -75,7 +75,17 @@ pub fn start(game: &Game, resolved: &Resolved) -> Result<Session, String> {
         let _ = writeln!(file, "[quark] préfixe {}", prefix.display());
     }
     for (name, value) in &resolved.spec.env {
-        let _ = writeln!(file, "[quark] env {name}={value}");
+        // Le jeton du pont des succès est propre au lancement : il ne doit pas
+        // se retrouver dans un journal lisible.
+        let upper = name.to_ascii_uppercase();
+        let sensitive = ["TOKEN", "SECRET", "PASSWORD"]
+            .iter()
+            .any(|needle| upper.contains(needle));
+        if sensitive {
+            let _ = writeln!(file, "[quark] env {name}=[masqué]");
+        } else {
+            let _ = writeln!(file, "[quark] env {name}={value}");
+        }
     }
     for warning in &resolved.warnings {
         let _ = writeln!(file, "[quark] ! {warning}");

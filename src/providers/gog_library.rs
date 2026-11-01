@@ -4,6 +4,7 @@
 //! l'API publique de GOG, comme le fait Heroic. Les jetons ne sortent jamais de
 //! ce module : les erreurs ne contiennent ni code de retour ni contenu HTTP.
 
+use super::achievements::{AchievementInfo, AchievementRow};
 use super::model::{
     CapabilityState, GameCapabilities, InstallState, Provider, ProviderGame, ProviderGameKey,
 };
@@ -18,6 +19,8 @@ pub const CLIENT_SECRET: &str = "9d85c43b1482497dbbce61f6e4aa173a433796eeae2ca8c
 const AUTH_URL: &str = "https://auth.gog.com";
 const EMBED_URL: &str = "https://embed.gog.com";
 const API_URL: &str = "https://api.gog.com";
+const GAMEPLAY_URL: &str = "https://gameplay.gog.com";
+const LOCALE: &str = "en-US";
 /// L'API produits accepte une liste d'identifiants ; 40 reste sous la limite
 /// pratique de longueur d'URL avec une marge confortable.
 const BATCH: usize = 40;
@@ -29,13 +32,15 @@ pub struct GogTokens {
     pub refresh_token: String,
     pub expires_in: i64,
     pub login_time: i64,
+    /// Identifiant du compte GOG, exigé par l'API des succès.
+    pub user_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnedGame {
     pub id: String,
     pub title: String,
-    /// Couverture verticale publiée par GOG (`images.background` + suffixe).
+    /// Laissée vide : GOG ne publie pas de jaquette dans la fiche produit.
     pub cover_url: Option<String>,
 }
 
@@ -47,20 +52,17 @@ fn http_timeout() -> Duration {
     Duration::from_secs(25)
 }
 
-/// Couverture verticale GOG : la fiche produit publie une image d'arrière-plan
-/// (URL relative au protocole) dont le même identifiant sert une `cover` 342×482.
-pub fn cover_from_images(images: Option<&Value>) -> Option<String> {
-    let background = images
-        .and_then(|images| images.get("background"))
-        .and_then(Value::as_str)?
-        .trim();
-    if background.is_empty() {
-        return None;
-    }
-    let absolute = if background.starts_with("//") {
-        format!("https:{background}")
-    } else if background.starts_with("http://") || background.starts_with("https://") {
-        background.to_string()
+/// URL de jaquette verticale à partir de l'image de boîtier (`boxArtImage`)
+/// publiée par l'API v2. La jaquette `glx_vertical_cover` est un dérivé du même
+/// identifiant : c'est la seule forme qui fonctionne. L'ancienne déduction
+/// depuis `images.background` produisait une URL valide… pour une autre image,
+/// d'où des jaquettes qui ne correspondaient pas au jeu.
+pub fn cover_from_boxart(href: &str) -> Option<String> {
+    let href = href.trim();
+    let absolute = if href.starts_with("//") {
+        format!("https:{href}")
+    } else if href.starts_with("http://") || href.starts_with("https://") {
+        href.to_string()
     } else {
         return None;
     };
@@ -70,6 +72,56 @@ pub fn cover_from_images(images: Option<&Value>) -> Option<String> {
         .map(|(base, _)| base)
         .unwrap_or(&absolute);
     Some(format!("{base}_glx_vertical_cover.webp"))
+}
+
+fn parse_cover(body: &str) -> Result<String, String> {
+    let root: Value = serde_json::from_str(body).map_err(|_| "fiche GOG illisible".to_string())?;
+    let links = root
+        .get("_links")
+        .ok_or_else(|| "fiche GOG sans images".to_string())?;
+    if let Some(href) = links
+        .get("boxArtImage")
+        .and_then(|image| image.get("href"))
+        .and_then(Value::as_str)
+    {
+        if let Some(url) = cover_from_boxart(href) {
+            return Ok(url);
+        }
+    }
+    // Repli : l'illustration large reste la bonne œuvre, contrairement à une
+    // jaquette devinée à partir d'un autre identifiant.
+    links
+        .get("backgroundImage")
+        .and_then(|image| image.get("href"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|url| url.starts_with("https://") || url.starts_with("http://"))
+        .map(str::to_string)
+        .ok_or_else(|| "fiche GOG sans couverture".to_string())
+}
+
+/// Jaquette verticale d'un jeu possédé, demandée à l'API v2 (publique, sans
+/// session).
+pub fn cover_url(product_id: &str) -> Result<String, String> {
+    if product_id.is_empty() || !product_id.chars().all(|c| c.is_ascii_digit()) {
+        return Err("identifiant GOG invalide pour la couverture".to_string());
+    }
+    let response = client()
+        .get(format!("{API_URL}/v2/games/{product_id}"))
+        .query(&[("locale", LOCALE)])
+        .timeout(http_timeout())
+        .send()
+        .map_err(|_| "GOG injoignable pour la couverture".to_string())?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "GOG a refusé la fiche de couverture (HTTP {})",
+            response.status().as_u16()
+        ));
+    }
+    let body = response
+        .text()
+        .map_err(|_| "fiche GOG illisible".to_string())?;
+    parse_cover(&body)
 }
 
 /// Extrait les jetons du fichier écrit par gogdl.
@@ -109,6 +161,14 @@ pub fn read_tokens(text: &str) -> Result<GogTokens, String> {
             if access_token.is_empty() || refresh_token.is_empty() {
                 continue;
             }
+            let user_id = object
+                .get("user_id")
+                .map(|value| match value {
+                    Value::Number(number) => number.to_string(),
+                    Value::String(text) => text.clone(),
+                    _ => String::new(),
+                })
+                .unwrap_or_default();
             return Ok(GogTokens {
                 access_token,
                 refresh_token,
@@ -121,6 +181,7 @@ pub fn read_tokens(text: &str) -> Result<GogTokens, String> {
                     .and_then(Value::as_f64)
                     .map(|value| value as i64)
                     .unwrap_or(0),
+                user_id,
             });
         }
     }
@@ -339,7 +400,7 @@ pub fn parse_products(body: &str) -> Result<Vec<OwnedGame>, String> {
         games.push(OwnedGame {
             id,
             title,
-            cover_url: cover_from_images(entry.get("images")),
+            cover_url: None,
         });
     }
     games.sort_by(|left, right| left.title.to_lowercase().cmp(&right.title.to_lowercase()));
@@ -420,7 +481,7 @@ fn filtered_products(token: &str) -> Result<Vec<OwnedGame>, String> {
             games.push(OwnedGame {
                 id,
                 title,
-                cover_url: cover_from_images(entry.get("images")),
+                cover_url: None,
             });
         }
         let total_pages = root.get("totalPages").and_then(Value::as_u64).unwrap_or(1);
@@ -478,6 +539,206 @@ pub fn library(token: &str) -> Result<Vec<OwnedGame>, String> {
     Ok(games)
 }
 
+// ---------------------------------------------------------------------------
+// Succès
+// ---------------------------------------------------------------------------
+
+/// Lit la liste renvoyée par `gameplay.gog.com` : les succès masqués restent
+/// cachés tant qu'ils ne sont pas débloqués.
+pub fn parse_achievements(body: &str) -> Result<AchievementInfo, String> {
+    let root: Value =
+        serde_json::from_str(body).map_err(|_| "succès GOG illisibles".to_string())?;
+    let items = root
+        .get("items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "succès GOG illisibles".to_string())?;
+    let mut rows = Vec::with_capacity(items.len());
+    for item in items {
+        let key = item
+            .get("achievement_key")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let name = item
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if name.is_empty() && key.is_empty() {
+            continue;
+        }
+        let unlocked = item
+            .get("date_unlocked")
+            .map(|value| !value.is_null())
+            .unwrap_or(false);
+        let visible = item.get("visible").and_then(Value::as_bool).unwrap_or(true);
+        if !visible && !unlocked {
+            continue;
+        }
+        rows.push(AchievementRow {
+            key: if key.is_empty() { name.clone() } else { key },
+            id: item
+                .get("achievement_id")
+                .map(|value| match value {
+                    Value::Number(number) => number.to_string(),
+                    Value::String(text) => text.clone(),
+                    _ => String::new(),
+                })
+                .unwrap_or_default(),
+            name: if name.is_empty() {
+                "Succès masqué".to_string()
+            } else {
+                name
+            },
+            description: item
+                .get("description")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
+            unlocked,
+            progress: if unlocked { 1.0 } else { 0.0 },
+            session: false,
+        });
+    }
+    let mut info = AchievementInfo {
+        total: root
+            .get("total_count")
+            .and_then(Value::as_u64)
+            .map(|value| value as u32)
+            .unwrap_or(rows.len() as u32),
+        unlocked: 0,
+        rows,
+    };
+    info.normalize();
+    Ok(info)
+}
+
+fn gameplay_get(url: &str, token: &str) -> Result<reqwest::blocking::Response, String> {
+    client()
+        .get(url)
+        .bearer_auth(token)
+        .header("X-Gog-Lc", LOCALE)
+        .timeout(http_timeout())
+        .send()
+        .map_err(|_| "GOG injoignable pendant la lecture des succès".to_string())
+}
+
+/// Succès d'un jeu, lus avec la session gogdl. `product_id` est l'identifiant
+/// du jeu ; GOG l'utilise aussi comme identifiant de client pour ses succès.
+pub fn fetch_achievements(
+    product_id: &str,
+    token: &str,
+    user_id: &str,
+) -> Result<AchievementInfo, String> {
+    if user_id.trim().is_empty() {
+        return Err(
+            "session GOG sans identifiant de compte : reconnecte la boutique dans \
+             Paramètres → Boutiques & outils"
+                .to_string(),
+        );
+    }
+    let response = gameplay_get(
+        &format!("{GAMEPLAY_URL}/clients/{product_id}/users/{user_id}/achievements"),
+        token,
+    )?;
+    if !response.status().is_success() {
+        return Err(match response.status().as_u16() {
+            401 | 403 => "GOG a refusé la session pour les succès : reconnecte la boutique dans \
+                 Paramètres → Boutiques & outils"
+                .to_string(),
+            status => format!("GOG a répondu {status} pour les succès"),
+        });
+    }
+    let body = response
+        .text()
+        .map_err(|_| "succès GOG illisibles".to_string())?;
+    parse_achievements(&body)
+}
+
+fn iso8601(epoch: i64) -> String {
+    let days = epoch.div_euclid(86_400);
+    let seconds = epoch.rem_euclid(86_400);
+    let (year, month, day) = crate::session::civil_from_days(days);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}+00:00",
+        seconds / 3600,
+        (seconds % 3600) / 60,
+        seconds % 60
+    )
+}
+
+/// Débloque un succès GOG (`achievement_id`) au nom du compte connecté.
+pub fn unlock_achievement(
+    product_id: &str,
+    token: &str,
+    user_id: &str,
+    achievement_id: &str,
+    now: i64,
+) -> Result<(), String> {
+    if achievement_id.trim().is_empty() {
+        return Err("succès GOG sans identifiant".to_string());
+    }
+    let response = client()
+        .post(format!(
+            "{GAMEPLAY_URL}/clients/{product_id}/users/{user_id}/achievements/{achievement_id}"
+        ))
+        .bearer_auth(token)
+        .header("X-Gog-Lc", LOCALE)
+        .json(&serde_json::json!({ "date_unlocked": iso8601(now) }))
+        .timeout(http_timeout())
+        .send()
+        .map_err(|_| "GOG injoignable pendant le déblocage du succès".to_string())?;
+    if response.status().is_success() {
+        return Ok(());
+    }
+    Err(format!(
+        "GOG a refusé le déblocage du succès (HTTP {})",
+        response.status().as_u16()
+    ))
+}
+
+/// Succès d'un jeu GOG possesseur d'une session gogdl, renouvelée si besoin.
+pub fn game_achievements(
+    auth_path: &Path,
+    product_id: &str,
+    now: i64,
+) -> Result<AchievementInfo, String> {
+    let tokens = usable_tokens(auth_path, now)?;
+    fetch_achievements(product_id, &tokens.access_token, &tokens.user_id)
+}
+
+/// Déblocage demandé par une session de jeu : le pont local ne connaît que la
+/// clé (`ACH_WIN_THE_GAME`), la liste fournit l'identifiant numérique.
+pub fn unlock_for_session(
+    auth_path: &Path,
+    product_id: &str,
+    key: &str,
+    now: i64,
+) -> Result<Option<String>, String> {
+    let tokens = usable_tokens(auth_path, now)?;
+    let info = fetch_achievements(product_id, &tokens.access_token, &tokens.user_id)?;
+    let needle = key.trim();
+    let found = info.rows.iter().find(|row| {
+        (!needle.is_empty() && row.key.eq_ignore_ascii_case(needle))
+            || (!needle.is_empty() && row.name.eq_ignore_ascii_case(needle))
+    });
+    let row = found.ok_or_else(|| format!("GOG ne liste pas le succès « {needle} »"))?;
+    if row.unlocked {
+        return Ok(None);
+    }
+    unlock_achievement(
+        product_id,
+        &tokens.access_token,
+        &tokens.user_id,
+        &row.id,
+        now,
+    )?;
+    Ok(Some(row.name.clone()))
+}
+
 pub fn to_games(entries: &[OwnedGame], fetched_at: i64) -> Vec<ProviderGame> {
     entries
         .iter()
@@ -495,10 +756,7 @@ pub fn to_games(entries: &[OwnedGame], fetched_at: i64) -> Vec<ProviderGame> {
             install_state: InstallState::NotInstalled,
             quark_game_id: None,
             capabilities: GameCapabilities {
-                achievements: CapabilityState::Unsupported(
-                    "GOG ne publie les succès qu'auprès de Galaxy, sans identifiant client public"
-                        .into(),
-                ),
+                achievements: CapabilityState::Supported,
                 cloud_saves: CapabilityState::Unknown,
             },
             last_synced: Some(fetched_at),
@@ -530,6 +788,65 @@ mod tests {
         assert_eq!(tokens.refresh_token, "refresh-1");
         assert_eq!(tokens.login_time, 1_700_000_000);
         assert_eq!(tokens.expires_in, 3600);
+        assert_eq!(tokens.user_id, "456");
+    }
+
+    #[test]
+    fn la_jaquette_gog_derive_de_l_image_de_boitier_et_pas_de_l_arriere_plan() {
+        assert_eq!(
+            cover_from_boxart(
+                "https://images.gog-statics.com/32385c2c39b8715a9ccfb159ed481b55503b96526b00866f75a4af48461615a5.jpg"
+            )
+            .unwrap(),
+            "https://images.gog-statics.com/32385c2c39b8715a9ccfb159ed481b55503b96526b00866f75a4af48461615a5_glx_vertical_cover.webp"
+        );
+        assert_eq!(
+            cover_from_boxart("//images.gog-statics.com/abc.png").unwrap(),
+            "https://images.gog-statics.com/abc_glx_vertical_cover.webp"
+        );
+        assert!(cover_from_boxart("pas une url").is_none());
+
+        let body = r#"{"_links":{"boxArtImage":{"href":"https://images.gog-statics.com/hash.jpg"},"backgroundImage":{"href":"https://images.gog-statics.com/bg.jpg"}}}"#;
+        assert!(
+            parse_cover(body)
+                .unwrap()
+                .ends_with("_glx_vertical_cover.webp")
+        );
+        // Sans boîtier, l'illustration large reste la bonne œuvre.
+        let fallback =
+            r#"{"_links":{"backgroundImage":{"href":"https://images.gog-statics.com/bg.jpg"}}}"#;
+        assert_eq!(
+            parse_cover(fallback).unwrap(),
+            "https://images.gog-statics.com/bg.jpg"
+        );
+        assert!(parse_cover(r#"{"_links":{}}"#).is_err());
+        assert!(cover_url("pas-un-id").is_err());
+    }
+
+    #[test]
+    fn les_succes_gog_masques_ne_sortent_qu_une_fois_debloques() {
+        let body = r#"{
+          "total_count": 3,
+          "items": [
+            {"achievement_id": "11", "achievement_key": "ACH_FIRST", "name": "Premier", "description": "Fini le niveau 1", "visible": true, "date_unlocked": "2026-01-01T00:00:00+00:00", "image_url_unlocked": ""},
+            {"achievement_id": "12", "achievement_key": "ACH_SECOND", "name": "Deuxième", "description": "Fini le niveau 2", "visible": true, "date_unlocked": null, "image_url_unlocked": ""},
+            {"achievement_id": "13", "achievement_key": "ACH_SECRET", "name": "Secret", "description": "Caché", "visible": false, "date_unlocked": null, "image_url_unlocked": ""},
+            {"achievement_id": "14", "achievement_key": "ACH_SECRET_2", "name": "Secret débloqué", "description": "Caché", "visible": false, "date_unlocked": "2026-01-02T00:00:00+00:00", "image_url_unlocked": ""}
+          ]
+        }"#;
+        let info = parse_achievements(body).unwrap();
+        // Le total publié inclut les succès masqués non débloqués, mais la
+        // liste ne les affiche pas : la barre suit les lignes visibles.
+        assert_eq!(info.total, 3);
+        assert_eq!(info.unlocked, 2);
+        assert!(info.rows.iter().all(|row| row.name != "Secret"));
+        assert!(
+            info.rows
+                .iter()
+                .any(|row| row.name == "Secret débloqué" && row.id == "14")
+        );
+        assert!(parse_achievements("pas du json").is_err());
+        assert!(parse_achievements("{}").is_err());
     }
 
     #[test]
@@ -539,9 +856,11 @@ mod tests {
         assert!(read_tokens("{}").unwrap_err().contains("absente"));
         assert!(read_tokens("pas du json").is_err());
         // Un refus de gogdl (`{"error": true}`) n'est pas une session.
-        assert!(read_tokens(r#"{"error": true}"#)
-            .unwrap_err()
-            .contains("absente"));
+        assert!(
+            read_tokens(r#"{"error": true}"#)
+                .unwrap_err()
+                .contains("absente")
+        );
     }
 
     #[test]
@@ -639,6 +958,10 @@ mod tests {
         assert_eq!(games[0].key.provider, Provider::Gog);
         assert_eq!(games[0].key.product_id, "42");
         assert_eq!(games[0].install_state, InstallState::NotInstalled);
+        assert_eq!(
+            games[0].capabilities.achievements,
+            CapabilityState::Supported
+        );
         assert_eq!(games[0].last_synced, Some(99));
     }
 

@@ -10,9 +10,16 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+/// Version du cache. La v2 est née avec les URLs GOG corrigées : les images
+/// dérivées de `images.background` (mauvais jeu) ne doivent jamais être
+/// réutilisées.
+const CACHE_VERSION: &str = "v2";
+
 /// Dossier des couvertures de boutiques, à côté des artworks des jeux Quark.
 pub fn cache_dir() -> PathBuf {
-    crate::config::artwork_root().join("provider-covers")
+    crate::config::artwork_root()
+        .join("provider-covers")
+        .join(CACHE_VERSION)
 }
 
 fn provider_stem(provider: Provider) -> &'static str {
@@ -124,25 +131,45 @@ pub fn download(url: &str, key: &ProviderGameKey) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-/// Couverture d'un jeu : celle du cache, sinon téléchargée depuis l'URL connue
-/// ou demandée à Legendary pour Epic. Retourne aussi l'URL découverte, à
-/// mémoriser dans la bibliothèque pour ne pas relancer Legendary.
+/// Couverture d'un jeu : celle du cache, sinon résolue auprès de la boutique
+/// puis téléchargée. Retourne aussi l'URL découverte, à mémoriser dans la
+/// bibliothèque pour éviter une nouvelle résolution.
+///
+/// GOG est toujours résolu par son API v2 : les fiches produits ne publient
+/// qu'une image d'arrière-plan, dont l'identifiant ne sert pas la jaquette
+/// verticale — l'ancienne déduction affichait l'image d'un autre jeu.
 pub fn ensure(game: &ProviderGame) -> Result<(PathBuf, Option<String>), String> {
     if let Some(path) = cached(&game.key) {
         return Ok((path, None));
     }
-    let url = match game.cover_url.clone() {
-        Some(url) => Some(url),
-        None if game.key.provider == Provider::Epic => {
-            Some(super::legendary::epic_cover_url(&game.key.product_id)?)
+    let resolve = || -> Result<String, String> {
+        match game.key.provider {
+            Provider::Gog => super::gog_library::cover_url(&game.key.product_id),
+            _ => super::legendary::epic_cover_url(&game.key.product_id),
         }
-        None => None,
     };
-    let Some(url) = url else {
-        return Err("cette boutique ne publie pas de couverture".to_string());
+    let url = match game.key.provider {
+        // Même si une URL est enregistrée, l'API est la seule source fiable.
+        Provider::Gog => resolve()?,
+        _ => match game.cover_url.clone() {
+            Some(url) => url,
+            None => resolve()?,
+        },
     };
-    let path = download(&url, &game.key)?;
-    Ok((path, Some(url)))
+    match download(&url, &game.key) {
+        Ok(path) => Ok((path, Some(url))),
+        // Une URL mémorisée peut expirer : on redemande une adresse fraîche.
+        Err(error) => {
+            if game.cover_url.is_some() {
+                let fresh = resolve()?;
+                if fresh != url {
+                    let path = download(&fresh, &game.key)?;
+                    return Ok((path, Some(fresh)));
+                }
+            }
+            Err(error)
+        }
+    }
 }
 
 #[cfg(test)]

@@ -330,10 +330,18 @@ impl QuarkApp {
                     );
                     ui.add_space(10.0);
 
-                    ui.checkbox(
+                    if widgets::setting_toggle(
+                        ui,
+                        &pal,
+                        "Préfixe Proton personnalisé",
+                        Some("Sinon le préfixe par défaut des Paramètres."),
                         &mut self.add.custom_prefix,
-                        "Préfixe Proton personnalisé pour ce jeu",
-                    );
+                        "add_custom_prefix",
+                    )
+                    .changed()
+                    {
+                        // Le champ apparaît juste en dessous.
+                    }
                     if self.add.custom_prefix {
                         ui.horizontal(|ui| {
                             let field = (ui.available_width() - 130.0).max(200.0);
@@ -637,23 +645,21 @@ impl QuarkApp {
                         });
 
                         section(ui, "ACCUEIL", &pal);
-                        ui.horizontal(|ui| {
-                            if ui
-                                .checkbox(
-                                    &mut self.lib.settings.carousel_auto,
-                                    "Faire défiler le carrousel tout seul",
-                                )
-                                .changed()
-                            {
-                                self.touch();
-                            }
-                            widgets::info_button(
-                                ui,
-                                &pal,
-                                "Le carrousel de l'accueil passe d'un jeu récent au suivant \
-                                 après le délai ci-dessous. Un clic sur une flèche repart de zéro.",
-                            );
-                        });
+                        if widgets::setting_toggle(
+                            ui,
+                            &pal,
+                            "Carrousel automatique",
+                            Some(
+                                "L'accueil passe d'un jeu récent au suivant après le délai \
+                                 ci-dessous ; une flèche repart de zéro.",
+                            ),
+                            &mut self.lib.settings.carousel_auto,
+                            "carousel_auto",
+                        )
+                        .changed()
+                        {
+                            self.touch();
+                        }
                         if self.lib.settings.carousel_auto {
                             ui.horizontal(|ui| {
                                 ui.label(
@@ -679,28 +685,22 @@ impl QuarkApp {
 
                         section(ui, "ZONE DE NOTIFICATION", &pal);
                         let mut start_tray: Option<bool> = None;
-                        ui.horizontal(|ui| {
-                            let mut tray_icon = self.lib.settings.tray_icon;
-                            if ui
-                                .checkbox(
-                                    &mut tray_icon,
-                                    "Garder Quark dans la zone de notification",
-                                )
-                                .changed()
-                            {
-                                start_tray = Some(tray_icon);
-                            }
-                            widgets::info_button(
-                                ui,
-                                &pal,
-                                "Coché, fermer la fenêtre quitte Quark mais laisse son icône dans \
-                                 la zone de notification : un clic dessus relance le launcher, et \
-                                 « Quitter Quark » dans son menu ferme tout. Décoché, la croix \
-                                 quitte complètement. L'icône vit dans un petit processus dédié, \
-                                 donc la fenêtre disparaît vraiment (rien dans la barre des \
-                                 tâches), même sous Wayland.",
-                            );
-                        });
+                        if widgets::setting_toggle(
+                            ui,
+                            &pal,
+                            "Icône dans la zone de notification",
+                            Some(
+                                "Fermer la fenêtre laisse Quark dans la zone de notification ; \
+                                 « Quitter Quark » ferme tout. L'icône vit dans un petit \
+                                 processus dédié, même sous Wayland.",
+                            ),
+                            &mut self.lib.settings.tray_icon,
+                            "tray_icon",
+                        )
+                        .changed()
+                        {
+                            start_tray = Some(self.lib.settings.tray_icon);
+                        }
                         if let Some(enabled) = start_tray {
                             self.set_tray_icon(enabled);
                         }
@@ -891,18 +891,24 @@ impl QuarkApp {
                         let mut battleye = self.lib.settings.default_anticheat.battleye();
                         let mut eac = self.lib.settings.default_anticheat.eac();
                         let mut changed = false;
-                        ui.horizontal(|ui| {
-                            if ui
-                                .checkbox(&mut battleye, "BattlEye AntiCheat Runtime")
-                                .changed()
-                            {
-                                changed = true;
-                            }
-                            ui.add_space(10.0);
-                            if ui.checkbox(&mut eac, "EasyAntiCheat Runtime").changed() {
-                                changed = true;
-                            }
-                        });
+                        changed |= widgets::setting_toggle(
+                            ui,
+                            &pal,
+                            "BattlEye AntiCheat Runtime",
+                            Some("Déclaré à Proton par PROTON_BATTLEYE_RUNTIME."),
+                            &mut battleye,
+                            "default_battleye",
+                        )
+                        .changed();
+                        changed |= widgets::setting_toggle(
+                            ui,
+                            &pal,
+                            "EasyAntiCheat Runtime",
+                            Some("Déclaré à Proton par PROTON_EAC_RUNTIME."),
+                            &mut eac,
+                            "default_eac",
+                        )
+                        .changed();
                         if changed {
                             self.lib.settings.default_anticheat = self
                                 .lib
@@ -1808,21 +1814,21 @@ impl QuarkApp {
                 );
                 ui.add_space(8.0);
                 let mut custom = game.prefix.is_some();
-                ui.horizontal(|ui| {
-                    if ui
-                        .checkbox(&mut custom, "Préfixe Proton propre à ce jeu")
-                        .changed()
-                    {
-                        game.prefix = if custom { Some(String::new()) } else { None };
-                    }
-                    widgets::info_button(
-                        ui,
-                        &pal,
-                        "Sans préfixe propre, le jeu prend celui de l'onglet « Par défaut » (sinon \
-                         ~/.local/share/quark/prefixes/<jeu>). Le dossier choisi est utilisé tel \
-                         quel, sans sous-dossier.",
-                    );
-                });
+                if widgets::setting_toggle(
+                    ui,
+                    &pal,
+                    "Préfixe Proton propre à ce jeu",
+                    Some(
+                        "Sinon celui des valeurs par défaut, ou \
+                         ~/.local/share/quark/prefixes/<jeu>. Le dossier est utilisé tel quel.",
+                    ),
+                    &mut custom,
+                    "game_custom_prefix",
+                )
+                .changed()
+                {
+                    game.prefix = if custom { Some(String::new()) } else { None };
+                }
 
                 if let Some(prefix) = game.prefix.as_mut() {
                     ui.horizontal(|ui| {
@@ -1875,18 +1881,24 @@ impl QuarkApp {
                 let mut battleye = game.anticheat.battleye();
                 let mut eac = game.anticheat.eac();
                 let mut changed = false;
-                ui.horizontal(|ui| {
-                    if ui
-                        .checkbox(&mut battleye, "BattlEye AntiCheat Runtime")
-                        .changed()
-                    {
-                        changed = true;
-                    }
-                    ui.add_space(10.0);
-                    if ui.checkbox(&mut eac, "EasyAntiCheat Runtime").changed() {
-                        changed = true;
-                    }
-                });
+                changed |= widgets::setting_toggle(
+                    ui,
+                    &pal,
+                    "BattlEye AntiCheat Runtime",
+                    Some("Déclaré à Proton par PROTON_BATTLEYE_RUNTIME."),
+                    &mut battleye,
+                    "game_battleye",
+                )
+                .changed();
+                changed |= widgets::setting_toggle(
+                    ui,
+                    &pal,
+                    "EasyAntiCheat Runtime",
+                    Some("Déclaré à Proton par PROTON_EAC_RUNTIME."),
+                    &mut eac,
+                    "game_eac",
+                )
+                .changed();
                 if changed {
                     game.anticheat = game.anticheat.with_battleye(battleye).with_eac(eac);
                 }
@@ -3107,7 +3119,34 @@ impl QuarkApp {
             .find(|game| game.key == key)
             .map(|game| game.title.clone())
             .unwrap_or_else(|| key.product_id.clone());
-        let state = self.achievements.get(&key).cloned();
+        let provider = self
+            .lib
+            .provider_library
+            .games
+            .iter()
+            .find(|game| game.key == key)
+            .map(|game| game.key.provider)
+            .unwrap_or(crate::providers::Provider::Steam);
+        let provider_label = match provider {
+            crate::providers::Provider::Steam => "Steam",
+            crate::providers::Provider::Epic => "Epic Games",
+            crate::providers::Provider::Gog => "GOG",
+        };
+        // Les succès rapportés par la session sont fusionnés ici : la liste de
+        // la boutique reste la source, le pont local la complète.
+        let state = self
+            .achievements
+            .get(&key)
+            .cloned()
+            .map(|state| match state {
+                crate::app::AchievementsState::Ready(mut info) => {
+                    if let Some(unlocks) = self.session_unlocks.get(&key) {
+                        crate::providers::achievements::merge_session(&mut info, unlocks);
+                    }
+                    crate::app::AchievementsState::Ready(info)
+                }
+                other => other,
+            });
         let max_height = (ctx.screen_rect().height() * 0.5).max(200.0);
         let mut close = false;
 
@@ -3142,9 +3181,11 @@ impl QuarkApp {
                             ui.add(egui::Spinner::new().size(15.0));
                             ui.add_space(6.0);
                             ui.label(
-                                RichText::new("Lecture des succès auprès d'Epic\u{2026}")
-                                    .size(12.0)
-                                    .color(pal.text_dim),
+                                RichText::new(format!(
+                                    "Lecture des succès auprès de {provider_label}\u{2026}"
+                                ))
+                                .size(12.0)
+                                .color(pal.text_dim),
                             );
                         });
                         ctx.request_repaint_after(std::time::Duration::from_millis(200));
@@ -3153,13 +3194,23 @@ impl QuarkApp {
                         ui.label(RichText::new(message).size(12.5).color(pal.text_dim));
                         ui.add_space(6.0);
                         ui.label(
-                            RichText::new(
-                                "Les succès demandent une session Epic connectée (Paramètres \u{2192} \
-                                 Boutiques & outils) et un jeu qui en publie.",
-                            )
+                            RichText::new(format!(
+                                "Les succès {provider_label} demandent une session connectée \
+                                 (Paramètres \u{2192} Boutiques & outils) et un jeu qui en publie."
+                            ))
                             .size(11.0)
                             .color(pal.text_faint),
                         );
+                        if provider == crate::providers::Provider::Epic {
+                            ui.label(
+                                RichText::new(
+                                    "Un jeu peut aussi déclarer ses succès pendant la partie via \
+                                     QUARK_ACHIEVEMENTS_URL : ils apparaissent marqués « session ».",
+                                )
+                                .size(11.0)
+                                .color(pal.text_faint),
+                            );
+                        }
                     }
                     Some(crate::app::AchievementsState::Ready(info)) => {
                         if info.total == 0 {
@@ -3209,7 +3260,7 @@ impl QuarkApp {
                             );
                             ui.add_space(10.0);
 
-                            let mut rows: Vec<&crate::providers::legendary::AchievementRow> =
+                            let mut rows: Vec<&crate::providers::AchievementRow> =
                                 info.rows.iter().collect();
                             rows.sort_by(|left, right| {
                                 right
@@ -3256,6 +3307,33 @@ impl QuarkApp {
                                                             .color(pal.text_faint),
                                                     );
                                                 }
+                                                ui.horizontal(|ui| {
+                                                    if row.session {
+                                                        ui.label(
+                                                            RichText::new(format!(
+                                                                "session{}",
+                                                                if row.key.is_empty() {
+                                                                    String::new()
+                                                                } else {
+                                                                    format!(" · {}", row.key)
+                                                                }
+                                                            ))
+                                                            .size(9.5)
+                                                            .strong()
+                                                            .color(pal.accent),
+                                                        );
+                                                    }
+                                                    if !row.unlocked && row.progress > 0.0 {
+                                                        ui.label(
+                                                            RichText::new(format!(
+                                                                "{:.0} %",
+                                                                row.progress * 100.0
+                                                            ))
+                                                            .size(9.5)
+                                                            .color(pal.text_faint),
+                                                        );
+                                                    }
+                                                });
                                             });
                                         });
                                         ui.add_space(6.0);
@@ -3448,68 +3526,145 @@ fn launch_options_editor(
     tools: &proton::Tools,
 ) -> bool {
     let mut changed = false;
-    ui.horizontal(|ui| {
-        changed |= ui.checkbox(&mut launch.gamemode, "gamemoderun").changed();
-        if !tools.gamemoderun {
-            ui.label(RichText::new("(absent)").size(10.5).color(pal.danger));
-        }
-        ui.add_space(16.0);
-        changed |= ui.checkbox(&mut launch.mangohud, "MangoHud").changed();
-        ui.add_space(16.0);
-        changed |= ui.checkbox(&mut launch.prime, "PRIME (NVIDIA)").changed();
-        widgets::info_button(
-            ui,
-            pal,
-            "MangoHud passe par MANGOHUD=1, rien à taper. PRIME force le rendu sur la \
-             carte NVIDIA dédiée des portables hybrides (DRI_PRIME pour les autres).",
-        );
-    });
-    ui.horizontal(|ui| {
-        changed |= ui.checkbox(&mut launch.gamescope, "gamescope").changed();
-        if !tools.gamescope {
-            ui.label(RichText::new("(absent)").size(10.5).color(pal.danger));
-        }
-        if launch.gamescope {
-            ui.add_space(10.0);
-            changed |= ui
-                .add(
-                    egui::DragValue::new(&mut launch.gamescope_width)
-                        .range(320..=7680)
-                        .speed(4.0)
-                        .suffix(" px"),
+    let gamemode_hint = if tools.gamemoderun {
+        "Ordonnanceur de performance : priorité CPU et mode jeu."
+    } else {
+        "gamemoderun absent : l'option sera ignorée au lancement."
+    };
+    changed |= widgets::setting_toggle(
+        ui,
+        pal,
+        "GameMode",
+        Some(gamemode_hint),
+        &mut launch.gamemode,
+        "launch_gamemode",
+    )
+    .changed();
+    changed |= widgets::setting_toggle(
+        ui,
+        pal,
+        "MangoHud",
+        Some("Compteur d'images et de températures, via MANGOHUD=1."),
+        &mut launch.mangohud,
+        "launch_mangohud",
+    )
+    .changed();
+    changed |= widgets::setting_toggle(
+        ui,
+        pal,
+        "PRIME (NVIDIA)",
+        Some("Force le rendu sur la carte dédiée des portables hybrides."),
+        &mut launch.prime,
+        "launch_prime",
+    )
+    .changed();
+
+    let gamescope_hint = if tools.gamescope {
+        "Compositeur dédié : résolution, FSR et limite d'images."
+    } else {
+        "gamescope absent : l'option sera ignorée au lancement."
+    };
+    changed |= widgets::setting_toggle(
+        ui,
+        pal,
+        "gamescope",
+        Some(gamescope_hint),
+        &mut launch.gamescope,
+        "launch_gamescope",
+    )
+    .changed();
+    if launch.gamescope {
+        egui::Frame::new()
+            .fill(pal.surface.gamma_multiply(0.6))
+            .corner_radius(7.0)
+            .inner_margin(egui::Margin::symmetric(12, 8))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("Résolution").size(11.5).color(pal.text_dim));
+                    changed |= ui
+                        .add(
+                            egui::DragValue::new(&mut launch.gamescope_width)
+                                .range(320..=7680)
+                                .speed(4.0)
+                                .suffix(" px"),
+                        )
+                        .changed();
+                    ui.label(RichText::new("×").size(11.0).color(pal.text_dim));
+                    changed |= ui
+                        .add(
+                            egui::DragValue::new(&mut launch.gamescope_height)
+                                .range(200..=4320)
+                                .speed(4.0)
+                                .suffix(" px"),
+                        )
+                        .changed();
+                    ui.add_space(14.0);
+                    ui.label(RichText::new("Limite").size(11.5).color(pal.text_dim));
+                    changed |= ui
+                        .add(
+                            egui::DragValue::new(&mut launch.gamescope_fps)
+                                .range(0..=1000)
+                                .speed(1.0)
+                                .suffix(" fps"),
+                        )
+                        .changed();
+                });
+                changed |= widgets::setting_toggle(
+                    ui,
+                    pal,
+                    "FSR",
+                    Some("Agrandit une image plus petite : gain de performance."),
+                    &mut launch.gamescope_fsr,
+                    "launch_gamescope_fsr",
                 )
                 .changed();
-            ui.label(RichText::new("×").size(11.0).color(pal.text_dim));
-            changed |= ui
-                .add(
-                    egui::DragValue::new(&mut launch.gamescope_height)
-                        .range(200..=4320)
-                        .speed(4.0)
-                        .suffix(" px"),
-                )
-                .changed();
-            ui.add_space(10.0);
-            changed |= ui.checkbox(&mut launch.gamescope_fsr, "FSR").changed();
-            ui.add_space(10.0);
-            ui.label(RichText::new("max").size(11.5).color(pal.text_dim));
-            changed |= ui
-                .add(
-                    egui::DragValue::new(&mut launch.gamescope_fps)
-                        .range(0..=1000)
-                        .speed(1.0)
-                        .suffix(" fps"),
-                )
-                .changed();
-            widgets::info_button(
-                ui,
-                pal,
-                "gamescope affiche le jeu dans son propre compositeur, à cette \
-                 résolution. FSR agrandit une image plus petite (gain de performance) ; \
-                 « max » limite les images par seconde (--framerate-limit, 0 = aucune limite).",
-            );
+            });
+    }
+
+    changed |= widgets::setting_toggle(
+        ui,
+        pal,
+        "Journal Proton détaillé",
+        Some("PROTON_LOG=1 : utile quand un jeu refuse de démarrer."),
+        proton_log,
+        "launch_proton_log",
+    )
+    .changed();
+    let umu_hint = if tools.umu_run {
+        "umu-launcher gère le préfixe et transmet GAMEID à Proton."
+    } else {
+        "umu-run absent : Quark refusera le lancement de ce jeu."
+    };
+    changed |= widgets::setting_toggle(
+        ui,
+        pal,
+        "Lancer via umu-launcher",
+        Some(umu_hint),
+        umu,
+        "launch_umu",
+    )
+    .changed();
+    if *umu {
+        if let Some(id) = umu_game_id.as_deref_mut() {
+            ui.horizontal(|ui| {
+                ui.add_space(10.0);
+                ui.label(RichText::new("GAMEID").size(11.5).color(pal.text_dim));
+                ui.add(
+                    egui::TextEdit::singleline(id)
+                        .hint_text("0")
+                        .desired_width(120.0),
+                );
+                ui.label(
+                    RichText::new("AppID ProtonDB · « 0 » pour un jeu inconnu")
+                        .size(10.5)
+                        .color(pal.text_faint),
+                );
+            });
         }
-    });
-    ui.add_space(6.0);
+    }
+
+    ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.label(
             RichText::new("Commande wrapper")
@@ -3521,8 +3676,7 @@ fn launch_options_editor(
             pal,
             "Comme les options de lancement Steam : %command% est remplacé par la \
              commande du jeu. Exemple : env FOO=1 %command%. Sans %command%, la \
-             commande est placée devant. La ligne passe par un shell, donc env, pipes \
-             et redirections fonctionnent.",
+             commande est placée devant.",
         );
     });
     changed |= ui
@@ -3532,36 +3686,9 @@ fn launch_options_editor(
                 .desired_width(f32::INFINITY),
         )
         .changed();
-    ui.horizontal(|ui| {
-        changed |= ui
-            .checkbox(proton_log, "Journal Proton détaillé (PROTON_LOG=1)")
-            .changed();
-        widgets::info_button(
-            ui,
-            pal,
-            "Proton écrit un journal détaillé dans le dossier de logs du jeu, à côté de \
-             la sortie standard capturée par Quark. Utile quand un jeu refuse de démarrer.",
-        );
-    });
-    ui.horizontal(|ui| {
-        changed |= ui.checkbox(umu, "Lancer via umu-launcher").changed();
-        if !tools.umu_run {
-            ui.label(
-                RichText::new("(umu-run absent)")
-                    .size(10.5)
-                    .color(pal.danger),
-            );
-        }
-        widgets::info_button(
-            ui,
-            pal,
-            "umu-launcher lance un jeu Windows avec Proton sans Steam : il gère le \
-             préfixe et transmet GAMEID à Proton. Sans umu-run installé, Quark refuse le \
-             lancement avec un message clair plutôt que d'échouer en silence.",
-        );
-    });
+
     if launch.any() || *proton_log || *umu {
-        ui.add_space(4.0);
+        ui.add_space(6.0);
         if widgets::ghost_button(ui, "Tout réinitialiser", pal, Icon::None).clicked() {
             *launch = config::LaunchOptions::default();
             *proton_log = false;
@@ -3570,24 +3697,6 @@ fn launch_options_editor(
                 id.clear();
             }
             changed = true;
-        }
-    }
-    if *umu {
-        if let Some(id) = umu_game_id.as_deref_mut() {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("GAMEID").size(11.5).color(pal.text_dim));
-                ui.add(
-                    egui::TextEdit::singleline(id)
-                        .hint_text("0")
-                        .desired_width(120.0),
-                );
-                widgets::info_button(
-                    ui,
-                    pal,
-                    "Identifiant ProtonDB du jeu (son AppID Steam). « 0 » suffit pour un \
-                     jeu inconnu.",
-                );
-            });
         }
     }
     changed

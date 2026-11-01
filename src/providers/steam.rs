@@ -369,9 +369,11 @@ mod tests {
         };
         let merged = merge_sync(&[steam.clone(), epic.clone()], &[], None, &[]);
         assert_eq!(merged.len(), 2);
-        assert!(merged
-            .iter()
-            .any(|game| game.key == steam.key && game.install_path == steam.install_path));
+        assert!(
+            merged
+                .iter()
+                .any(|game| game.key == steam.key && game.install_path == steam.install_path)
+        );
         assert!(merged.iter().any(|game| game.key == epic.key));
     }
 

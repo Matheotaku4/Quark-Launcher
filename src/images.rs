@@ -225,6 +225,48 @@ pub fn draw_cover(painter: &egui::Painter, texture: &TextureHandle, rect: egui::
     );
 }
 
+/// Dessine la moitié basse d'une bannière en la fondant dans la texture floutée
+/// du même jeu : le hero ne s'arrête plus sur une arête nette au-dessus du
+/// fond, il s'y dissout. Le dégradé est un maillage à quatre sommets, donc
+/// lissé quelle que soit la hauteur de la bande.
+pub fn draw_cover_blend_to_background(
+    painter: &egui::Painter,
+    texture: &TextureHandle,
+    rect: egui::Rect,
+    strip_height: f32,
+) {
+    let size = texture.size_vec2();
+    if size.x <= 0.0 || size.y <= 0.0 || rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return;
+    }
+    let strip_height = strip_height.clamp(1.0, rect.height());
+    let scale = (rect.width() / size.x).max(rect.height() / size.y);
+    let fitted = egui::Rect::from_center_size(rect.center(), size * scale);
+    let strip = egui::Rect::from_min_max(
+        egui::pos2(rect.left(), rect.bottom() - strip_height),
+        rect.max,
+    );
+    let u0 = ((rect.left() - fitted.left()) / fitted.width()).clamp(0.0, 1.0);
+    let u1 = ((rect.right() - fitted.left()) / fitted.width()).clamp(0.0, 1.0);
+    let v0 = ((strip.top() - fitted.top()) / fitted.height()).clamp(0.0, 1.0);
+    let v1 = ((strip.bottom() - fitted.top()) / fitted.height()).clamp(0.0, 1.0);
+    let mut mesh = egui::Mesh::with_texture(texture.id());
+    let clear = egui::Color32::from_white_alpha(0);
+    let dense = egui::Color32::from_white_alpha(235);
+    mesh.colored_vertex(strip.left_top(), clear);
+    mesh.colored_vertex(strip.right_top(), clear);
+    mesh.colored_vertex(strip.left_bottom(), dense);
+    mesh.colored_vertex(strip.right_bottom(), dense);
+    // UV alignées sur la bande réellement couverte par la texture.
+    let uvs = [(u0, v0), (u1, v0), (u0, v1), (u1, v1)];
+    for (index, (u, v)) in uvs.iter().enumerate() {
+        mesh.vertices[index].uv = egui::pos2(*u, *v);
+    }
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(1, 2, 3);
+    painter.add(egui::Shape::mesh(mesh));
+}
+
 /// Remplissage de secours d'une bannière : un aplat teinté par la couleur du
 /// jeu et sa lettre, plutôt qu'un grand rectangle noir qui ressemble à une
 /// image manquante.

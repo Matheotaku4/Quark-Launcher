@@ -14,7 +14,7 @@
 
 use crate::app::{AddStep, NewsState, QuarkApp, ScanCandidate, SearchState, Tab};
 use crate::artwork::{AssetPlan, SearchHit, Source};
-use crate::config::{now_ts, Artwork, AssetKind, Game, Library, ThemeMode, ViewMode};
+use crate::config::{Artwork, AssetKind, Game, Library, ThemeMode, ViewMode, now_ts};
 use crate::news::NewsItem;
 use crate::proton::{ProtonRuntime, RuntimeKind};
 use eframe::egui::epaint::textures::TexturesDelta;

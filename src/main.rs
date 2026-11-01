@@ -3,6 +3,7 @@
 //! Utilisation normale : `cargo run --release`
 //! Diagnostic (sans interface) : voir `--help`.
 
+mod achievements_bridge;
 mod app;
 mod artwork;
 mod config;
@@ -16,6 +17,7 @@ mod providers;
 mod saves;
 mod scan;
 mod session;
+mod session_sync;
 mod snapshot;
 mod stats;
 mod steam_store;

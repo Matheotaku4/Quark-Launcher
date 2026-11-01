@@ -201,8 +201,11 @@ with save snapshots through Ludusavi.
   same game on two stores can be **merged** into one row and **split** again. Every tab is
   **sorted by name**, a **search field** filters owned titles as you type (accents and case
   ignored), and each card shows the store's **vertical cover** — Steam from its CDN, GOG from
-  the product images, Epic through `legendary info` — cached on disk and fetched one at a time
-  when the page is open. A missing cover falls back to a monogram instead of a blank tile.
+  the API v2 `boxArtImage` (`_glx_vertical_cover`), Epic from Legendary's metadata cache
+  (`keyImages`) — cached on disk and fetched one at a time when the page is open. A missing
+  cover falls back to a monogram instead of a blank tile. Wrong GOG covers from 1.0.3 are
+  ignored: the cache is versioned, and Epic covers are no longer parsed from the `legendary
+  info` summary (which never contained `keyImages`).
 - **Store sync starts on its own**: once the interface is up, every connected store is
   refreshed in the background. **Settings → Stores & tools** opens on a *Sync* section with a
   button per store, *Sync all*, the number of games, the last sync time and any error;
@@ -218,13 +221,39 @@ with save snapshots through Ludusavi.
   platform): without a terminal its prompts made every install fail. A **double-click** on a
   card installs the game, and a successful install creates the matching Quark entry
   (default settings, cover, store link) so the game lands in the library ready to play.
+  While an install runs, **Mes jeux** shows its own progress bar — percentage, step, size,
+  speed and ETA parsed from Legendary/gogdl output — with a **Cancel** button. Covers are
+  imported as soon as the game is adopted, in the background, without blocking the page.
 - **Save folders and snapshots from the same page**: custom save folders per installation,
   Ludusavi preview, backup, backup inventory and restore — see *Save files* below.
-- **Achievements**: **Succès…** reads a game's achievements from `legendary achievements
-  <app> --json` and shows unlocked/total, a progress bar and the full list. **Cloud saves are
-  deliberately absent** — no verified source is wired, so Quark shows nothing rather than
-  invented capabilities. GOG publishes achievements only to Galaxy, with no public client
-  ID, so the GOG entry stays disabled and says why.
+- **Achievements**: **Succès…** reads Epic achievements from `legendary achievements
+  <app> --json` and GOG achievements from `gameplay.gog.com` with the gogdl session
+  (`client_id` = product id, `user_id` from the session), then shows unlocked/total, a
+  progress bar and the full list (hidden achievements stay hidden until unlocked).
+  **Cloud saves are deliberately absent** — no verified source is wired, so Quark shows
+  nothing rather than invented capabilities.
+- **Achievements from the running game**: every launch exports
+  `QUARK_ACHIEVEMENTS_URL`, `QUARK_ACHIEVEMENTS_TOKEN` and `QUARK_GAME_ID`. A game or a
+  script can report an unlock with a single POST; Quark records it, shows it in the list with
+  a *session* badge, and writes it to GOG when the store allows it (Epic has no public write
+  endpoint, so those stay local). The listener only binds `127.0.0.1`, the token is random per
+  launch and the session log masks it:
+
+  ```bash
+  curl -X POST "$QUARK_ACHIEVEMENTS_URL" \
+       -H "Authorization: Bearer $QUARK_ACHIEVEMENTS_TOKEN" \
+       -d '{"game":"'"$QUARK_GAME_ID"'","achievement":"ACH_FIRST","name":"Premier pas"}'
+  ```
+- **Cleaner settings**: game and global settings use full-width rows — label and explanation
+  on the left, an animated switch on the right — instead of mixed checkboxes. GameMode,
+  MangoHud, PRIME, gamescope (with its resolution/FSR/fps block), Proton logging, umu,
+  anti-cheat runtimes, the tray icon and the carousel all follow the same pattern.
+- **Hero / background transition**: switching games crossfades both the banner and the blurred
+  backdrop with an eased 0.55 s curve, and the bottom of the banner dissolves into the blurred
+  version of the same art, so there is no hard edge between hero and background.
+- **Storefront refresh**: a full-width hero with gradient scrim and discount badge, a
+  *Top reductions* rail, section headers with an accent rule and per-family colours, and
+  cards that lift with their discount and Linux badge on the artwork.
 
 ## Build
 
@@ -308,7 +337,7 @@ Legendary, gogdl and Ludusavi are downloaded from their official GitHub releases
 | --- | --- | --- |
 | Legendary | Epic library, installs, login | owned + installed lists, installs into a folder you pick |
 | Ludusavi | local save snapshots | preview, backup, inventory, restore |
-| gogdl | GOG | login through a GOG code; owned games are listed through the GOG API, installs not wired yet |
+| gogdl | GOG | login through a GOG code; owned games listed through the GOG API, installs, achievements, session-based unlocks |
 
 The SHA-256 digest published in the release metadata is mandatory: a release without a
 digest, a digest mismatch, a missing Linux x64 asset, or a `--version` that does not match the
@@ -362,9 +391,11 @@ Saves are handled per provider installation, not per title:
   inside your home directory, the installation folder or a declared save folder. The forced
   Ludusavi call exists only inside that confirmed flow.
 
-Achievements and cloud saves are **not** offered: no verified source is wired for either, so
-nothing is claimed or displayed as empty. GOG games can be synced into **Mes jeux** and
-installed with gogdl; their achievements stay out of reach.
+Achievements are read for Epic (Legendary) and GOG (gameplay API + gogdl session), and games
+can report unlocks at runtime through the local bridge. Writing an Epic achievement is not
+possible outside Epic's own client, so those reported during a session stay marked *session*
+in Quark. Cloud saves are still **not** offered: no verified source is wired, so nothing is
+claimed or displayed as empty.
 
 The full manual check — real Ludusavi binary, exact commands, expected JSON and pass/fail
 criteria — is in [`docs/verification/ludusavi-config.md`](docs/verification/ludusavi-config.md).
@@ -545,7 +576,7 @@ src/snapshot.rs     off-screen software renderer (--ui), for visual checks
 ## Possible next steps
 
 - Achievements and cloud saves, but only once a per-store source can be verified.
-- Wire GOG installs into the gogdl adapter once its install output is pinned.
+- Steam achievements (no local API without owning the client session).
 - Favourites on the home page.
 - A time-range selector on the statistics page (7 days, 30 days, this year).
 - A “verify prefix” action.

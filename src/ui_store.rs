@@ -1,14 +1,81 @@
 //! Boutique Steam : découverte verticale par sections, sans achat intégré.
+//!
+//! La page met en avant une offre (grande bannière, dégradé et prix), une
+//! rangée de réductions, puis les sections du catalogue. Les cartes se
+//! soulèvent au survol et portent leur remise sur l'image : la page se parcourt
+//! comme une devanture, pas comme un tableau.
 
 use crate::app::QuarkApp;
 use crate::steam_store::{StoreItem, StoreSection};
 use crate::theme::Palette;
-use eframe::egui::{self, Align, Align2, FontId, Layout, RichText, Sense, Vec2};
+use eframe::egui::{
+    self, Align, Align2, Color32, FontId, Layout, Pos2, Rect, RichText, Sense, Vec2,
+};
 
-const PAGE_MARGIN: f32 = 28.0;
-const CARD_WIDTH: f32 = 228.0;
-const CARD_GAP: f32 = 12.0;
+const PAGE_MARGIN: f32 = 30.0;
+const CARD_WIDTH: f32 = 238.0;
+const CARD_GAP: f32 = 14.0;
 const CARDS_PER_SECTION: usize = 24;
+const ART_RATIO: f32 = 1.745;
+
+
+/// Texture d'une image de boutique, chargée par le loader HTTP d'egui.
+fn store_texture(ctx: &egui::Context, url: &str) -> Option<(egui::TextureId, Vec2)> {
+    match ctx.try_load_texture(
+        url,
+        egui::TextureOptions::LINEAR,
+        egui::load::SizeHint::Size {
+            width: 640,
+            height: 360,
+            maintain_aspect_ratio: false,
+        },
+    ) {
+        Ok(egui::load::TexturePoll::Ready { texture, .. }) => Some((texture.id, texture.size)),
+        Ok(egui::load::TexturePoll::Pending { .. }) => {
+            // Le chargement HTTP continue : la prochaine image affichera
+            // l'artwork au lieu de le redemander à chaque frame.
+            ctx.request_repaint_after(std::time::Duration::from_millis(120));
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Recadrage « cover » : l'image remplit le rectangle sans être déformée.
+fn cover_uv(size: Vec2, rect: Rect) -> Rect {
+    if size.x <= 0.0 || size.y <= 0.0 || rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+    }
+    let target = rect.width() / rect.height();
+    let image = size.x / size.y;
+    if image > target {
+        let width = target / image;
+        Rect::from_min_max(
+            Pos2::new((1.0 - width) / 2.0, 0.0),
+            Pos2::new((1.0 + width) / 2.0, 1.0),
+        )
+    } else {
+        let height = image / target;
+        Rect::from_min_max(
+            Pos2::new(0.0, (1.0 - height) / 2.0),
+            Pos2::new(1.0, (1.0 + height) / 2.0),
+        )
+    }
+}
+
+fn paint_store_image(
+    painter: &egui::Painter,
+    ctx: &egui::Context,
+    url: &str,
+    rect: Rect,
+) -> bool {
+    if let Some((id, size)) = store_texture(ctx, url) {
+        painter.image(id, rect, cover_uv(size, rect), Color32::WHITE);
+        true
+    } else {
+        false
+    }
+}
 
 impl QuarkApp {
     pub(crate) fn store_tab(&mut self, ctx: &egui::Context) {
@@ -24,7 +91,7 @@ impl QuarkApp {
                     .id_salt("quark_store_scroll")
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        // Entrée de page en fondu, comme les deux autres onglets.
+                        // Entrée de page en fondu, comme les autres onglets.
                         let fade = (age / 0.16).clamp(0.0, 1.0);
                         if fade < 1.0 {
                             ui.ctx().request_repaint();
@@ -33,32 +100,15 @@ impl QuarkApp {
                         ui.horizontal(|ui| {
                             ui.add_space(PAGE_MARGIN);
                             ui.vertical(|ui| {
-                                ui.set_max_width((ui.available_width() - PAGE_MARGIN).max(240.0));
-                                ui.add_space(22.0);
-                                ui.label(
-                                    RichText::new("BOUTIQUE STEAM")
-                                        .size(11.0)
-                                        .strong()
-                                        .color(pal.accent),
+                                ui.set_max_width(
+                                    (ui.available_width() - PAGE_MARGIN).max(240.0),
                                 );
-                                ui.add_space(5.0);
-                                ui.label(
-                                    RichText::new("Découvrir votre prochain jeu")
-                                        .size(27.0)
-                                        .strong()
-                                        .color(pal.text),
-                                );
-                                ui.label(
-                                    RichText::new(
-                                        "Catalogue régional Steam · les achats se font sur le site officiel",
-                                    )
-                                    .size(12.0)
-                                    .color(pal.text_dim),
-                                );
-                                ui.add_space(16.0);
-
+                                ui.add_space(20.0);
+                                store_heading(ui, &pal);
+                                ui.add_space(14.0);
                                 ui.horizontal(|ui| {
-                                    let field_width = (ui.available_width() - 236.0).max(150.0);
+                                    let field_width =
+                                        (ui.available_width() - 250.0).max(150.0);
                                     let field = ui.add_sized(
                                         Vec2::new(field_width, 34.0),
                                         egui::TextEdit::singleline(&mut self.store_query)
@@ -66,57 +116,58 @@ impl QuarkApp {
                                             .font(FontId::proportional(14.0)),
                                     );
                                     do_search |= field.lost_focus()
-                                        && ui.input(|input| input.key_pressed(egui::Key::Enter));
-                                    if ui
-                                        .add_enabled(
-                                            self.store_query.trim().len() >= 2
-                                                && !self.store_search_loading,
-                                            egui::Button::new("Rechercher"),
-                                        )
-                                        .clicked()
-                                    {
+                                        && ui.input(|input| {
+                                            input.key_pressed(egui::Key::Enter)
+                                        });
+                                    if widgets_button(
+                                        ui,
+                                        "Rechercher",
+                                        &pal,
+                                        self.store_query.trim().len() >= 2
+                                            && !self.store_search_loading,
+                                    ) {
                                         do_search = true;
                                     }
-                                    if ui.button("Actualiser").clicked() {
+                                    if widgets_button(ui, "Actualiser", &pal, true) {
                                         refresh = true;
                                     }
                                 });
 
                                 if self.store_search_loading {
-                                    ui.horizontal(|ui| {
-                                        ui.spinner();
-                                        ui.label(
-                                            RichText::new("Recherche dans Steam…")
-                                                .size(12.0)
-                                                .color(pal.text_dim),
-                                        );
-                                    });
+                                    spinner_line(ui, &pal, "Recherche dans Steam…");
                                 }
                                 if let Some(error) = &self.store_search_error {
-                                    ui.label(RichText::new(error).size(11.5).color(pal.danger));
+                                    ui.label(
+                                        RichText::new(error).size(11.5).color(pal.danger),
+                                    );
                                 }
                                 if let Some(results) = self.store_search_results.clone() {
-                                    heading(ui, "RÉSULTATS", &pal, None);
+                                    section_heading(
+                                        ui,
+                                        &pal,
+                                        "RÉSULTATS",
+                                        Some(&format!("{} correspondance(s)", results.len())),
+                                        pal.accent,
+                                    );
                                     if results.is_empty() {
-                                        ui.label(
-                                            RichText::new("Aucun jeu trouvé.")
-                                                .size(12.0)
-                                                .color(pal.text_dim),
+                                        empty_line(
+                                            ui,
+                                            &pal,
+                                            "Aucun jeu ne correspond à cette recherche.",
                                         );
                                     } else {
-                                        card_grid(ui, &pal, "recherche", &results, &mut open_item);
+                                        card_grid(
+                                            ui,
+                                            &pal,
+                                            "recherche",
+                                            &results,
+                                            &mut open_item,
+                                        );
                                     }
                                 }
 
                                 if self.store_loading {
-                                    ui.horizontal(|ui| {
-                                        ui.spinner();
-                                        ui.label(
-                                            RichText::new("Chargement du catalogue Steam…")
-                                                .size(12.0)
-                                                .color(pal.text_dim),
-                                        );
-                                    });
+                                    spinner_line(ui, &pal, "Chargement du catalogue Steam…");
                                 }
                                 if let Some(error) = &self.store_error {
                                     ui.label(
@@ -129,14 +180,18 @@ impl QuarkApp {
                                 }
                                 if let Some(notice) = &self.store_notice {
                                     ui.label(
-                                        RichText::new(notice).size(11.0).color(pal.text_faint),
+                                        RichText::new(notice)
+                                            .size(11.0)
+                                            .color(pal.text_faint),
                                     );
                                 }
                                 if self.store_stale && self.store_snapshot.is_some() {
                                     ui.label(
-                                        RichText::new("Cache local · données potentiellement périmées")
-                                            .size(11.0)
-                                            .color(pal.text_faint),
+                                        RichText::new(
+                                            "Cache local · données potentiellement périmées",
+                                        )
+                                        .size(11.0)
+                                        .color(pal.text_faint),
                                     );
                                 }
 
@@ -144,18 +199,32 @@ impl QuarkApp {
                                 if let Some(snapshot) = snapshot {
                                     if let Some(hero) = hero_item(&snapshot.sections) {
                                         hero_card(ui, &pal, &hero, &mut open_item);
+                                        let deals = top_deals(&snapshot.sections, 8);
+                                        if !deals.is_empty() {
+                                            section_heading(
+                                                ui,
+                                                &pal,
+                                                "TOP RÉDUCTIONS",
+                                                Some(
+                                                    "Les plus fortes remises du catalogue, mises à jour avec lui",
+                                                ),
+                                                pal.accent,
+                                            );
+                                            deals_rail(ui, &pal, &deals, &mut open_item);
+                                        }
                                     }
                                     if let (Some(source), false) = (
                                         self.store_recommendation_source.as_deref(),
                                         self.store_recommendations.is_empty(),
                                     ) {
-                                        heading(
+                                        section_heading(
                                             ui,
-                                            "RECOMMANDÉ POUR VOUS",
                                             &pal,
+                                            "RECOMMANDÉ POUR VOUS",
                                             Some(&format!(
-                                                "Classées à partir de {source} · aucune donnée de navigation n'est envoyée à Steam"
+                                                "D'après {source} · aucune donnée de navigation n'est envoyée à Steam"
                                             )),
+                                            pal.accent,
                                         );
                                         card_grid(
                                             ui,
@@ -166,12 +235,12 @@ impl QuarkApp {
                                         );
                                     }
                                     for section in &snapshot.sections {
-                                        let caption = section_caption(section);
-                                        heading(
+                                        section_heading(
                                             ui,
-                                            &section.title.to_uppercase(),
                                             &pal,
-                                            caption.as_deref(),
+                                            &section.title.to_uppercase(),
+                                            section_caption(section).as_deref(),
+                                            accent_for(&pal, section),
                                         );
                                         card_grid(
                                             ui,
@@ -182,16 +251,17 @@ impl QuarkApp {
                                         );
                                     }
                                 } else if !self.store_loading {
-                                    let message = if self.store_error.is_some() {
-                                        "Le catalogue Steam est indisponible et aucun cache n'est encore enregistré."
-                                    } else {
-                                        "Le catalogue Steam apparaîtra ici."
-                                    };
-                                    ui.label(
-                                        RichText::new(message).size(12.0).color(pal.text_dim),
+                                    empty_line(
+                                        ui,
+                                        &pal,
+                                        if self.store_error.is_some() {
+                                            "Le catalogue Steam est indisponible et aucun cache n'est encore enregistré."
+                                        } else {
+                                            "Le catalogue Steam apparaîtra ici."
+                                        },
                                     );
                                 }
-                                ui.add_space(30.0);
+                                ui.add_space(34.0);
                             });
                         });
                     });
@@ -208,13 +278,105 @@ impl QuarkApp {
     }
 }
 
+/// Titre de page avec filet d'accent et une ligne d'explication.
+fn store_heading(ui: &mut egui::Ui, pal: &Palette) {
+    ui.horizontal(|ui| {
+        let (bar, _) = ui.allocate_exact_size(Vec2::new(3.0, 44.0), Sense::hover());
+        ui.painter().rect_filled(bar, 1.5, pal.accent);
+        ui.add_space(10.0);
+        ui.vertical(|ui| {
+            ui.label(
+                RichText::new("BOUTIQUE STEAM")
+                    .size(11.0)
+                    .strong()
+                    .color(pal.accent),
+            );
+            ui.label(
+                RichText::new("Découvrir votre prochain jeu")
+                    .size(28.0)
+                    .strong()
+                    .color(pal.text),
+            );
+            ui.label(
+                RichText::new("Catalogue régional Steam · les achats se font sur le site officiel")
+                    .size(12.0)
+                    .color(pal.text_dim),
+            );
+        });
+    });
+}
+
+fn widgets_button(ui: &mut egui::Ui, label: &str, pal: &Palette, enabled: bool) -> bool {
+    ui.add_enabled(
+        enabled,
+        egui::Button::new(RichText::new(label).size(12.0))
+            .fill(pal.surface)
+            .stroke(egui::Stroke::new(1.0_f32, pal.border))
+            .corner_radius(7.0)
+            .min_size(Vec2::new(0.0, 34.0)),
+    )
+    .clicked()
+}
+
+fn spinner_line(ui: &mut egui::Ui, pal: &Palette, text: &str) {
+    ui.horizontal(|ui| {
+        ui.add(egui::Spinner::new().size(13.0));
+        ui.add_space(6.0);
+        ui.label(RichText::new(text).size(12.0).color(pal.text_dim));
+    });
+}
+
+fn empty_line(ui: &mut egui::Ui, pal: &Palette, text: &str) {
+    ui.label(RichText::new(text).size(12.0).color(pal.text_dim));
+}
+
+fn accent_for(pal: &Palette, section: &StoreSection) -> Color32 {
+    // Une teinte par grande famille de sections, pour que la page ne soit pas
+    // un mur d'une seule couleur.
+    let title = section.title.to_lowercase();
+    if title.contains("promo") || title.contains("réduc") || title.contains("special") {
+        Color32::from_rgb(0xFF, 0x6B, 0x35)
+    } else if title.contains("nouveaut") || title.contains("new") {
+        Color32::from_rgb(0x62, 0xD8, 0x8B)
+    } else if title.contains("populaire") || title.contains("vente") {
+        Color32::from_rgb(0xB0, 0x8C, 0xFF)
+    } else {
+        pal.accent
+    }
+}
+
 fn section_caption(section: &StoreSection) -> Option<String> {
     let with_players = section
         .items
         .iter()
         .filter(|item| item.players_peak.is_some())
         .count();
-    (with_players > 0).then(|| format!("{with_players} jeux avec leur pic de joueurs simultanés"))
+    let mut parts = vec![format!("{} jeux", section.items.len())];
+    if with_players > 0 {
+        parts.push(format!("{with_players} pics de joueurs"));
+    }
+    Some(parts.join(" · "))
+}
+
+fn section_heading(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    text: &str,
+    caption: Option<&str>,
+    accent: Color32,
+) {
+    ui.add_space(24.0);
+    ui.horizontal(|ui| {
+        let (bar, _) = ui.allocate_exact_size(Vec2::new(3.0, 15.0), Sense::hover());
+        ui.painter().rect_filled(bar, 1.5, accent);
+        ui.add_space(8.0);
+        ui.label(RichText::new(text).size(12.0).strong().color(pal.text));
+    });
+    if let Some(caption) = caption {
+        ui.add_space(2.0);
+        ui.label(RichText::new(caption).size(10.5).color(pal.text_faint));
+    }
+    ui.add_space(9.0);
 }
 
 /// Première offre en promotion, mise en avant en haut de page.
@@ -232,13 +394,30 @@ fn hero_item(sections: &[StoreSection]) -> Option<StoreItem> {
         .cloned()
 }
 
-fn heading(ui: &mut egui::Ui, text: &str, pal: &Palette, caption: Option<&str>) {
-    ui.add_space(20.0);
-    ui.label(RichText::new(text).size(12.0).strong().color(pal.text_dim));
-    if let Some(caption) = caption {
-        ui.label(RichText::new(caption).size(10.5).color(pal.text_faint));
-    }
-    ui.add_space(8.0);
+/// Meilleures remises, sans doublon.
+fn top_deals(sections: &[StoreSection], count: usize) -> Vec<StoreItem> {
+    let mut items: Vec<StoreItem> = sections
+        .iter()
+        .flat_map(|section| section.items.iter())
+        .filter(|item| {
+            item.price
+                .as_ref()
+                .and_then(|price| price.discount_percent)
+                .is_some_and(|discount| discount > 0)
+        })
+        .cloned()
+        .collect();
+    items.sort_by(|left, right| {
+        right
+            .price
+            .as_ref()
+            .and_then(|price| price.discount_percent)
+            .cmp(&left.price.as_ref().and_then(|price| price.discount_percent))
+    });
+    let mut seen = std::collections::HashSet::new();
+    items.retain(|item| seen.insert(item.app_id));
+    items.truncate(count);
+    items
 }
 
 fn hero_card(
@@ -247,57 +426,238 @@ fn hero_card(
     item: &StoreItem,
     open_item: &mut Option<StoreItem>,
 ) {
-    let width = ui.available_width().min(1000.0);
-    let image_width = (width * 0.58).clamp(240.0, 620.0);
-    ui.add_space(18.0);
-    egui::Frame::new()
-        .fill(pal.panel)
-        .stroke(egui::Stroke::new(1.0_f32, pal.border))
-        .corner_radius(8.0)
-        .inner_margin(10.0)
+    let width = ui.available_width().min(1100.0);
+    let height = (width / 2.6).clamp(210.0, 380.0);
+    ui.add_space(20.0);
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
+    let painter = ui.painter_at(rect);
+    let hover = ui.ctx().animate_bool_with_time(
+        egui::Id::new(("quark-hero-hover", item.app_id)),
+        response.hovered(),
+        0.18,
+    );
+    // Image qui zoome très légèrement au survol et se recadre sans déforme.
+    let zoom = Rect::from_center_size(rect.center(), rect.size() * (1.0 + 0.015 * hover));
+    let painted = item
+        .artwork_url
+        .as_deref()
+        .is_some_and(|url| paint_store_image(&painter, ui.ctx(), url, zoom));
+    if !painted {
+        painter.rect_filled(rect, 12.0, pal.surface);
+    }
+    // Dégradé vers le bas : le texte reste lisible sur n'importe quelle image.
+    let mut veil = egui::Mesh::default();
+    veil.colored_vertex(rect.left_top(), Color32::from_black_alpha(30));
+    veil.colored_vertex(rect.right_top(), Color32::from_black_alpha(30));
+    veil.colored_vertex(rect.left_bottom(), Color32::from_black_alpha(235));
+    veil.colored_vertex(rect.right_bottom(), Color32::from_black_alpha(235));
+    veil.add_triangle(0, 1, 2);
+    veil.add_triangle(1, 2, 3);
+    painter.add(egui::Shape::mesh(veil));
+    painter.rect_stroke(
+        rect,
+        12.0,
+        egui::Stroke::new(1.0_f32, pal.accent.gamma_multiply(0.35 + 0.5 * hover)),
+        egui::StrokeKind::Inside,
+    );
+
+    // Bandeau « À LA UNE » et remise, en haut à gauche.
+    let pill = Rect::from_min_size(
+        Pos2::new(rect.left() + 16.0, rect.top() + 16.0),
+        Vec2::new(98.0, 24.0),
+    );
+    painter.rect_filled(pill, 12.0, Color32::from_black_alpha(150));
+    painter.text(
+        pill.center(),
+        Align2::CENTER_CENTER,
+        "À LA UNE",
+        FontId::proportional(10.5),
+        pal.accent,
+    );
+    if let Some(discount) = item.price.as_ref().and_then(|price| price.discount_percent) {
+        let badge = Rect::from_min_size(
+            Pos2::new(rect.left() + 16.0, rect.top() + 48.0),
+            Vec2::new(58.0, 24.0),
+        );
+        painter.rect_filled(badge, 5.0, pal.accent);
+        painter.text(
+            badge.center(),
+            Align2::CENTER_CENTER,
+            format!("-{discount} %"),
+            FontId::proportional(11.0),
+            crate::theme::on_accent(pal.accent),
+        );
+    }
+
+    // Bloc texte, posé en bas de la bannière.
+    let text_rect = Rect::from_min_max(
+        Pos2::new(rect.left() + 22.0, rect.bottom() - 150.0),
+        Pos2::new(rect.right() - 22.0, rect.bottom() - 18.0),
+    );
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(text_rect)
+            .layout(Layout::top_down(Align::Min)),
+    );
+    child.label(
+        RichText::new(&item.name)
+            .size(24.0)
+            .strong()
+            .color(Color32::WHITE),
+    );
+    child.add_space(4.0);
+    if item.linux_available == Some(true) {
+        child.label(
+            RichText::new("Linux natif")
+                .size(10.5)
+                .strong()
+                .color(pal.accent),
+        );
+    }
+    if let Some(peak) = item.players_peak {
+        child.label(
+            RichText::new(format!("{} joueurs simultanés au pic", thousands(peak)))
+                .size(10.5)
+                .color(Color32::from_white_alpha(190)),
+        );
+    }
+    child.add_space(8.0);
+    child.horizontal(|ui| {
+        price_widgets(ui, pal, item, true);
+        ui.add_space(16.0);
+        if ui
+            .add(
+                egui::Button::new(
+                    RichText::new("Voir sur Steam")
+                        .size(12.5)
+                        .strong()
+                        .color(crate::theme::on_accent(pal.accent)),
+                )
+                .fill(pal.accent)
+                .corner_radius(7.0)
+                .min_size(Vec2::new(0.0, 32.0)),
+            )
+            .clicked()
+        {
+            *open_item = Some(item.clone());
+        }
+    });
+    if response.clicked() {
+        *open_item = Some(item.clone());
+    }
+    response.on_hover_text("Ouvrir la page Steam du jeu");
+}
+
+/// Rangée de cartes compactes, une par remise.
+fn deals_rail(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    items: &[StoreItem],
+    open_item: &mut Option<StoreItem>,
+) {
+    egui::ScrollArea::horizontal()
+        .id_salt("quark_store_deals")
+        .auto_shrink([false, true])
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                if let Some(url) = &item.artwork_url {
-                    ui.add(
-                        egui::Image::new(url)
-                            .fit_to_exact_size(Vec2::new(image_width, image_width / 1.745)),
-                    );
-                }
-                ui.add_space(16.0);
-                ui.vertical(|ui| {
-                    ui.add_space(6.0);
-                    ui.label(
-                        RichText::new("À LA UNE")
-                            .size(10.5)
-                            .strong()
-                            .color(pal.accent),
-                    );
-                    ui.add_space(4.0);
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(&item.name)
-                                .size(22.0)
-                                .strong()
-                                .color(pal.text),
-                        )
-                        .truncate(),
-                    );
-                    ui.add_space(6.0);
-                    ui.label(
-                        RichText::new("Achat et téléchargement sur le site officiel de Steam.")
-                            .size(11.5)
-                            .color(pal.text_faint),
-                    );
+                for (index, item) in items.iter().enumerate() {
+                    deal_card(ui, pal, item, index + 1, open_item);
                     ui.add_space(10.0);
-                    ui.horizontal(|ui| {
-                        price_widgets(ui, pal, item, true);
-                        if ui.button("Voir sur Steam").clicked() {
-                            *open_item = Some(item.clone());
-                        }
-                    });
-                });
+                }
             });
         });
+}
+
+fn deal_card(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    item: &StoreItem,
+    rank: usize,
+    open_item: &mut Option<StoreItem>,
+) {
+    let width = 196.0;
+    let art = Vec2::new(width, width / ART_RATIO);
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, art.y + 52.0), Sense::click());
+    let hover = ui.ctx().animate_bool_with_time(
+        egui::Id::new(("quark-deal-hover", item.app_id)),
+        response.hovered(),
+        0.14,
+    );
+    let lift = -3.0 * hover;
+    let card = rect.translate(Vec2::new(0.0, lift));
+    let painter = ui.painter_at(card);
+    painter.rect_filled(card, 9.0, pal.panel);
+    let image_rect = Rect::from_min_size(card.min, art);
+    let painted = item
+        .artwork_url
+        .as_deref()
+        .is_some_and(|url| paint_store_image(&painter, ui.ctx(), url, image_rect));
+    if !painted {
+        painter.rect_filled(image_rect, 9.0, pal.surface);
+    }
+    let mut veil = egui::Mesh::default();
+    veil.colored_vertex(image_rect.left_top(), Color32::from_black_alpha(0));
+    veil.colored_vertex(image_rect.right_top(), Color32::from_black_alpha(0));
+    veil.colored_vertex(image_rect.left_bottom(), Color32::from_black_alpha(170));
+    veil.colored_vertex(image_rect.right_bottom(), Color32::from_black_alpha(170));
+    veil.add_triangle(0, 1, 2);
+    veil.add_triangle(1, 2, 3);
+    painter.add(egui::Shape::mesh(veil));
+    // Rang et remise, superposés à l'image.
+    let rank_badge = Rect::from_min_size(
+        Pos2::new(image_rect.left() + 8.0, image_rect.top() + 8.0),
+        Vec2::new(22.0, 22.0),
+    );
+    painter.circle_filled(rank_badge.center(), 11.0, Color32::from_black_alpha(180));
+    painter.text(
+        rank_badge.center(),
+        Align2::CENTER_CENTER,
+        rank.to_string(),
+        FontId::proportional(11.0),
+        Color32::WHITE,
+    );
+    if let Some(discount) = item.price.as_ref().and_then(|price| price.discount_percent) {
+        let badge = Rect::from_min_size(
+            Pos2::new(image_rect.right() - 54.0, image_rect.top() + 8.0),
+            Vec2::new(46.0, 20.0),
+        );
+        painter.rect_filled(badge, 5.0, pal.accent);
+        painter.text(
+            badge.center(),
+            Align2::CENTER_CENTER,
+            format!("-{discount}%"),
+            FontId::proportional(10.5),
+            crate::theme::on_accent(pal.accent),
+        );
+    }
+    let footer = Rect::from_min_max(
+        Pos2::new(card.left() + 9.0, image_rect.bottom() + 6.0),
+        Pos2::new(card.right() - 8.0, card.bottom() - 4.0),
+    );
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(footer)
+            .layout(Layout::top_down(Align::Min)),
+    );
+    child.add(
+        egui::Label::new(
+            RichText::new(&item.name)
+                .size(11.5)
+                .strong()
+                .color(pal.text),
+        )
+        .truncate(),
+    );
+    child.horizontal(|ui| price_widgets(ui, pal, item, false));
+    painter.rect_stroke(
+        card,
+        9.0,
+        egui::Stroke::new(1.0_f32, pal.accent.gamma_multiply(hover)),
+        egui::StrokeKind::Inside,
+    );
+    if response.clicked() {
+        *open_item = Some(item.clone());
+    }
 }
 
 fn card_grid(
@@ -312,8 +672,6 @@ fn card_grid(
     let shown: Vec<&StoreItem> = items.iter().take(CARDS_PER_SECTION).collect();
     for (row, chunk) in shown.chunks(per_row).enumerate() {
         ui.push_id((salt, row), |ui| {
-            // Alignement en haut : les cartes d'une même rangée ne se
-            // décalent pas quand l'une d'elles a une ligne de plus.
             ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
                 for item in chunk {
                     card(ui, pal, item, open_item);
@@ -321,83 +679,108 @@ fn card_grid(
                 }
             });
         });
-        ui.add_space(CARD_GAP);
     }
 }
 
 fn card(ui: &mut egui::Ui, pal: &Palette, item: &StoreItem, open_item: &mut Option<StoreItem>) {
-    egui::Frame::new()
-        .fill(pal.panel)
-        .stroke(egui::Stroke::new(1.0_f32, pal.border))
-        .corner_radius(6.0)
-        .inner_margin(8.0)
-        .show(ui, |ui| {
-            // La grille est dessinée dans un `ui.horizontal` : sans ce
-            // `vertical`, le contenu de la carte s'étalerait sur la ligne.
-            ui.vertical(|ui| {
-                ui.set_width(CARD_WIDTH - 16.0);
-                card_body(ui, pal, item, open_item);
-            });
-        });
-}
-
-fn card_body(
-    ui: &mut egui::Ui,
-    pal: &Palette,
-    item: &StoreItem,
-    open_item: &mut Option<StoreItem>,
-) {
-    let art_size = Vec2::new(CARD_WIDTH - 16.0, (CARD_WIDTH - 16.0) / 1.745);
-    match &item.artwork_url {
-        Some(url) => {
-            ui.add(egui::Image::new(url).fit_to_exact_size(art_size));
-        }
-        None => {
-            let (rect, _) = ui.allocate_exact_size(art_size, Sense::hover());
-            ui.painter().rect_filled(rect, 4.0, pal.surface);
-            ui.painter().text(
-                rect.center(),
-                Align2::CENTER_CENTER,
-                "Steam",
-                FontId::proportional(13.0),
-                pal.text_faint,
-            );
-        }
-    }
-    ui.add_space(6.0);
-    ui.allocate_ui_with_layout(
-        Vec2::new(art_size.x, 34.0),
-        Layout::top_down(Align::Min),
-        |ui| {
-            ui.add(
-                egui::Label::new(
-                    RichText::new(&item.name)
-                        .size(12.0)
-                        .strong()
-                        .color(pal.text),
-                )
-                .truncate(),
-            );
-            if item.linux_available == Some(true) {
-                ui.label(RichText::new("Linux natif").size(10.5).color(pal.accent));
-            }
-        },
+    let art = Vec2::new(CARD_WIDTH, CARD_WIDTH / ART_RATIO);
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(CARD_WIDTH, art.y + 68.0), Sense::click());
+    let hover = ui.ctx().animate_bool_with_time(
+        egui::Id::new(("quark-store-card", item.app_id)),
+        response.hovered(),
+        0.14,
     );
-    ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        price_widgets(ui, pal, item, false);
-    });
+    let card = rect.translate(Vec2::new(0.0, -3.0 * hover));
+    let painter = ui.painter_at(card);
+    painter.rect_filled(card, 9.0, pal.panel);
+    painter.rect_stroke(
+        card,
+        9.0,
+        egui::Stroke::new(1.0_f32, pal.border),
+        egui::StrokeKind::Inside,
+    );
+    let image_rect = Rect::from_min_size(card.min, art);
+    let painted = item
+        .artwork_url
+        .as_deref()
+        .is_some_and(|url| paint_store_image(&painter, ui.ctx(), url, image_rect));
+    if !painted {
+        painter.rect_filled(image_rect, 9.0, pal.surface);
+        painter.text(
+            image_rect.center(),
+            Align2::CENTER_CENTER,
+            "Steam",
+            FontId::proportional(13.0),
+            pal.text_faint,
+        );
+    }
+    // Remise sur l'image, comme une étiquette de rayon.
+    if let Some(discount) = item.price.as_ref().and_then(|price| price.discount_percent) {
+        let badge = Rect::from_min_size(
+            Pos2::new(image_rect.left() + 8.0, image_rect.top() + 8.0),
+            Vec2::new(48.0, 21.0),
+        );
+        painter.rect_filled(badge, 5.0, pal.accent);
+        painter.text(
+            badge.center(),
+            Align2::CENTER_CENTER,
+            format!("-{discount}%"),
+            FontId::proportional(10.5),
+            crate::theme::on_accent(pal.accent),
+        );
+    }
+    if item.linux_available == Some(true) {
+        let chip = Rect::from_min_size(
+            Pos2::new(image_rect.right() - 70.0, image_rect.top() + 8.0),
+            Vec2::new(62.0, 20.0),
+        );
+        painter.rect_filled(chip, 10.0, Color32::from_black_alpha(160));
+        painter.text(
+            chip.center(),
+            Align2::CENTER_CENTER,
+            "Linux",
+            FontId::proportional(9.5),
+            pal.accent,
+        );
+    }
+
+    let footer = Rect::from_min_max(
+        Pos2::new(card.left() + 10.0, image_rect.bottom() + 7.0),
+        Pos2::new(card.right() - 9.0, card.bottom() - 5.0),
+    );
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(footer)
+            .layout(Layout::top_down(Align::Min)),
+    );
+    child.add(
+        egui::Label::new(
+            RichText::new(&item.name)
+                .size(12.0)
+                .strong()
+                .color(pal.text),
+        )
+        .truncate(),
+    );
+    child.horizontal(|ui| price_widgets(ui, pal, item, false));
     if let Some(peak) = item.players_peak {
-        ui.label(
+        child.label(
             RichText::new(format!("{} joueurs simultanés", thousands(peak)))
-                .size(10.0)
+                .size(9.5)
                 .color(pal.text_faint),
         );
     }
-    ui.add_space(4.0);
-    if ui.small_button("Voir sur Steam").clicked() {
+    painter.rect_stroke(
+        card,
+        9.0,
+        egui::Stroke::new(1.2_f32, pal.accent.gamma_multiply(hover * 0.9)),
+        egui::StrokeKind::Inside,
+    );
+    if response.clicked() {
         *open_item = Some(item.clone());
     }
+    response.on_hover_text("Ouvrir la page Steam du jeu");
 }
 
 fn price_widgets(ui: &mut egui::Ui, pal: &Palette, item: &StoreItem, large: bool) {
@@ -411,22 +794,17 @@ fn price_widgets(ui: &mut egui::Ui, pal: &Palette, item: &StoreItem, large: bool
     };
     let amount = |minor: u64| format!("{}.{:02}", minor / 100, minor % 100);
     if let Some(discount) = price.discount_percent {
-        egui::Frame::new()
-            .fill(pal.accent)
-            .corner_radius(3.0)
-            .inner_margin(egui::Margin::symmetric(5, 1))
-            .show(ui, |ui| {
-                ui.label(
-                    RichText::new(format!("-{discount} %"))
-                        .size(if large { 12.0 } else { 10.5 })
-                        .strong()
-                        .color(pal.bg),
-                );
-            });
+        ui.label(
+            RichText::new(format!("-{discount} %"))
+                .size(if large { 12.0 } else { 10.5 })
+                .strong()
+                .color(pal.accent),
+        );
         ui.label(
             RichText::new(format!("{} {}", price.currency, amount(price.final_price)))
-                .size(if large { 13.0 } else { 11.0 })
-                .color(pal.text),
+                .size(if large { 14.0 } else { 11.5 })
+                .strong()
+                .color(if large { Color32::WHITE } else { pal.text }),
         );
         ui.label(
             RichText::new(format!("{} {}", price.currency, amount(price.initial)))
@@ -437,8 +815,8 @@ fn price_widgets(ui: &mut egui::Ui, pal: &Palette, item: &StoreItem, large: bool
     } else {
         ui.label(
             RichText::new(format!("{} {}", price.currency, amount(price.final_price)))
-                .size(if large { 13.0 } else { 11.0 })
-                .color(pal.text),
+                .size(if large { 14.0 } else { 11.5 })
+                .color(if large { Color32::WHITE } else { pal.text }),
         );
     }
 }

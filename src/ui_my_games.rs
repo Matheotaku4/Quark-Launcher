@@ -185,6 +185,7 @@ impl QuarkApp {
                                 }
                                 ui.add_space(10.0);
 
+                                self.provider_install_panel(ui, &pal);
                                 let needle = self.my_games_query.trim().to_string();
                                 let games = visible_games(&all_games, selected, &needle);
                                 if games.is_empty() {
@@ -352,7 +353,7 @@ impl QuarkApp {
             self.request_achievements(ctx, &key);
         }
         if let Some(key) = adopt {
-            self.adopt_provider_install(&key);
+            self.adopt_provider_install(ctx, &key);
         }
         if let Some(key) = open_game {
             let quark_id = self
@@ -463,6 +464,131 @@ impl QuarkApp {
             });
             ui.add_space(gap);
             index += columns;
+        }
+    }
+
+    /// Bandeau des installations fournisseur en cours : pourcentage, étape,
+    /// débit, ETA et bouton d'annulation. Sans lui, un téléchargement de
+    /// plusieurs gigaoctets ne montrait qu'un « Installation… » figé.
+    fn provider_install_panel(&mut self, ui: &mut egui::Ui, pal: &crate::theme::Palette) {
+        let active = [
+            (
+                Provider::Epic,
+                self.epic_installing.clone(),
+                self.epic_install_progress.clone(),
+            ),
+            (
+                Provider::Gog,
+                self.gog_installing.clone(),
+                self.gog_install_progress.clone(),
+            ),
+        ];
+        for (provider, key, progress) in active {
+            let Some(key) = key else {
+                continue;
+            };
+            let title = self
+                .lib
+                .provider_library
+                .games
+                .iter()
+                .find(|game| game.key == key)
+                .map(|game| game.title.clone())
+                .unwrap_or_else(|| key.product_id.clone());
+            let snapshot = progress
+                .as_ref()
+                .and_then(|progress| progress.lock().ok().map(|state| state.clone()))
+                .unwrap_or_default();
+            egui::Frame::new()
+                .fill(pal.surface)
+                .stroke(egui::Stroke::new(1.0_f32, pal.border))
+                .corner_radius(8.0)
+                .inner_margin(12.0)
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            ui.label(
+                                RichText::new(format!(
+                                    "Installation {} · {title}",
+                                    provider_name(provider)
+                                ))
+                                .size(12.5)
+                                .strong()
+                                .color(pal.text),
+                            );
+                            let mut detail = vec![snapshot.label()];
+                            if let Some(sizes) = snapshot.sizes() {
+                                detail.push(sizes);
+                            }
+                            if let Some(speed) = &snapshot.speed {
+                                detail.push(speed.clone());
+                            }
+                            if let Some(eta) = &snapshot.eta {
+                                detail.push(format!("reste {eta}"));
+                            }
+                            ui.label(
+                                RichText::new(detail.join(" · "))
+                                    .size(11.0)
+                                    .color(pal.text_dim),
+                            );
+                        });
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if crate::widgets::ghost_button(
+                                ui,
+                                "Annuler",
+                                pal,
+                                crate::widgets::Icon::None,
+                            )
+                            .clicked()
+                            {
+                                self.cancel_provider_install(provider);
+                            }
+                        });
+                    });
+                    ui.add_space(6.0);
+                    let (bar, _) = ui
+                        .allocate_exact_size(Vec2::new(ui.available_width(), 6.0), Sense::hover());
+                    ui.painter().rect_filled(bar, 3.0, pal.border);
+                    match snapshot.percent {
+                        Some(percent) => {
+                            let fill = (percent / 100.0).clamp(0.0, 1.0);
+                            if fill > 0.0 {
+                                ui.painter().rect_filled(
+                                    Rect::from_min_size(
+                                        bar.min,
+                                        Vec2::new(bar.width() * fill, bar.height()),
+                                    ),
+                                    3.0,
+                                    pal.accent,
+                                );
+                            }
+                            // Repaint régulier : la barre suit le processus.
+                            ui.ctx()
+                                .request_repaint_after(std::time::Duration::from_millis(180));
+                        }
+                        None => {
+                            // Sans pourcentage, une bande qui respire : on sait
+                            // que le travail avance, sans inventer un chiffre.
+                            let phase = ui.input(|input| input.time) as f32;
+                            let pulse = (phase * 0.9).sin() * 0.5 + 0.5;
+                            let width = bar.width() * 0.22;
+                            let x = bar.left() + (bar.width() - width) * pulse;
+                            ui.painter().rect_filled(
+                                Rect::from_min_size(
+                                    Pos2::new(x, bar.top()),
+                                    Vec2::new(width, bar.height()),
+                                ),
+                                3.0,
+                                pal.accent.gamma_multiply(0.75),
+                            );
+                            ui.ctx()
+                                .request_repaint_after(std::time::Duration::from_millis(60));
+                            ui.ctx().request_repaint();
+                        }
+                    }
+                });
+            ui.add_space(8.0);
         }
     }
 
@@ -871,12 +997,17 @@ fn actions_menu(
                     )
                     .on_disabled_hover_text("Legendary n'est pas installé");
                 }
+                Provider::Gog if gogdl_ready => {
+                    if ui.button("Succès…").clicked() {
+                        *achievements = Some(game.key.clone());
+                        ui.close();
+                    }
+                }
                 Provider::Gog => {
                     ui.add_enabled(false, egui::Button::new("Succès…"))
                         .on_disabled_hover_text(
-                        "GOG ne publie les succès qu'auprès de Galaxy, sans identifiant client \
-                             public : Quark ne peut pas les lire",
-                    );
+                            "gogdl n'est pas installé : Paramètres → Boutiques & outils",
+                        );
                 }
                 Provider::Steam => {}
             }

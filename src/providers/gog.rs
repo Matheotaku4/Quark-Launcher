@@ -101,17 +101,19 @@ impl GogAdapter {
         super::runner::run(self.command(args), self.timeout, cancellation)
     }
 
-    /// Téléchargement : plusieurs gigaoctets, donc le délai d'inventaire (60 s)
-    /// tuerait gogdl en pleine écriture.
-    pub fn run_install(
+    /// Téléchargement avec avancement publié (gogdl écrit le même format que
+    /// Legendary : `= Progress: 12.50 4472…/1053…`).
+    pub fn run_install_streaming(
         &self,
         args: impl IntoIterator<Item = String>,
         cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+        progress: std::sync::Arc<std::sync::Mutex<super::runner::InstallProgress>>,
     ) -> Result<CommandOutput, String> {
-        super::runner::run(
+        super::runner::run_streaming(
             self.command(args),
             Duration::from_secs(6 * 60 * 60),
             cancellation,
+            progress,
         )
     }
 

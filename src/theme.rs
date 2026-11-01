@@ -221,7 +221,6 @@ pub fn apply(ctx: &egui::Context, mode: ThemeMode) {
     ctx.set_style(style);
 }
 
-
 /// Hauteur de bannière : plus haute que le 3.1:1 des `library_hero` de Steam,
 /// pour laisser respirer le logo, le bouton et les actualités.
 pub fn hero_height(width: f32) -> f32 {

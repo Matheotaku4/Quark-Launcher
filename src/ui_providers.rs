@@ -5,8 +5,8 @@
 //! (Legendary pour Epic, gogdl pour GOG) échange ce code contre une session.
 
 use crate::app::{ProviderLogin, QuarkApp};
-use crate::providers::tools::ManagedToolId;
 use crate::providers::Provider;
+use crate::providers::tools::ManagedToolId;
 use crate::theme::Palette;
 use crate::widgets::{self, Icon};
 use eframe::egui::{self, RichText, Vec2};

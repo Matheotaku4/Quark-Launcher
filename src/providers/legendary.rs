@@ -53,12 +53,14 @@ impl LegendaryAdapter {
         super::runner::run(self.command(args), self.timeout, cancellation)
     }
 
-    pub fn run_install(
+    /// Installation avec avancement publié (téléchargement, vérification…).
+    pub fn run_install_streaming(
         &self,
         args: impl IntoIterator<Item = String>,
         cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+        progress: std::sync::Arc<std::sync::Mutex<super::runner::InstallProgress>>,
     ) -> Result<CommandOutput, String> {
-        super::runner::run(self.command(args), INSTALL_TIMEOUT, cancellation)
+        super::runner::run_streaming(self.command(args), INSTALL_TIMEOUT, cancellation, progress)
     }
 
     pub fn sync_owned(
@@ -109,11 +111,7 @@ impl LegendaryAdapter {
 
     /// Fichier d'état écrit par Legendary après une connexion réussie.
     pub fn user_config_path() -> PathBuf {
-        let base = std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .filter(|path| path.is_absolute())
-            .unwrap_or_else(|| crate::config::home_dir().join(".config"));
-        base.join("legendary").join("user.json")
+        config_dir().join("user.json")
     }
 
     pub fn is_logged_in() -> bool {
@@ -424,25 +422,47 @@ pub fn parse_installed_json(json: &str, fetched_at: i64) -> Result<Vec<ProviderG
     Ok(games)
 }
 
-/// Couverture publiée par Epic dans les métadonnées du jeu
-/// (`metadata.keyImages`), en préférant le format vertical de la boutique.
-pub fn cover_from_info(text: &str) -> Result<String, String> {
-    let start = text
-        .find('{')
-        .ok_or_else(|| "fiche Epic illisible".to_string())?;
-    let root: serde_json::Value =
-        serde_json::from_str(&text[start..]).map_err(|_| "fiche Epic illisible".to_string())?;
-    let images = root
-        .get("metadata")
-        .and_then(|metadata| metadata.get("keyImages"))
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| "fiche Epic sans images".to_string())?;
-    const PREFERENCE: [&str; 5] = [
+/// Dossier de configuration de Legendary, commun à `user.json` et au cache de
+/// métadonnées.
+pub fn config_dir() -> PathBuf {
+    if let Some(custom) = std::env::var_os("LEGENDARY_CONFIG_PATH").map(PathBuf::from) {
+        return custom;
+    }
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .unwrap_or_else(|| crate::config::home_dir().join(".config"))
+        .join("legendary")
+}
+
+/// Fichier de métadonnées écrit par Legendary pour un jeu : il contient la
+/// fiche catalogue Epic complète, donc `keyImages`.
+pub fn metadata_path(app_name: &str) -> PathBuf {
+    let safe: String = app_name
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    config_dir().join("metadata").join(format!("{safe}.json"))
+}
+
+/// Choisit la meilleure image parmi `keyImages` : le format vertical de la
+/// boutique d'abord, l'illustration large en dernier recours.
+pub fn cover_from_key_images(images: &[serde_json::Value]) -> Option<String> {
+    const PREFERENCE: [&str; 8] = [
         "DieselGameBoxTall",
+        "OfferImageTall",
         "DieselStoreFrontTall",
         "DieselGameBox",
         "Thumbnail",
+        "OfferImageWide",
         "DieselStoreFrontWide",
+        "featuredMedia",
     ];
     for wanted in PREFERENCE {
         let found = images
@@ -451,18 +471,67 @@ pub fn cover_from_info(text: &str) -> Result<String, String> {
             .and_then(|image| image.get("url"))
             .and_then(serde_json::Value::as_str)
             .map(str::trim)
-            .filter(|url| url.starts_with("https://") || url.starts_with("http://"));
+            .filter(|url| {
+                (url.starts_with("https://") || url.starts_with("http://")) && !url.is_empty()
+            });
         if let Some(url) = found {
-            return Ok(url.to_string());
+            return Some(url.to_string());
         }
     }
-    Err("fiche Epic sans couverture".to_string())
+    images
+        .iter()
+        .filter_map(|image| image.get("url").and_then(serde_json::Value::as_str))
+        .map(str::trim)
+        .find(|url| url.starts_with("https://") || url.starts_with("http://"))
+        .map(str::to_string)
 }
 
-/// Demande à Legendary la fiche d'un seul jeu : la sortie de `legendary info`
-/// reste petite, contrairement à la liste complète qui dépasse le plafond du
-/// runner. Le résultat est mémorisé par l'appelant.
+fn key_images(root: &serde_json::Value) -> Option<&Vec<serde_json::Value>> {
+    root.get("metadata")
+        .and_then(|metadata| metadata.get("keyImages"))
+        .or_else(|| root.get("keyImages"))
+        .or_else(|| {
+            root.get("game")
+                .and_then(|game| game.get("metadata"))?
+                .get("keyImages")
+        })
+        .and_then(serde_json::Value::as_array)
+}
+
+/// Couverture publiée par Epic dans les métadonnées du jeu
+/// (`metadata.keyImages`), en préférant le format vertical de la boutique.
+pub fn cover_from_info(text: &str) -> Result<String, String> {
+    let start = text
+        .find('{')
+        .ok_or_else(|| "fiche Epic illisible".to_string())?;
+    let root: serde_json::Value =
+        serde_json::from_str(&text[start..]).map_err(|_| "fiche Epic illisible".to_string())?;
+    key_images(&root)
+        .and_then(|images| cover_from_key_images(images))
+        .ok_or_else(|| "fiche Epic sans couverture".to_string())
+}
+
+/// Lit le cache de métadonnées écrit par Legendary après une synchronisation ou
+/// un `legendary info`.
+pub fn cover_from_metadata(text: &str) -> Result<String, String> {
+    let root: serde_json::Value =
+        serde_json::from_str(text).map_err(|_| "métadonnées Epic illisibles".to_string())?;
+    key_images(&root)
+        .and_then(|images| cover_from_key_images(images))
+        .ok_or_else(|| "métadonnées Epic sans couverture".to_string())
+}
+
+/// Couverture Epic. `legendary info --json` ne publie **pas** `keyImages` —
+/// seulement quelques champs choisis : la sortie ne suffisait donc jamais.
+/// En revanche, il rafraîchit le cache de métadonnées du jeu, qui contient la
+/// fiche catalogue complète. On lit ce cache d'abord, puis on le provoque.
 pub fn epic_cover_url(app_name: &str) -> Result<String, String> {
+    let cache = metadata_path(app_name);
+    if let Ok(text) = std::fs::read_to_string(&cache) {
+        if let Ok(url) = cover_from_metadata(&text) {
+            return Ok(url);
+        }
+    }
     let adapter = LegendaryAdapter::new();
     if !adapter.executable.is_file() {
         return Err(
@@ -475,22 +544,16 @@ pub fn epic_cover_url(app_name: &str) -> Result<String, String> {
         None,
     )?;
     ensure_success(&output)?;
+    if let Ok(text) = std::fs::read_to_string(&cache) {
+        if let Ok(url) = cover_from_metadata(&text) {
+            return Ok(url);
+        }
+    }
+    // Anciennes versions de Legendary : la fiche peut arriver sur stdout.
     cover_from_info(&output.stdout)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AchievementRow {
-    pub name: String,
-    pub description: String,
-    pub unlocked: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct AchievementInfo {
-    pub total: u32,
-    pub unlocked: u32,
-    pub rows: Vec<AchievementRow>,
-}
+pub use super::achievements::{AchievementInfo, AchievementRow};
 
 /// Lit `legendary achievements <app> --json`. Legendary range les succès en
 /// quatre listes (terminés, en cours, non commencés, masqués) et publie les
@@ -530,6 +593,7 @@ pub fn parse_achievements(text: &str) -> Result<AchievementInfo, String> {
     let mut rows = Vec::new();
     for list in [raw.completed, raw.in_progress, raw.uninitiated, raw.hidden] {
         for row in list {
+            let key = row.name.trim().to_string();
             let name = row
                 .display_name
                 .as_deref()
@@ -541,9 +605,13 @@ pub fn parse_achievements(text: &str) -> Result<AchievementInfo, String> {
                 continue;
             }
             rows.push(AchievementRow {
+                id: key.clone(),
+                key,
                 name,
                 description: row.description.unwrap_or_default().trim().to_string(),
                 unlocked: row.unlocked,
+                progress: if row.unlocked { 1.0 } else { 0.0 },
+                session: false,
             });
         }
     }
@@ -723,6 +791,53 @@ mod tests {
     }
 
     #[test]
+    fn la_couverture_epic_vient_du_cache_de_metadonnees_et_prefere_le_format_vertical() {
+        let cached = r#"{
+          "app_name": "Anemone",
+          "app_title": "Anemone",
+          "metadata": {
+            "title": "Anemone",
+            "keyImages": [
+              {"type": "OfferImageWide", "url": "https://cdn1.epicgames.com/wide.jpg"},
+              {"type": "DieselGameBoxTall", "url": "https://cdn1.epicgames.com/tall.jpg"},
+              {"type": "Thumbnail", "url": "https://cdn1.epicgames.com/thumb.jpg"}
+            ]
+          },
+          "asset_infos": {},
+          "base_urls": []
+        }"#;
+        assert_eq!(
+            cover_from_metadata(cached).unwrap(),
+            "https://cdn1.epicgames.com/tall.jpg"
+        );
+        // Le wrapper `game` de certaines versions est accepté aussi.
+        let wrapped = r#"{"game":{"metadata":{"keyImages":[{"type":"Thumbnail","url":"https://cdn1.epicgames.com/t.jpg"}]}}}"#;
+        assert_eq!(
+            cover_from_metadata(wrapped).unwrap(),
+            "https://cdn1.epicgames.com/t.jpg"
+        );
+        assert!(cover_from_metadata(r#"{"metadata":{}}"#).is_err());
+        assert!(cover_from_metadata("pas du json").is_err());
+        // La sortie de `legendary info` sans keyImages ne suffit pas.
+        assert!(cover_from_info(r#"{"game":{"app_name":"x"}}"#).is_err());
+    }
+
+    #[test]
+    fn le_chemin_du_cache_legendary_est_sur_et_respecte_la_variable_de_configuration() {
+        let previous = std::env::var_os("LEGENDARY_CONFIG_PATH");
+        let root = std::env::temp_dir().join(format!("quark-lgd-meta-{}", std::process::id()));
+        unsafe { std::env::set_var("LEGENDARY_CONFIG_PATH", &root) };
+        let path = metadata_path("../../evil app");
+        assert_eq!(path, root.join("metadata").join(".._.._evil_app.json"));
+        unsafe {
+            match previous {
+                Some(value) => std::env::set_var("LEGENDARY_CONFIG_PATH", value),
+                None => std::env::remove_var("LEGENDARY_CONFIG_PATH"),
+            }
+        }
+    }
+
+    #[test]
     fn legendary_list_json_maps_owned_games_without_using_titles_as_install_paths() {
         let json = r#"[{"app_name":"app_123","app_title":"Example Game","metadata":{"mainGameAppName":null},"asset_infos":{},"base_urls":[],"sidecar":null,"achievements":null,"dlcs":[]}]"#;
         let games = parse_owned_json(json, 1234).unwrap();
@@ -767,6 +882,7 @@ Empty,,1.0,False\n";
         assert_eq!(parse_owned_listing(csv, 3).unwrap()[0].title, "Jeu 2");
     }
 
+    #[test]
     fn malformed_or_ambiguous_legendary_output_is_not_an_empty_success() {
         assert!(parse_owned_json("not json", 1).is_err());
         assert!(parse_owned_json("{}", 1).is_err());

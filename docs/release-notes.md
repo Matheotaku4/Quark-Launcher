@@ -1,3 +1,43 @@
+## Quark 1.0.4 — téléchargements suivis, jaquettes justes, succès Epic et GOG
+
+- **Progression des installations** : Legendary et gogdl écrivent leur avancement ligne par
+  ligne ; Quark l'affiche en haut de **Mes jeux** (pourcentage, étape, taille, débit, ETA)
+  avec un bouton **Annuler** qui ferme proprement le processus. Le pourcentage ne recule
+  jamais quand un fichier est repris, et une bande animée remplace le chiffre tant que
+  l'outil n'en publie pas.
+- **Jaquettes corrigées** : les couvertures GOG passaient par `images.background` + suffixe
+  vertical, un identifiant qui sert une *autre* image — d'où des jaquettes qui ne
+  correspondaient pas au jeu. Elles viennent maintenant de `api.gog.com/v2/games/<id>`
+  (`boxArtImage` → `_glx_vertical_cover`), et le cache est versionné pour ignorer les
+  anciennes. Côté Epic, `legendary info --json` ne publie pas `keyImages` : la couverture
+  est lue dans le cache de métadonnées que Legendary vient d'écrire, puis importée dès que
+  le jeu est installé et adopté (en arrière-plan, sans bloquer la page).
+- **Succès Epic et GOG** : Epic reste lu par `legendary achievements --json` (avec la
+  progression des succès à paliers) ; GOG est lu par `gameplay.gog.com` avec la session
+  gogdl (`client_id` = identifiant du jeu, `user_id` de la session), succès masqués compris
+  une fois débloqués. L'entrée **Succès…** de GOG n'est plus grisée.
+- **Succès envoyés par la session de jeu** : chaque lancement transmet
+  `QUARK_ACHIEVEMENTS_URL`, `QUARK_ACHIEVEMENTS_TOKEN` et `QUARK_GAME_ID`. Un POST JSON
+  débloque un succès ; Quark l'enregistre, l'affiche avec une pastille **session** et
+  l'écrit chez GOG (Epic n'expose aucune écriture hors de son client : ces succès restent
+  locaux). L'écoute ne sort pas de la boucle locale, le jeton change à chaque lancement et
+  le journal de session le masque.
+- **Réglages plus épurés** : les cases à cocher des paramètres du jeu et des paramètres
+  globaux laissent place à des lignes pleine largeur — texte et explication à gauche,
+  interrupteur animé à droite. GameMode, MangoHud, PRIME, gamescope (avec son bloc
+  résolution/FSR/fps), journal Proton, umu, anti-triche, icône de notification et carrousel
+  suivent le même modèle.
+- **Transition héros / fond** : le changement de jeu fond la bannière et le fond flouté en
+  0,55 s avec une courbe adoucie, et le bas de la bannière se dissout dans la version
+  floutée de la même image : plus d'arête nette entre le hero et le background.
+- **Boutique dynamisée** : grande bannière avec dégradé, remise et prix, rangée
+  **Top réductions**, en-têtes de section avec filet coloré et compteur, cartes qui se
+  soulèvent au survol avec remise et pastille Linux sur l'image.
+
+Limites assumées : les installations Epic/GOG, les succès et le pont de session n'ont pas
+été validés avec de vrais comptes (parseurs, états d'erreur et pont local couverts par des
+tests) ; Steam n'expose toujours pas ses succès sans sa propre session.
+
 ## Quark 1.0.3 — « Mes jeux » : tri, recherche, couvertures et installations Epic/GOG
 
 - **Tri et recherche** : les onglets de **Mes jeux** (y compris **Toutes**) sont triés par nom,

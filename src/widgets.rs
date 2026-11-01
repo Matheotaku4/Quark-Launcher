@@ -744,6 +744,79 @@ pub fn chip_colored(
     .clicked()
 }
 
+/// Ligne de réglage complète : intitulé et explication à gauche, interrupteur à
+/// droite, fond qui s'éclaire au survol. Toute la ligne répond au clic.
+pub fn setting_toggle(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    title: &str,
+    hint: Option<&str>,
+    value: &mut bool,
+    id_salt: impl std::hash::Hash,
+) -> Response {
+    let id = ui.id().with(("quark-setting", &id_salt));
+    let width = ui.available_width();
+    let height = if hint.is_some() { 46.0 } else { 34.0 };
+    let (rect, mut response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
+    let hover = ui
+        .ctx()
+        .animate_bool_with_time(id.with("row-hover"), response.hovered(), 0.12);
+    let on = ui
+        .ctx()
+        .animate_bool_with_time(id.with("toggle"), *value, 0.18);
+    if hover > 0.0 {
+        ui.painter()
+            .rect_filled(rect, 7.0, pal.surface_hover.gamma_multiply(hover));
+    }
+    // Texte à gauche, largeur limitée pour laisser la place à l'interrupteur.
+    let text_rect = Rect::from_min_max(
+        Pos2::new(rect.left() + 10.0, rect.top() + 4.0),
+        Pos2::new(rect.right() - 66.0, rect.bottom() - 4.0),
+    );
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(text_rect)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+    child.spacing_mut().item_spacing.y = 1.0;
+    child.label(RichText::new(title).size(12.5).color(pal.text));
+    if let Some(hint) = hint {
+        child.add(egui::Label::new(RichText::new(hint).size(10.5).color(pal.text_faint)).wrap());
+    }
+    // Interrupteur peint, sans widget interactif imbriqué : toute la ligne
+    // réagit au clic, sans double bascule.
+    let track = Rect::from_center_size(
+        Pos2::new(rect.right() - 31.0, rect.center().y),
+        Vec2::new(42.0, 23.0),
+    );
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(
+        track,
+        track.height() / 2.0,
+        theme::lerp_color(pal.border, pal.accent, on),
+    );
+    let knob_x = track.left() + track.height() / 2.0 + (track.width() - track.height()) * on;
+    painter.circle_filled(
+        Pos2::new(knob_x, track.center().y),
+        track.height() / 2.0 - 3.0,
+        if on > 0.5 {
+            theme::on_accent(pal.accent)
+        } else {
+            pal.text_dim
+        },
+    );
+    if response.clicked()
+        || (response.has_focus()
+            && ui.input(|input| {
+                input.key_pressed(egui::Key::Enter) || input.key_pressed(egui::Key::Space)
+            }))
+    {
+        *value = !*value;
+        response.mark_changed();
+    }
+    response
+}
+
 /// Bouton « Accueil » posé au-dessus de la liste des jeux : icône maison,
 /// libellé, et un trait d'accent quand la page est affichée.
 pub fn home_button(ui: &mut egui::Ui, selected: bool, pal: &Palette) -> Response {

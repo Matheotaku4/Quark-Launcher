@@ -3,6 +3,7 @@
 //! Les adaptateurs concrets (Steam, Epic, GOG) restent dans des modules
 //! séparés ; ces types ne contiennent aucune donnée d'authentification.
 
+pub mod achievements;
 pub mod covers;
 pub mod credentials;
 pub mod gog;
@@ -14,6 +15,7 @@ pub mod runner;
 pub mod steam;
 pub mod tools;
 
+pub use achievements::{AchievementInfo, AchievementRow, SessionUnlock};
 pub use model::{
     CapabilityState, GameCapabilities, InstallState, Provider, ProviderGame, ProviderGameKey,
     ProviderLibrary,

@@ -743,8 +743,11 @@ impl QuarkApp {
         let fade_left = self
             .hero_fade
             .as_ref()
-            .map(|fade| (fade.started.elapsed().as_secs_f32() / 0.38).clamp(0.0, 1.0))
+            .map(|fade| (fade.started.elapsed().as_secs_f32() / 0.55).clamp(0.0, 1.0))
             .unwrap_or(1.0);
+        // Courbe adoucie : le fondu démarre et finit sans à-coup, au lieu d'un
+        // glissement linéaire qui se voit sur une grande bannière.
+        let fade_eased = 1.0 - (1.0 - fade_left).powi(3);
         let previous_hero = if fade_left < 1.0 {
             self.hero_fade
                 .as_ref()
@@ -794,7 +797,7 @@ impl QuarkApp {
                 if let Some(previous) = &previous_hero {
                     if let Some(old) = self.blurred_texture(ui.ctx(), previous) {
                         let mut painter = ui.painter_at(area);
-                        painter.set_opacity(1.0 - fade_left);
+                        painter.set_opacity(1.0 - fade_eased);
                         draw_cover(&painter, &old, area);
                     }
                 }
@@ -864,8 +867,21 @@ impl QuarkApp {
                             if let Some(previous) = &previous_hero {
                                 if let Some(old) = self.texture(ui.ctx(), previous) {
                                     let mut painter = ui.painter_at(hero);
-                                    painter.set_opacity(1.0 - fade_left);
+                                    painter.set_opacity(1.0 - fade_eased);
                                     draw_cover(&painter, &old, hero);
+                                }
+                            }
+                            // Transition fine vers le fond : la version floutée
+                            // de la même bannière recouvre le bas du hero en
+                            // fondu, si bien que les deux se rejoignent.
+                            if let Some(path) = hero_path.as_ref() {
+                                if let Some(blurred) = self.blurred_texture(ui.ctx(), path) {
+                                    crate::images::draw_cover_blend_to_background(
+                                        &painter,
+                                        &blurred,
+                                        hero,
+                                        (hero.height() * 0.4).clamp(70.0, 220.0),
+                                    );
                                 }
                             }
                         } else {

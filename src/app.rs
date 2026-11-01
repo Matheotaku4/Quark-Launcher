@@ -2,7 +2,7 @@
 
 use crate::artwork::{self, AssetPlan, GameMetadata, SearchHit, SearchOutcome};
 use crate::config::{
-    human_playtime, Artwork, AssetKind, Game, Library, ProtonMode, ThemeMode, ViewMode,
+    Artwork, AssetKind, Game, Library, ProtonMode, ThemeMode, ViewMode, human_playtime,
 };
 use crate::disk::{self, DiskReport};
 use crate::news::{self, NewsItem};
@@ -17,7 +17,11 @@ use crate::widgets::{self, Icon};
 use eframe::egui::{self, Align, Align2, FontId, Layout, RichText, Sense, Stroke, Vec2};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
-use std::sync::mpsc::{channel, Receiver, TryRecvError};
+use std::sync::mpsc::{Receiver, TryRecvError, channel};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -409,7 +413,7 @@ pub struct SaveBackgroundJob {
 #[derive(Clone, Debug)]
 pub enum AchievementsState {
     Loading,
-    Ready(crate::providers::legendary::AchievementInfo),
+    Ready(crate::providers::AchievementInfo),
     Failed(String),
 }
 
@@ -589,9 +593,39 @@ pub struct QuarkApp {
         )>,
     >,
     pub provider_cover_queue: VecDeque<crate::providers::ProviderGameKey>,
-    /// Couvertures déjà tentées : une boutique en échec n'est pas réessayée en
-    /// boucle à chaque image.
+    /// Couvertures déjà tentées avec succès : une image trouvée n'est plus
+    /// redemandée.
     pub provider_cover_tried: std::collections::HashSet<crate::providers::ProviderGameKey>,
+    /// Échecs par jeu : une erreur passagère (réseau, cache en cours d'écriture)
+    /// est retentée, mais pas indéfiniment.
+    pub provider_cover_failures: HashMap<crate::providers::ProviderGameKey, u8>,
+    /// Couverture demandée après l'ajout d'un jeu installé à la bibliothèque.
+    pub adopt_cover_job: Option<(
+        String,
+        crate::providers::ProviderGameKey,
+        Receiver<(
+            Result<(PathBuf, Option<String>), String>,
+            crate::providers::ProviderGameKey,
+        )>,
+    )>,
+    /// Pont local des succès de session (127.0.0.1, jeton par lancement).
+    pub bridge: Option<crate::achievements_bridge::Bridge>,
+    pub bridge_rx: Option<Receiver<crate::achievements_bridge::Report>>,
+    /// Déblocages rapportés pendant les parties, par jeu de boutique.
+    pub session_unlocks:
+        HashMap<crate::providers::ProviderGameKey, Vec<crate::providers::SessionUnlock>>,
+    /// Écriture GOG d'un succès de session en cours.
+    pub gog_unlock_job: Option<
+        Receiver<(
+            crate::providers::ProviderGameKey,
+            Result<Option<String>, String>,
+        )>,
+    >,
+    /// Avancement des installations fournisseur, lu à chaque image par l'UI.
+    pub epic_install_progress: Option<Arc<Mutex<crate::providers::runner::InstallProgress>>>,
+    pub epic_install_cancel: Option<Arc<AtomicBool>>,
+    pub gog_install_progress: Option<Arc<Mutex<crate::providers::runner::InstallProgress>>>,
+    pub gog_install_cancel: Option<Arc<AtomicBool>>,
     /// Dernier relevé de couvertures manquantes : la liste n'est pas reparcourue
     /// à chaque image.
     pub provider_cover_scan_at: Option<Instant>,
@@ -760,6 +794,16 @@ impl QuarkApp {
             provider_cover_queue: VecDeque::new(),
             provider_cover_scan_at: None,
             provider_cover_tried: std::collections::HashSet::new(),
+            provider_cover_failures: HashMap::new(),
+            adopt_cover_job: None,
+            bridge: None,
+            bridge_rx: None,
+            session_unlocks: crate::session_sync::load_session_unlocks(),
+            gog_unlock_job: None,
+            epic_install_progress: None,
+            epic_install_cancel: None,
+            gog_install_progress: None,
+            gog_install_cancel: None,
             gog_install_pending: None,
             gog_installing: None,
             gog_install_rx: None,
@@ -863,6 +907,7 @@ impl QuarkApp {
         self.poll_gog_install(ctx);
         self.poll_provider_covers(ctx);
         self.poll_achievements(ctx);
+        self.poll_session_sync(ctx);
         self.poll_save_jobs(ctx);
         self.poll_save_background_jobs(ctx);
         self.poll_store(ctx);
@@ -874,6 +919,10 @@ impl QuarkApp {
             || self.gog_install_rx.is_some()
             || self.provider_cover_job.is_some()
             || self.achievements_job.is_some()
+            || self.gog_unlock_job.is_some()
+            || self.adopt_cover_job.is_some()
+            || self.epic_install_progress.is_some()
+            || self.gog_install_progress.is_some()
         {
             ctx.request_repaint_after(Duration::from_millis(120));
         }
@@ -1758,7 +1807,7 @@ impl QuarkApp {
             return;
         }
         match proton::resolve(&game, &self.lib.settings, &self.runtimes) {
-            Ok(resolved) => {
+            Ok(mut resolved) => {
                 // Une option demandée mais impossible (gamescope absent) ne
                 // bloque pas le jeu : elle est ignorée, et dite ici.
                 for warning in &resolved.warnings {
@@ -1769,6 +1818,10 @@ impl QuarkApp {
                         self.toast_error(format!("Préfixe Proton : {err}"));
                         return;
                     }
+                }
+                // Pont des succès : adresse et jeton propres à ce lancement.
+                for (name, value) in self.bridge_env(ctx, id) {
+                    resolved.spec.env.push((name, value));
                 }
                 // La sauvegarde « avant lancement » démarre *avant* le
                 // processus du jeu : lancée après le spawn, elle
@@ -3512,6 +3565,12 @@ impl QuarkApp {
             record.install_state = crate::providers::InstallState::Installing;
         }
         self.touch();
+        let progress = Arc::new(Mutex::new(
+            crate::providers::runner::InstallProgress::default(),
+        ));
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.epic_install_progress = Some(progress.clone());
+        self.epic_install_cancel = Some(cancel.clone());
         let (tx, rx) = channel();
         let repaint = ctx.clone();
         std::thread::spawn(move || {
@@ -3525,12 +3584,13 @@ impl QuarkApp {
                     destination.clone(),
                 );
                 operation.start();
-                let mut output = adapter.run_install(
+                let mut output = adapter.run_install_streaming(
                     crate::providers::legendary::LegendaryAdapter::install_args(
                         &key.product_id,
                         &destination,
                     ),
-                    None,
+                    Some(cancel.clone()),
+                    progress.clone(),
                 )?;
                 if output.exit_code != Some(0) {
                     return Err(format!(
@@ -3581,6 +3641,8 @@ impl QuarkApp {
             Ok((key, Ok(installed))) => {
                 self.epic_install_rx = None;
                 self.epic_installing = None;
+                self.epic_install_progress = None;
+                self.epic_install_cancel = None;
                 if let Some(record) = self
                     .lib
                     .provider_library
@@ -3601,11 +3663,14 @@ impl QuarkApp {
                     "{} installé et détecté localement",
                     installed.title
                 ));
-                self.adopt_provider_install(&key);
+                self.adopt_provider_install(ctx, &key);
             }
             Ok((key, Err(error))) => {
                 self.epic_install_rx = None;
                 self.epic_installing = None;
+                self.epic_install_progress = None;
+                self.epic_install_cancel = None;
+                let cancelled = error.contains("annul");
                 if let Some(record) = self
                     .lib
                     .provider_library
@@ -3620,15 +3685,25 @@ impl QuarkApp {
                     {
                         record.install_state = crate::providers::InstallState::Installed;
                     } else {
-                        record.install_state = crate::providers::InstallState::Failed;
+                        record.install_state = if cancelled {
+                            crate::providers::InstallState::NotInstalled
+                        } else {
+                            crate::providers::InstallState::Failed
+                        };
                         record.install_path = None;
                     }
                 }
                 self.touch();
-                self.toast_error(format!("Installation Epic non confirmée : {error}"));
+                if cancelled {
+                    self.toast_info("Installation Epic annulée");
+                } else {
+                    self.toast_error(format!("Installation Epic non confirmée : {error}"));
+                }
             }
             Err(TryRecvError::Disconnected) => {
                 self.epic_install_rx = None;
+                self.epic_install_progress = None;
+                self.epic_install_cancel = None;
                 if let Some(key) = self.epic_installing.take() {
                     if let Some(record) = self
                         .lib
@@ -3719,6 +3794,12 @@ impl QuarkApp {
             record.install_state = crate::providers::InstallState::Installing;
         }
         self.touch();
+        let progress = Arc::new(Mutex::new(
+            crate::providers::runner::InstallProgress::default(),
+        ));
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.gog_install_progress = Some(progress.clone());
+        self.gog_install_cancel = Some(cancel.clone());
         let (tx, rx) = channel();
         let repaint = ctx.clone();
         let title = game.title.clone();
@@ -3740,13 +3821,14 @@ impl QuarkApp {
                     None,
                 )?;
                 let folder = crate::providers::gog::folder_from_info(&info.stdout)?;
-                let output = adapter.run_install(
+                let output = adapter.run_install_streaming(
                     crate::providers::gog::GogAdapter::install_args(
                         &key.product_id,
                         &destination,
                         "windows",
                     ),
-                    None,
+                    Some(cancel.clone()),
+                    progress.clone(),
                 )?;
                 if output.exit_code != Some(0) {
                     return Err(format!(
@@ -3771,11 +3853,7 @@ impl QuarkApp {
                     install_state: crate::providers::InstallState::Installed,
                     quark_game_id: None,
                     capabilities: crate::providers::GameCapabilities {
-                        achievements: crate::providers::CapabilityState::Unsupported(
-                            "GOG ne publie les succès qu'auprès de Galaxy, sans identifiant client \
-                             public"
-                                .into(),
-                        ),
+                        achievements: crate::providers::CapabilityState::Supported,
                         ..Default::default()
                     },
                     last_synced: Some(crate::config::now_ts()),
@@ -3801,6 +3879,8 @@ impl QuarkApp {
             Ok((key, Ok(installed))) => {
                 self.gog_install_rx = None;
                 self.gog_installing = None;
+                self.gog_install_progress = None;
+                self.gog_install_cancel = None;
                 if let Some(record) = self
                     .lib
                     .provider_library
@@ -3813,11 +3893,14 @@ impl QuarkApp {
                     record.install_exe = installed.install_exe.clone();
                 }
                 self.touch();
-                self.adopt_provider_install(&key);
+                self.adopt_provider_install(ctx, &key);
             }
             Ok((key, Err(error))) => {
                 self.gog_install_rx = None;
                 self.gog_installing = None;
+                self.gog_install_progress = None;
+                self.gog_install_cancel = None;
+                let cancelled = error.contains("annul");
                 if let Some(record) = self
                     .lib
                     .provider_library
@@ -3831,15 +3914,23 @@ impl QuarkApp {
                         .is_some_and(|path| path.is_dir())
                     {
                         crate::providers::InstallState::Installed
+                    } else if cancelled {
+                        crate::providers::InstallState::NotInstalled
                     } else {
                         crate::providers::InstallState::Failed
                     };
                 }
                 self.touch();
-                self.toast_error(format!("Installation GOG non confirmée : {error}"));
+                if cancelled {
+                    self.toast_info("Installation GOG annulée");
+                } else {
+                    self.toast_error(format!("Installation GOG non confirmée : {error}"));
+                }
             }
             Err(TryRecvError::Disconnected) => {
                 self.gog_install_rx = None;
+                self.gog_install_progress = None;
+                self.gog_install_cancel = None;
                 if let Some(key) = self.gog_installing.take() {
                     if let Some(record) = self
                         .lib
@@ -3860,7 +3951,11 @@ impl QuarkApp {
 
     /// Ajoute un jeu de boutique installé à la bibliothèque Quark : c'est ce qui
     /// le fait apparaître dans la grille, avec sa couverture de boutique.
-    pub(crate) fn adopt_provider_install(&mut self, key: &crate::providers::ProviderGameKey) {
+    pub(crate) fn adopt_provider_install(
+        &mut self,
+        ctx: &egui::Context,
+        key: &crate::providers::ProviderGameKey,
+    ) {
         let Some(record) = self
             .lib
             .provider_library
@@ -3913,6 +4008,21 @@ impl QuarkApp {
             game.artwork.set(AssetKind::Cover, cover);
         }
         let id = game.id.clone();
+        // Sans couverture locale, elle est récupérée en arrière-plan : la
+        // fiche ne s'ouvre pas sur un monogramme alors que la boutique en
+        // publie une.
+        if crate::providers::covers::cached(key).is_none() && self.adopt_cover_job.is_none() {
+            let record = record.clone();
+            let sent_key = key.clone();
+            let (tx, rx) = channel();
+            let repaint = ctx.clone();
+            std::thread::spawn(move || {
+                let result = crate::providers::covers::ensure(&record);
+                let _ = tx.send((result, sent_key));
+                repaint.request_repaint();
+            });
+            self.adopt_cover_job = Some((id.clone(), key.clone(), rx));
+        }
         let title = game.name.clone();
         self.lib.games.push(game);
         if let Some(provider) = self
@@ -3962,14 +4072,21 @@ impl QuarkApp {
             }
             if crate::providers::covers::cached(&game.key).is_some()
                 || self.provider_cover_tried.contains(&game.key)
+                || self
+                    .provider_cover_failures
+                    .get(&game.key)
+                    .is_some_and(|failures| *failures >= 3)
             {
                 continue;
             }
-            // Sans URL connue, seul Epic peut encore en fournir une (par
-            // `legendary info`) : Steam et GOG la publient à la synchronisation.
-            if game.cover_url.is_none()
-                && !(game.key.provider == crate::providers::Provider::Epic && legendary_ready)
-            {
+            // Sans URL connue, Epic (métadonnées Legendary) et GOG (API v2)
+            // peuvent encore en fournir une ; Steam la publie à la synchro.
+            let resolvable = match game.key.provider {
+                crate::providers::Provider::Epic => legendary_ready,
+                crate::providers::Provider::Gog => true,
+                crate::providers::Provider::Steam => game.cover_url.is_some(),
+            };
+            if game.cover_url.is_none() && !resolvable {
                 continue;
             }
             self.provider_cover_queue.push_back(game.key.clone());
@@ -3994,7 +4111,6 @@ impl QuarkApp {
         else {
             return;
         };
-        self.provider_cover_tried.insert(key.clone());
         let (tx, rx) = channel();
         let repaint = ctx.clone();
         std::thread::spawn(move || {
@@ -4012,6 +4128,8 @@ impl QuarkApp {
         };
         match result {
             Ok((key, Ok((_path, Some(url))))) => {
+                self.provider_cover_tried.insert(key.clone());
+                self.provider_cover_failures.remove(&key);
                 if let Some(game) = self
                     .lib
                     .provider_library
@@ -4027,11 +4145,14 @@ impl QuarkApp {
             }
             Ok((key, Ok((_path, None)))) => {
                 // Couverture déjà connue : rien à mémoriser.
-                let _ = key;
+                self.provider_cover_tried.insert(key);
             }
-            Ok((_key, Err(_))) => {
-                // Une couverture manquante laisse le monogramme : ce n'est pas
-                // une erreur à afficher, et le jeu n'est pas réessayé.
+            Ok((key, Err(_))) => {
+                // Une couverture manquante laisse le monogramme. Une erreur
+                // passagère (réseau, cache en cours d'écriture) est retentée
+                // aux balayages suivants, sans boucle infinie.
+                let failures = self.provider_cover_failures.entry(key).or_insert(0);
+                *failures = failures.saturating_add(1);
             }
             Err(TryRecvError::Disconnected) => {}
             Err(TryRecvError::Empty) => {
@@ -4066,20 +4187,43 @@ impl QuarkApp {
         else {
             return;
         };
-        if game.key.provider != crate::providers::Provider::Epic {
-            return;
-        }
-        if !crate::providers::tools::ManagedToolId::Legendary
-            .installed_path()
-            .is_file()
-        {
-            self.achievements.insert(
-                key.clone(),
-                AchievementsState::Failed(
-                    "Legendary n'est pas installé : Paramètres → Boutiques & outils".into(),
-                ),
-            );
-            return;
+        match game.key.provider {
+            crate::providers::Provider::Epic => {
+                if !crate::providers::tools::ManagedToolId::Legendary
+                    .installed_path()
+                    .is_file()
+                {
+                    self.achievements.insert(
+                        key.clone(),
+                        AchievementsState::Failed(
+                            "Legendary n'est pas installé : Paramètres → Boutiques & outils".into(),
+                        ),
+                    );
+                    return;
+                }
+            }
+            crate::providers::Provider::Gog => {
+                if !crate::providers::gog::GogAdapter::is_logged_in() {
+                    self.achievements.insert(
+                        key.clone(),
+                        AchievementsState::Failed(
+                            "Session GOG absente : connecte la boutique dans Paramètres → \
+                             Boutiques & outils"
+                                .into(),
+                        ),
+                    );
+                    return;
+                }
+            }
+            crate::providers::Provider::Steam => {
+                self.achievements.insert(
+                    key.clone(),
+                    AchievementsState::Failed(
+                        "Steam n'expose pas de succès lisibles sans sa propre session".into(),
+                    ),
+                );
+                return;
+            }
         }
         self.achievements
             .insert(key.clone(), AchievementsState::Loading);
@@ -4087,13 +4231,40 @@ impl QuarkApp {
         let repaint = ctx.clone();
         let product_id = key.product_id.clone();
         let sent_key = key.clone();
+        let provider = key.provider;
         std::thread::spawn(move || {
-            let result = crate::providers::legendary::epic_achievements(&product_id);
+            let result = match provider {
+                crate::providers::Provider::Epic => {
+                    crate::providers::legendary::epic_achievements(&product_id)
+                }
+                crate::providers::Provider::Gog => {
+                    crate::providers::gog_library::game_achievements(
+                        &crate::providers::gog::auth_config_path(),
+                        &product_id,
+                        crate::config::now_ts(),
+                    )
+                }
+                crate::providers::Provider::Steam => {
+                    Err("Steam n'expose pas de succès lisibles".to_string())
+                }
+            };
             let _ = tx.send((sent_key, result));
             repaint.request_repaint();
         });
         self.achievements_job = Some(rx);
         ctx.request_repaint_after(Duration::from_millis(150));
+    }
+
+    pub(crate) fn cancel_provider_install(&mut self, provider: crate::providers::Provider) {
+        let flag = match provider {
+            crate::providers::Provider::Epic => self.epic_install_cancel.as_ref(),
+            crate::providers::Provider::Gog => self.gog_install_cancel.as_ref(),
+            crate::providers::Provider::Steam => None,
+        };
+        if let Some(flag) = flag {
+            flag.store(true, Ordering::SeqCst);
+            self.toast_info("Annulation demandée");
+        }
     }
 
     fn poll_achievements(&mut self, ctx: &egui::Context) {
