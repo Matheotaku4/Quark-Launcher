@@ -251,12 +251,26 @@ pub enum PickerTarget {
     GameExe,
     GamePrefix,
     DefaultPrefix,
+    /// Dossier parent par défaut des installations Epic/GOG.
+    DefaultInstallDir,
+    /// Dossier choisi pour l'installation en cours, sans changer le réglage.
+    InstallDestination,
     ScanFolder,
     /// Image choisie sur le disque pour un artwork du jeu personnalisé.
     CustomArtwork(AssetKind),
-    EpicInstall,
-    GogInstall,
     SaveFolder(crate::providers::ProviderGameKey),
+}
+
+/// Confirmation d'installation d'un jeu Epic/GOG : taille annoncée et dossier
+/// choisi avant de lancer le téléchargement. La taille est lue en arrière-plan
+/// par `legendary info` / `gogdl info`, jamais inventée.
+pub struct InstallRequest {
+    pub key: crate::providers::ProviderGameKey,
+    pub title: String,
+    pub destination: PathBuf,
+    pub size: Option<u64>,
+    pub size_error: Option<String>,
+    pub size_rx: Option<Receiver<Result<Option<u64>, String>>>,
 }
 
 /// Sélecteur de fichiers du système, exécuté dans un thread dédié pour ne pas
@@ -485,6 +499,9 @@ pub struct QuarkApp {
     pub job_queue: VecDeque<(String, AssetSource)>,
     /// Textures des artworks (décodées par Quark lui-même).
     pub textures: crate::images::TextureCache,
+    /// Jaquettes réduites pour les grilles : le plein format reste réservé à la
+    /// fiche et à la bannière floutée.
+    pub thumbnails: crate::images::ThumbnailCache,
     /// Couleur d'accent de chaque jeu, déduite de sa couverture (une seule
     /// analyse par image).
     pub accents: HashMap<PathBuf, egui::Color32>,
@@ -600,6 +617,8 @@ pub struct QuarkApp {
         )>,
     >,
     pub provider_cover_queue: VecDeque<crate::providers::ProviderGameKey>,
+    /// Couvertures actuellement téléchargées en parallèle (quatre au plus).
+    pub provider_cover_inflight: usize,
     /// Couvertures déjà tentées avec succès : une image trouvée n'est plus
     /// redemandée.
     pub provider_cover_tried: std::collections::HashSet<crate::providers::ProviderGameKey>,
@@ -628,6 +647,8 @@ pub struct QuarkApp {
             Result<Option<String>, String>,
         )>,
     >,
+    /// Fenêtre d'installation ouverte depuis une carte (taille + dossier).
+    pub install_request: Option<InstallRequest>,
     /// Avancement des installations fournisseur, lu à chaque image par l'UI.
     pub epic_install_progress: Option<Arc<Mutex<crate::providers::runner::InstallProgress>>>,
     pub epic_install_cancel: Option<Arc<AtomicBool>>,
@@ -777,6 +798,7 @@ impl QuarkApp {
             show_info: false,
             job_queue: VecDeque::new(),
             textures: crate::images::TextureCache::default(),
+            thumbnails: crate::images::ThumbnailCache::default(),
             accents: HashMap::new(),
             light_images: HashMap::new(),
             news: HashMap::new(),
@@ -826,6 +848,7 @@ impl QuarkApp {
             my_games_query: String::new(),
             provider_cover_job: None,
             provider_cover_queue: VecDeque::new(),
+            provider_cover_inflight: 0,
             provider_cover_scan_at: None,
             provider_cover_tried: std::collections::HashSet::new(),
             provider_cover_failures: HashMap::new(),
@@ -834,6 +857,7 @@ impl QuarkApp {
             bridge_rx: None,
             session_unlocks: crate::session_sync::load_session_unlocks(),
             gog_unlock_job: None,
+            install_request: None,
             epic_install_progress: None,
             epic_install_cancel: None,
             gog_install_progress: None,
@@ -952,6 +976,7 @@ impl QuarkApp {
         self.poll_gog_sync(ctx);
         self.poll_epic_install(ctx);
         self.poll_gog_install(ctx);
+        self.poll_install_size(ctx);
         self.poll_provider_covers(ctx);
         self.poll_achievements(ctx);
         self.poll_session_sync(ctx);
@@ -974,6 +999,7 @@ impl QuarkApp {
             || self.gog_unlock_job.is_some()
             || self.adopt_cover_job.is_some()
             || self.epic_install_progress.is_some()
+            || self.install_request.is_some()
             || self.gog_install_progress.is_some()
             || self.playtime_job.is_some()
             || self.install_probe_rx.is_some()
@@ -1328,9 +1354,16 @@ impl QuarkApp {
                 self.lib.settings.default_prefix = Some(text);
                 self.touch();
             }
+            PickerTarget::DefaultInstallDir => {
+                self.lib.settings.default_install_dir = Some(text);
+                self.touch();
+            }
+            PickerTarget::InstallDestination => {
+                if let Some(request) = self.install_request.as_mut() {
+                    request.destination = path;
+                }
+            }
             PickerTarget::CustomArtwork(kind) => self.import_artwork(kind, path),
-            PickerTarget::EpicInstall => self.start_epic_install(ctx, path),
-            PickerTarget::GogInstall => self.start_gog_install(ctx, path),
             PickerTarget::SaveFolder(key) => {
                 if let Some(game) = self
                     .lib
@@ -2464,6 +2497,7 @@ impl QuarkApp {
         self.game_settings_dialog(ctx);
         self.confirm_remove_dialog(ctx);
         self.confirm_uninstall_dialog(ctx);
+        self.install_dialog(ctx);
         self.logs_dialog(ctx);
         self.achievements_dialog(ctx);
         self.save_backup_dialog(ctx);
@@ -4058,12 +4092,20 @@ impl QuarkApp {
         }
     }
 
-    pub fn request_epic_install(
+    /// Ouvre la petite fenêtre d'installation d'un jeu Epic/GOG. Elle affiche
+    /// la taille annoncée par l'outil et le dossier parent proposé, puis laisse
+    /// changer ce dossier avant de lancer le téléchargement.
+    pub(crate) fn open_install_request(
         &mut self,
         ctx: &egui::Context,
         key: &crate::providers::ProviderGameKey,
     ) {
-        if self.epic_install_rx.is_some() || self.epic_installing.is_some() {
+        if self.epic_install_rx.is_some()
+            || self.gog_install_rx.is_some()
+            || self.epic_installing.is_some()
+            || self.gog_installing.is_some()
+        {
+            self.toast_info("Une installation est déjà en cours");
             return;
         }
         let Some(game) = self
@@ -4076,20 +4118,233 @@ impl QuarkApp {
         else {
             return;
         };
-        if key.provider != crate::providers::Provider::Epic || !game.owned {
-            self.toast_error("Installation Epic indisponible pour ce jeu");
+        if !game.owned {
+            self.toast_error("Ce jeu n'est pas possédé sur cette boutique");
             return;
         }
-        self.epic_install_pending = Some(key.clone());
-        self.pick_directory(ctx, crate::config::home_dir(), PickerTarget::EpicInstall);
+        let ready = match key.provider {
+            crate::providers::Provider::Epic => crate::providers::tools::ManagedToolId::Legendary
+                .installed_path()
+                .is_file(),
+            crate::providers::Provider::Gog => crate::providers::tools::ManagedToolId::Gogdl
+                .installed_path()
+                .is_file(),
+            crate::providers::Provider::Steam => false,
+        };
+        if !ready {
+            let tool = if key.provider == crate::providers::Provider::Epic {
+                "Legendary"
+            } else {
+                "gogdl"
+            };
+            self.toast_error(format!(
+                "{tool} n'est pas installé : Paramètres → Boutiques & outils"
+            ));
+            return;
+        }
+        let destination = self.lib.settings.install_root();
+        let (tx, rx) = channel();
+        let sent_key = key.clone();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let result = match sent_key.provider {
+                crate::providers::Provider::Epic => {
+                    crate::providers::legendary::epic_install_size(&sent_key.product_id)
+                }
+                crate::providers::Provider::Gog => {
+                    crate::providers::gog::gog_install_size(&sent_key.product_id)
+                }
+                crate::providers::Provider::Steam => Ok(None),
+            };
+            let _ = tx.send(result);
+            repaint.request_repaint();
+        });
+        self.install_request = Some(InstallRequest {
+            key: key.clone(),
+            title: game.title,
+            destination,
+            size: None,
+            size_error: None,
+            size_rx: Some(rx),
+        });
+        ctx.request_repaint_after(Duration::from_millis(150));
+    }
+
+    /// Lit la taille demandée par la fenêtre d'installation, sans bloquer le
+    /// rendu : l'info de Legendary/gogdl peut prendre quelques secondes.
+    fn poll_install_size(&mut self, ctx: &egui::Context) {
+        let Some(received) = self
+            .install_request
+            .as_ref()
+            .and_then(|request| request.size_rx.as_ref())
+            .map(Receiver::try_recv)
+        else {
+            return;
+        };
+        match received {
+            Ok(result) => {
+                if let Some(request) = self.install_request.as_mut() {
+                    request.size_rx = None;
+                    match result {
+                        Ok(size) => request.size = size,
+                        Err(error) => request.size_error = Some(error),
+                    }
+                }
+            }
+            Err(TryRecvError::Disconnected) => {
+                if let Some(request) = self.install_request.as_mut() {
+                    request.size_rx = None;
+                    request.size_error = Some("lecture de la taille interrompue".to_string());
+                }
+            }
+            Err(TryRecvError::Empty) => {
+                ctx.request_repaint_after(Duration::from_millis(150));
+            }
+        }
+    }
+
+    /// Fenêtre de confirmation d'installation Epic/GOG, ouverte par un clic
+    /// gauche ou droit sur une carte de « Mes jeux ».
+    pub(crate) fn install_dialog(&mut self, ctx: &egui::Context) {
+        if self.install_request.is_none() {
+            return;
+        }
+        if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            self.install_request = None;
+            return;
+        }
+        let pal = self.pal;
+        let mut change = false;
+        let mut install = false;
+        let mut cancel = false;
+        let modal = egui::Modal::new(egui::Id::new("quark_install_request")).show(ctx, |ui| {
+            let Some(request) = self.install_request.as_ref() else {
+                return;
+            };
+            ui.set_width(560.0);
+            ui.label(
+                RichText::new(format!("Installer « {} »", request.title))
+                    .size(17.0)
+                    .color(pal.text),
+            );
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(match request.key.provider {
+                    crate::providers::Provider::Epic => "Epic Games · via Legendary",
+                    crate::providers::Provider::Gog => "GOG · via gogdl",
+                    crate::providers::Provider::Steam => "Steam",
+                })
+                .size(11.5)
+                .color(pal.text_dim),
+            );
+            ui.add_space(14.0);
+            let size_text = if request.size_rx.is_some() {
+                "Taille : calcul en cours…".to_string()
+            } else if let Some(size) = request.size {
+                format!("Taille à télécharger : {}", disk::format_bytes(size))
+            } else if let Some(error) = &request.size_error {
+                format!("Taille non communiquée ({error})")
+            } else {
+                "Taille non communiquée par la boutique".to_string()
+            };
+            ui.label(RichText::new(size_text).size(12.5).color(pal.text));
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new("Dossier d'installation")
+                    .size(10.5)
+                    .color(pal.text_faint),
+            );
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(request.destination.display().to_string())
+                            .size(11.5)
+                            .color(pal.text_dim),
+                    )
+                    .truncate(),
+                );
+                if widgets::ghost_button(ui, "Changer…", &pal, Icon::Folder).clicked() {
+                    change = true;
+                }
+            });
+            ui.add_space(10.0);
+            ui.label(
+                RichText::new(
+                    "Le jeu sera créé dans ce dossier. Les sauvegardes et le préfixe Proton \
+                     restent conservés en cas de désinstallation.",
+                )
+                .size(10.5)
+                .color(pal.text_faint),
+            );
+            ui.add_space(16.0);
+            ui.horizontal(|ui| {
+                if widgets::accent_button(
+                    ui,
+                    Vec2::new(112.0, 30.0),
+                    "Installer",
+                    &pal,
+                    true,
+                    Icon::Download,
+                )
+                .clicked()
+                {
+                    install = true;
+                }
+                if widgets::ghost_button(ui, "Annuler", &pal, Icon::None).clicked() {
+                    cancel = true;
+                }
+            });
+        });
+        if modal.should_close() {
+            cancel = true;
+        }
+        if change {
+            let start = self
+                .install_request
+                .as_ref()
+                .map(|request| request.destination.clone())
+                .unwrap_or_else(|| self.lib.settings.install_root());
+            self.pick_directory(ctx, start, PickerTarget::InstallDestination);
+            return;
+        }
+        if cancel {
+            self.install_request = None;
+            return;
+        }
+        if install {
+            let Some(request) = self.install_request.take() else {
+                return;
+            };
+            match request.key.provider {
+                crate::providers::Provider::Epic => {
+                    self.epic_install_pending = Some(request.key.clone());
+                    self.start_epic_install(ctx, request.destination);
+                }
+                crate::providers::Provider::Gog => {
+                    self.gog_install_pending = Some(request.key.clone());
+                    self.start_gog_install(ctx, request.destination);
+                }
+                crate::providers::Provider::Steam => {}
+            }
+        }
+    }
+
+    /// Ouvre la confirmation d'installation Epic : taille et dossier avant de
+    /// lancer Legendary. Le dossier proposé vient des réglages.
+    pub fn request_epic_install(
+        &mut self,
+        ctx: &egui::Context,
+        key: &crate::providers::ProviderGameKey,
+    ) {
+        self.open_install_request(ctx, key);
     }
 
     fn start_epic_install(&mut self, ctx: &egui::Context, destination: PathBuf) {
         let Some(key) = self.epic_install_pending.take() else {
             return;
         };
-        if !destination.is_dir() {
-            self.toast_error("Dossier de destination Epic invalide");
+        if let Err(error) = std::fs::create_dir_all(&destination) {
+            self.toast_error(format!("Dossier de destination Epic invalide : {error}"));
             return;
         }
         let Some(game) = self
@@ -4278,47 +4533,22 @@ impl QuarkApp {
         }
     }
 
-    /// Installation GOG depuis « Mes jeux » : gogdl télécharge dans un dossier
-    /// parent choisi, puis le jeu rejoint la bibliothèque Quark.
+    /// Installation GOG depuis « Mes jeux » : confirmation avec taille et
+    /// dossier, puis gogdl télécharge dans le dossier parent choisi.
     pub fn request_gog_install(
         &mut self,
         ctx: &egui::Context,
         key: &crate::providers::ProviderGameKey,
     ) {
-        if self.gog_install_rx.is_some() || self.gog_installing.is_some() {
-            return;
-        }
-        let Some(game) = self
-            .lib
-            .provider_library
-            .games
-            .iter()
-            .find(|game| &game.key == key)
-            .cloned()
-        else {
-            return;
-        };
-        if key.provider != crate::providers::Provider::Gog || !game.owned {
-            self.toast_error("Installation GOG indisponible pour ce jeu");
-            return;
-        }
-        if !crate::providers::tools::ManagedToolId::Gogdl
-            .installed_path()
-            .is_file()
-        {
-            self.toast_error("gogdl n'est pas installé : Paramètres → Boutiques & outils");
-            return;
-        }
-        self.gog_install_pending = Some(key.clone());
-        self.pick_directory(ctx, crate::config::home_dir(), PickerTarget::GogInstall);
+        self.open_install_request(ctx, key);
     }
 
     fn start_gog_install(&mut self, ctx: &egui::Context, destination: PathBuf) {
         let Some(key) = self.gog_install_pending.take() else {
             return;
         };
-        if !destination.is_dir() {
-            self.toast_error("Dossier de destination GOG invalide");
+        if let Err(error) = std::fs::create_dir_all(&destination) {
+            self.toast_error(format!("Dossier de destination GOG invalide : {error}"));
             return;
         }
         let Some(game) = self
@@ -4669,7 +4899,7 @@ impl QuarkApp {
             .is_file();
         self.provider_cover_queue.clear();
         for game in games {
-            if self.provider_cover_queue.len() >= 8 {
+            if self.provider_cover_queue.len() >= 32 {
                 break;
             }
             if crate::providers::covers::cached(&game.key).is_some()
@@ -4700,26 +4930,37 @@ impl QuarkApp {
         if self.provider_cover_job.is_some() {
             return;
         }
-        let Some(key) = self.provider_cover_queue.pop_front() else {
-            return;
-        };
-        let Some(game) = self
-            .lib
-            .provider_library
-            .games
-            .iter()
-            .find(|game| game.key == key)
-            .cloned()
-        else {
-            return;
-        };
         let (tx, rx) = channel();
         let repaint = ctx.clone();
-        std::thread::spawn(move || {
-            let result = crate::providers::covers::ensure(&game);
-            let _ = tx.send((key, result));
-            repaint.request_repaint();
-        });
+        let mut start = 0usize;
+        while start < 4 {
+            let Some(key) = self.provider_cover_queue.pop_front() else {
+                break;
+            };
+            let Some(game) = self
+                .lib
+                .provider_library
+                .games
+                .iter()
+                .find(|game| game.key == key)
+                .cloned()
+            else {
+                continue;
+            };
+            let tx = tx.clone();
+            let repaint = repaint.clone();
+            std::thread::spawn(move || {
+                let result = crate::providers::covers::ensure(&game);
+                let _ = tx.send((key, result));
+                repaint.request_repaint();
+            });
+            start += 1;
+        }
+        drop(tx);
+        if start == 0 {
+            return;
+        }
+        self.provider_cover_inflight = start;
         self.provider_cover_job = Some(rx);
         ctx.request_repaint_after(Duration::from_millis(150));
     }
@@ -4756,14 +4997,21 @@ impl QuarkApp {
                 let failures = self.provider_cover_failures.entry(key).or_insert(0);
                 *failures = failures.saturating_add(1);
             }
-            Err(TryRecvError::Disconnected) => {}
+            Err(TryRecvError::Disconnected) => {
+                self.provider_cover_inflight = 0;
+            }
             Err(TryRecvError::Empty) => {
                 ctx.request_repaint_after(Duration::from_millis(150));
                 return;
             }
         }
-        self.provider_cover_job = None;
-        self.start_next_cover(ctx);
+        self.provider_cover_inflight = self.provider_cover_inflight.saturating_sub(1);
+        if self.provider_cover_inflight == 0 {
+            self.provider_cover_job = None;
+            self.start_next_cover(ctx);
+        } else {
+            ctx.request_repaint_after(Duration::from_millis(150));
+        }
     }
 
     /// Succès Epic, lus seulement quand la fenêtre est demandée.
@@ -4848,7 +5096,11 @@ impl QuarkApp {
                 crate::providers::Provider::Steam => {
                     Err("Steam n'expose pas de succès lisibles".to_string())
                 }
-            };
+            }
+            .map(|mut info| {
+                crate::providers::achievements::cache_icons(&mut info, provider, &product_id);
+                info
+            });
             let _ = tx.send((sent_key, result));
             repaint.request_repaint();
         });

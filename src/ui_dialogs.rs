@@ -520,6 +520,7 @@ impl QuarkApp {
         let pal = self.pal;
         let mut close_requested = false;
         let mut browse_prefix = false;
+        let mut browse_install_dir = false;
         let mut redetect = false;
         let mut check_updates = false;
         let mut open_steam_import = false;
@@ -839,6 +840,48 @@ impl QuarkApp {
                                 "Le dossier choisi est utilisé tel quel : Quark n'y crée aucun \
                                  sous-dossier. Vide = un préfixe par jeu sous \
                                  ~/.local/share/quark/prefixes/.",
+                            );
+                        });
+
+                        section(ui, "DOSSIER D'INSTALLATION DES BOUTIQUES", &pal);
+                        ui.horizontal(|ui| {
+                            let mut text = self
+                                .lib
+                                .settings
+                                .default_install_dir
+                                .clone()
+                                .unwrap_or_default();
+                            let field = (ui.available_width() - 210.0).max(220.0);
+                            let response = ui.add(
+                                egui::TextEdit::singleline(&mut text)
+                                    .hint_text(format!(
+                                        "auto : {}",
+                                        config::home_dir().join("Games").display()
+                                    ))
+                                    .desired_width(field),
+                            );
+                            if response.changed() {
+                                self.lib.settings.default_install_dir = if text.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(text.clone())
+                                };
+                                self.touch();
+                            }
+                            if widgets::ghost_button(ui, "Parcourir…", &pal, Icon::Folder).clicked() {
+                                browse_install_dir = true;
+                            }
+                            if widgets::ghost_button(ui, "Auto", &pal, Icon::None).clicked() {
+                                self.lib.settings.default_install_dir = None;
+                                self.touch();
+                            }
+                            widgets::info_button(
+                                ui,
+                                &pal,
+                                "Dossier parent proposé quand tu installes un jeu Epic ou GOG. \
+                                 Quark y crée le dossier du jeu ; tu peux choisir un autre \
+                                 dossier pour une installation précise sans changer ce réglage. \
+                                 Vide = ~/Games.",
                             );
                         });
 
@@ -1365,6 +1408,10 @@ impl QuarkApp {
         }
         if save_steam_key {
             self.save_steam_api_key();
+        }
+        if browse_install_dir {
+            let start = self.lib.settings.install_root();
+            self.pick_directory(ctx, start, PickerTarget::DefaultInstallDir);
         }
         if browse_prefix {
             let start = self
@@ -3422,14 +3469,16 @@ impl QuarkApp {
                             );
                             ui.add_space(10.0);
 
-                            let mut rows: Vec<&crate::providers::AchievementRow> =
-                                info.rows.iter().collect();
-                            rows.sort_by(|left, right| {
-                                right
-                                    .unlocked
-                                    .cmp(&left.unlocked)
-                                    .then_with(|| left.name.cmp(&right.name))
-                            });
+                            if info.rows.iter().any(|row| row.rarity.is_some()) {
+                                ui.label(
+                                    RichText::new("Triés du plus rare au plus courant")
+                                        .size(10.0)
+                                        .color(pal.text_faint),
+                                );
+                                ui.add_space(6.0);
+                            }
+                            let rows =
+                                crate::providers::achievements::sorted_rows(&info.rows);
                             egui::ScrollArea::vertical()
                                 .id_salt("quark_achievements_scroll")
                                 .max_height(max_height)
@@ -3437,31 +3486,64 @@ impl QuarkApp {
                                 .show(ui, |ui| {
                                     for row in rows {
                                         ui.horizontal(|ui| {
-                                            let (dot, _) = ui.allocate_exact_size(
-                                                Vec2::splat(14.0),
-                                                Sense::hover(),
-                                            );
-                                            ui.painter().circle_filled(
-                                                dot.center(),
-                                                4.0,
-                                                if row.unlocked {
-                                                    pal.accent
-                                                } else {
-                                                    pal.border
-                                                },
-                                            );
-                                            ui.add_space(2.0);
+                                            let icon = row
+                                                .icon_path
+                                                .as_ref()
+                                                .and_then(|path| self.texture(ui.ctx(), path));
+                                            if let Some(texture) = icon {
+                                                let (rect, _) = ui.allocate_exact_size(
+                                                    Vec2::splat(22.0),
+                                                    Sense::hover(),
+                                                );
+                                                crate::images::rounded_cover(
+                                                    ui, rect, &texture, 4.0,
+                                                );
+                                                ui.add_space(2.0);
+                                            } else {
+                                                let (dot, _) = ui.allocate_exact_size(
+                                                    Vec2::splat(14.0),
+                                                    Sense::hover(),
+                                                );
+                                                ui.painter().circle_filled(
+                                                    dot.center(),
+                                                    4.0,
+                                                    if row.unlocked {
+                                                        pal.accent
+                                                    } else {
+                                                        pal.border
+                                                    },
+                                                );
+                                                ui.add_space(2.0);
+                                            }
                                             ui.vertical(|ui| {
                                                 ui.spacing_mut().item_spacing.y = 1.0;
-                                                ui.label(
-                                                    RichText::new(&row.name)
-                                                        .size(12.0)
-                                                        .color(if row.unlocked {
-                                                            pal.text
+                                                ui.horizontal(|ui| {
+                                                    ui.label(
+                                                        RichText::new(&row.name)
+                                                            .size(12.0)
+                                                            .color(if row.unlocked {
+                                                                pal.text
+                                                            } else {
+                                                                pal.text_dim
+                                                            }),
+                                                    );
+                                                    if let Some(rarity) = row.rarity {
+                                                        let text = if rarity < 0.1 {
+                                                            "< 0,1 %".to_string()
                                                         } else {
-                                                            pal.text_dim
-                                                        }),
-                                                );
+                                                            format!("{rarity:.1} %")
+                                                                .replace('.', ",")
+                                                        };
+                                                        ui.label(
+                                                            RichText::new(text)
+                                                                .size(9.5)
+                                                                .color(pal.text_faint),
+                                                        )
+                                                        .on_hover_text(
+                                                            "Pourcentage de joueurs ayant obtenu ce succès",
+                                                        );
+                                                    }
+                                                });
                                                 if !row.description.is_empty() {
                                                     ui.label(
                                                         RichText::new(&row.description)
@@ -3488,7 +3570,7 @@ impl QuarkApp {
                                                     if !row.unlocked && row.progress > 0.0 {
                                                         ui.label(
                                                             RichText::new(format!(
-                                                                "{:.0} %",
+                                                                "progression {:.0} %",
                                                                 row.progress * 100.0
                                                             ))
                                                             .size(9.5)

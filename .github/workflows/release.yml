@@ -64,6 +64,7 @@ jobs:
             "hover-tile:--view grid --hover 150,300" \
             "dialog-settings:--dialog settings" \
             "dialog-settings-defaults:--dialog settings-defaults" \
+            "dialog-install:--dialog install --providers-demo" \
             "dialog-updates:--dialog updates" \
             "dialog-game:--dialog game" \
             "dialog-logs:--dialog logs" \

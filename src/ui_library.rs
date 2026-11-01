@@ -112,7 +112,10 @@ impl QuarkApp {
         }
         let covers: Vec<Option<egui::TextureHandle>> = paths
             .iter()
-            .map(|path| path.as_ref().and_then(|path| self.texture(ui.ctx(), path)))
+            .map(|path| {
+                path.as_ref()
+                    .and_then(|path| self.texture_thumb(ui.ctx(), path))
+            })
             .collect();
 
         let mut opened: Option<String> = None;
@@ -481,7 +484,7 @@ impl QuarkApp {
                                         marked,
                                         running,
                                         appear,
-                                        &mut self.textures,
+                                        &mut self.thumbnails,
                                     );
                                     let clicked = response.clicked();
                                     let double = response.double_clicked();
@@ -571,7 +574,7 @@ impl QuarkApp {
             selected,
             marked,
             running,
-            &mut self.textures,
+            &mut self.thumbnails,
         );
         let clicked = response.clicked();
         let double = response.double_clicked();
@@ -1574,22 +1577,39 @@ impl QuarkApp {
                 });
             }
             Some(crate::app::AchievementsState::Ready(info)) => {
-                let mut rows: Vec<&crate::providers::AchievementRow> = info.rows.iter().collect();
-                rows.sort_by(|left, right| {
-                    right
-                        .unlocked
-                        .cmp(&left.unlocked)
-                        .then_with(|| left.name.cmp(&right.name))
-                });
+                if info.rows.iter().any(|row| row.rarity.is_some()) {
+                    ui.horizontal(|ui| {
+                        ui.add_space(32.0);
+                        ui.label(
+                            RichText::new("Triés du plus rare au plus courant")
+                                .size(10.0)
+                                .color(pal.text_faint),
+                        );
+                    });
+                    ui.add_space(4.0);
+                }
+                let rows = crate::providers::achievements::sorted_rows(&info.rows);
                 for row in rows {
                     ui.horizontal(|ui| {
                         ui.add_space(32.0);
-                        let (dot, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
-                        ui.painter().circle_filled(
-                            dot.center(),
-                            4.0,
-                            if row.unlocked { pal.accent } else { pal.border },
-                        );
+                        let icon = row
+                            .icon_path
+                            .as_ref()
+                            .and_then(|path| self.texture(ui.ctx(), path));
+                        if let Some(texture) = icon {
+                            let (rect, _) =
+                                ui.allocate_exact_size(Vec2::splat(28.0), Sense::hover());
+                            crate::images::rounded_cover(ui, rect, &texture, 5.0);
+                            ui.add_space(2.0);
+                        } else {
+                            let (dot, _) =
+                                ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+                            ui.painter().circle_filled(
+                                dot.center(),
+                                4.0,
+                                if row.unlocked { pal.accent } else { pal.border },
+                            );
+                        }
                         ui.vertical(|ui| {
                             ui.set_max_width((width - 80.0).max(200.0));
                             ui.spacing_mut().item_spacing.y = 1.0;
@@ -1609,11 +1629,25 @@ impl QuarkApp {
                                             .color(pal.accent),
                                     );
                                 }
+                                if let Some(rarity) = row.rarity {
+                                    let text = if rarity < 0.1 {
+                                        "< 0,1 %".to_string()
+                                    } else {
+                                        format!("{rarity:.1} %").replace('.', ",")
+                                    };
+                                    ui.label(RichText::new(text).size(9.5).color(pal.text_faint))
+                                        .on_hover_text(
+                                            "Pourcentage de joueurs ayant obtenu ce succès",
+                                        );
+                                }
                                 if !row.unlocked && row.progress > 0.0 {
                                     ui.label(
-                                        RichText::new(format!("{:.0} %", row.progress * 100.0))
-                                            .size(9.5)
-                                            .color(pal.text_faint),
+                                        RichText::new(format!(
+                                            "progression {:.0} %",
+                                            row.progress * 100.0
+                                        ))
+                                        .size(9.5)
+                                        .color(pal.text_faint),
                                     );
                                 }
                             });
@@ -2015,7 +2049,7 @@ fn game_row(
     selected: bool,
     marked: bool,
     running: bool,
-    textures: &mut crate::images::TextureCache,
+    textures: &mut crate::images::ThumbnailCache,
 ) -> egui::Response {
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 46.0), Sense::click());
@@ -2154,7 +2188,7 @@ fn game_tile(
     running: bool,
     // Progression de l'apparition de la page (0 → 1), décalée par tuile.
     appear: f32,
-    textures: &mut crate::images::TextureCache,
+    textures: &mut crate::images::ThumbnailCache,
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     // Les tuiles montent de quelques pixels en apparaissant ; la place réservée

@@ -115,6 +115,105 @@ impl QuarkApp {
     }
 }
 
+/// Largeur maximale des miniatures de grille. Une jaquette de 600 × 900 est
+/// réduite à 360 px de large : la carte n'en affiche jamais plus, et la texture
+/// GPU passe de ~2,2 Mo à ~0,8 Mo. Sur 72 cartes visibles, cela évite les gros
+/// à-coups de mémoire au moment d'« Afficher plus de jeux ».
+pub const THUMB_WIDTH: u32 = 360;
+
+/// Nombre de miniatures gardées : une page complète (72 cartes) tient à l'aise,
+/// avec une marge pour le défilement. 96 miniatures de 360 px pèsent environ
+/// 75 Mo en RGBA, contre plus de 200 Mo avec les jaquettes pleines.
+const THUMB_BUDGET: usize = 96;
+
+/// Cache des jaquettes réduites pour les grilles. Il est séparé du cache plein
+/// format, utilisé par la fiche jeu et la bannière floutée.
+#[derive(Default)]
+pub struct ThumbnailCache {
+    entries: HashMap<PathBuf, CachedTexture>,
+    tick: u64,
+}
+
+impl ThumbnailCache {
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Miniature d'un fichier local, redimensionnée une seule fois puis gardée
+    /// en texture. Le fichier d'origine n'est jamais réécrit.
+    pub fn get(&mut self, ctx: &egui::Context, path: &Path) -> Option<&TextureHandle> {
+        self.tick += 1;
+        let tick = self.tick;
+        let modified = std::fs::metadata(path).ok().and_then(|m| m.modified().ok());
+        let stale = match self.entries.get(path) {
+            Some(entry) => entry.stamp != modified,
+            None => true,
+        };
+        if stale {
+            let bytes = std::fs::read(path).ok()?;
+            let decoded = image::load_from_memory(&bytes).ok()?;
+            let rgba = decoded.to_rgba8();
+            let (width, height) = (rgba.width().max(1), rgba.height().max(1));
+            let (width, height) = if width > THUMB_WIDTH {
+                let height = ((THUMB_WIDTH as f32 * height as f32) / width as f32)
+                    .round()
+                    .clamp(1.0, 8192.0) as u32;
+                (THUMB_WIDTH, height)
+            } else {
+                (width, height)
+            };
+            let small = if rgba.width() != width || rgba.height() != height {
+                image::imageops::thumbnail(&rgba, width, height)
+            } else {
+                rgba
+            };
+            let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                [small.width() as usize, small.height() as usize],
+                small.as_raw(),
+            );
+            let texture = ctx.load_texture(
+                format!("thumb:{}", path.display()),
+                color_image,
+                egui::TextureOptions::LINEAR,
+            );
+            self.entries.insert(
+                path.to_path_buf(),
+                CachedTexture {
+                    stamp: modified,
+                    texture,
+                    used: tick,
+                },
+            );
+            if self.entries.len() > THUMB_BUDGET {
+                self.evict();
+            }
+        }
+        if let Some(entry) = self.entries.get_mut(path) {
+            entry.used = tick;
+        }
+        self.entries.get(path).map(|entry| &entry.texture)
+    }
+
+    fn evict(&mut self) {
+        let used: Vec<(PathBuf, u64)> = self
+            .entries
+            .iter()
+            .map(|(path, entry)| (path.clone(), entry.used))
+            .collect();
+        for path in evict_candidates(&used, THUMB_BUDGET) {
+            self.entries.remove(&path);
+        }
+    }
+}
+
+impl QuarkApp {
+    /// Miniature pour les grilles et les listes. La fiche jeu continue
+    /// d'utiliser [`QuarkApp::texture`] pour garder une bannière nette.
+    pub fn texture_thumb(&mut self, ctx: &egui::Context, path: &Path) -> Option<TextureHandle> {
+        self.thumbnails.get(ctx, path).cloned()
+    }
+}
+
 /// Versions floutées des bannières (fond de la fiche jeu).
 ///
 /// L'image est réduite à `BLUR_WIDTH` pixels, floutée, puis agrandie par la

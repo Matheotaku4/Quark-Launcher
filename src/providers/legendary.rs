@@ -569,6 +569,20 @@ pub fn parse_achievements(text: &str) -> Result<AchievementInfo, String> {
         description: Option<String>,
         #[serde(default)]
         unlocked: bool,
+        #[serde(default)]
+        icon: Option<String>,
+        #[serde(default)]
+        icon_gray: Option<String>,
+        #[serde(default)]
+        icon_url: Option<String>,
+        #[serde(default)]
+        image: Option<String>,
+        /// Certaines versions de Legendary exposent le taux d'obtention ;
+        /// les formes publiées varient, d'où la lecture tolérante.
+        #[serde(default)]
+        rarity: Option<serde_json::Value>,
+        #[serde(default)]
+        percent: Option<serde_json::Value>,
     }
     #[derive(serde::Deserialize)]
     struct Raw {
@@ -604,6 +618,13 @@ pub fn parse_achievements(text: &str) -> Result<AchievementInfo, String> {
             if name.is_empty() {
                 continue;
             }
+            let icon_url = if row.unlocked {
+                row.icon.or(row.icon_url).or(row.image).or(row.icon_gray)
+            } else {
+                row.icon_gray.or(row.icon).or(row.icon_url).or(row.image)
+            }
+            .map(|url| url.trim().to_string())
+            .filter(|url| url.starts_with("https://") || url.starts_with("http://"));
             rows.push(AchievementRow {
                 id: key.clone(),
                 key,
@@ -612,6 +633,11 @@ pub fn parse_achievements(text: &str) -> Result<AchievementInfo, String> {
                 unlocked: row.unlocked,
                 progress: if row.unlocked { 1.0 } else { 0.0 },
                 session: false,
+                rarity: super::achievements::rarity_percent(
+                    row.rarity.as_ref().or(row.percent.as_ref()),
+                ),
+                icon_url,
+                icon_path: None,
             });
         }
     }
@@ -628,6 +654,23 @@ pub fn parse_achievements(text: &str) -> Result<AchievementInfo, String> {
     }
     info.unlocked = info.unlocked.min(info.total);
     Ok(info)
+}
+
+/// Taille annoncée par `legendary info --json`, quand la version de Legendary
+/// la publie. Une absence n'est pas une erreur : la fenêtre d'installation
+/// affiche simplement « taille inconnue » et laisse démarrer le téléchargement.
+pub fn epic_install_size(app_name: &str) -> Result<Option<u64>, String> {
+    let adapter = LegendaryAdapter::new();
+    if !adapter.executable.is_file() {
+        return Err("Legendary n'est pas installé".to_string());
+    }
+    let output = super::runner::run(
+        adapter.command(LegendaryAdapter::info_args(app_name)),
+        Duration::from_secs(120),
+        None,
+    )?;
+    ensure_success(&output)?;
+    Ok(super::install_size_from_json(&output.stdout))
 }
 
 pub fn epic_achievements(app_name: &str) -> Result<AchievementInfo, String> {
@@ -1212,6 +1255,36 @@ Empty,,1.0,False\n";
                 "--skip-sdl",
                 "--skip-dlcs"
             ]
+        );
+    }
+
+    #[test]
+    fn les_succes_epic_lisent_le_taux_d_obtention_quand_il_est_publie() {
+        let json = r#"{
+            "total_achievements": 2,
+            "user_unlocked": 1,
+            "completed": [
+                {"name": "ACH_ONE", "display_name": "Premier", "unlocked": true, "rarity": 12.5}
+            ],
+            "in_progress": [],
+            "uninitiated": [],
+            "hidden": []
+        }"#;
+        let info = parse_achievements(json).unwrap();
+        assert_eq!(info.rows[0].rarity, Some(12.5));
+        let object = r#"{
+            "total_achievements": 1,
+            "user_unlocked": 0,
+            "completed": [],
+            "in_progress": [],
+            "uninitiated": [
+                {"name": "ACH_TWO", "display_name": "Deuxième", "rarity": {"percent": 3.75}}
+            ],
+            "hidden": []
+        }"#;
+        assert_eq!(
+            parse_achievements(object).unwrap().rows[0].rarity,
+            Some(3.75)
         );
     }
 }

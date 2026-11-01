@@ -481,7 +481,10 @@ impl QuarkApp {
         }
         let covers: Vec<Option<egui::TextureHandle>> = paths
             .iter()
-            .map(|path| path.as_ref().and_then(|path| self.texture(ui.ctx(), path)))
+            .map(|path| {
+                path.as_ref()
+                    .and_then(|path| self.texture_thumb(ui.ctx(), path))
+            })
             .collect();
 
         let available = (ui.available_width() - PADDING * 2.0).max(240.0);

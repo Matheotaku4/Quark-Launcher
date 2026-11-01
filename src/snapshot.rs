@@ -88,7 +88,7 @@ pub const HELP: &str = "\
       [--select <jeu>] [--info] [--running] [--marked] [--home]\n\
       [--dialog none|add|artwork|exe|scan|settings|settings-defaults|\n\
       settings-env|settings-artworks|settings-stats|settings-disk|\n\
-      settings-about|game|logs|updates|customize|remove|steam|overlay]\n\
+      settings-about|game|logs|updates|customize|remove|steam|overlay|install]\n\
       [--hover X,Y] [--click X,Y] [--button left|right]\n\
       [--key up|down|left|right|enter|escape] [--demo]\n\
       --demo : bibliothèque de démonstration avec artworks factices (la\n\
@@ -178,6 +178,12 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
                     last_synced: Some(crate::config::now_ts()),
                 },
             );
+            let demo_icon = app
+                .lib
+                .games
+                .first()
+                .and_then(|game| game.artwork.get(AssetKind::Cover))
+                .cloned();
             let rows = vec![
                 crate::providers::AchievementRow {
                     key: "ACH_FIRST".into(),
@@ -187,6 +193,9 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
                     unlocked: true,
                     progress: 1.0,
                     session: false,
+                    rarity: Some(62.0),
+                    icon_url: None,
+                    icon_path: demo_icon.clone(),
                 },
                 crate::providers::AchievementRow {
                     key: "ACH_BOSS".into(),
@@ -196,6 +205,9 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
                     unlocked: true,
                     progress: 1.0,
                     session: true,
+                    rarity: Some(3.4),
+                    icon_url: None,
+                    icon_path: demo_icon.clone(),
                 },
                 crate::providers::AchievementRow {
                     key: "ACH_ALL".into(),
@@ -205,6 +217,9 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
                     unlocked: false,
                     progress: 0.42,
                     session: false,
+                    rarity: Some(18.0),
+                    icon_url: None,
+                    icon_path: None,
                 },
             ];
             app.achievements.insert(
@@ -226,7 +241,7 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
                 crate::providers::runner::InstallProgress {
                     percent: Some(42.4),
                     stage: "Téléchargement".into(),
-                    speed: Some("18,2 Mo/s".into()),
+                    speed: Some("18,2 MB/s".into()),
                     eta: Some("6 min 12 s".into()),
                     written: Some(4_500_000_000),
                     total: Some(10_600_000_000),
@@ -511,6 +526,28 @@ fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
                 .ok_or_else(|| "aucun jeu sélectionné".to_string())?;
             app.lib.settings.view = ViewMode::Grid;
             app.overlay = Some(id);
+        }
+        "install" => {
+            let game = app
+                .lib
+                .provider_library
+                .games
+                .iter()
+                .find(|game| {
+                    game.key.provider == crate::providers::Provider::Gog
+                        && game.install_state == crate::providers::InstallState::NotInstalled
+                })
+                .cloned()
+                .ok_or_else(|| "aucun jeu GOG non installé en démonstration".to_string())?;
+            app.tab = crate::app::Tab::MyGames;
+            app.install_request = Some(crate::app::InstallRequest {
+                key: game.key,
+                title: game.title,
+                destination: PathBuf::from("/home/joueur/Games"),
+                size: Some(8_900_000_000),
+                size_error: None,
+                size_rx: None,
+            });
         }
         "steam" => {
             let mut import = crate::app::SteamImport::new();

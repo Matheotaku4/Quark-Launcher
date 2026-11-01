@@ -202,11 +202,16 @@ with save snapshots through Ludusavi, an in-game overlay and F12 screenshots.
   **sorted by name**, a **search field** filters owned titles as you type (accents and case
   ignored), and each card shows the store's **vertical cover** — Steam from its CDN, GOG from
   the API v2 `boxArtImage` (`_glx_vertical_cover`), Epic from Legendary's metadata cache
-  (`keyImages`) — cached on disk and fetched one at a time when the page is open. Epic and GOG
-  are tried first, then the Steam vertical cover for the same title, and only then a monogram;
-  wrong GOG covers from 1.0.3 are ignored because the cache is versioned. A **download** icon
-  in the top bar (badge = active transfers) opens a panel with each install's step, progress,
-  total size, speed, ETA and **Cancel**.
+  (`keyImages`) — cached on disk and fetched up to four at a time when the page is open. Epic
+  and GOG are tried first, then the Steam vertical cover for the same title, and only then a
+  monogram; wrong GOG covers from 1.0.3 are ignored because the cache is versioned. Grid cards
+  use 360 px thumbnails so a page of 72 games does not upload full-size covers to the GPU. A
+  **left or right click** on an uninstalled game opens the install sheet (download size,
+  destination folder, **Changer…** and **Installer**); the folder defaults to
+  **Settings → New games → Store install folder** (`~/Games`). Installed games open their
+  action menu on right click. A **download** icon in the top
+  bar (badge = active transfers) opens a panel with each install's step, progress, total size,
+  speed in **MB/s**, ETA and **Cancel**.
 - **Store sync starts on its own**: once the interface is up, every connected store is
   refreshed in the background. **Settings → Stores & tools** opens on a *Sync* section with a
   button per store, *Sync all*, the number of games, the last sync time and any error;
@@ -215,23 +220,30 @@ with save snapshots through Ludusavi, an in-game overlay and F12 screenshots.
   has no list command at all: Quark refreshes the gogdl session token and asks the GOG API
   (`embed.gog.com/user/data/games`, then `api.gog.com/products` in batches) directly.
 - **Installs are delegated, never faked**: *Installer via Steam* hands the AppID to the Steam
-  client (`steam://install/<id>`) and then rescans; *Installer via Legendary* and *Installer
-  via gogdl* install into the folder you choose and only mark the game **Installé** once a
+  client (`steam://install/<id>`) and then rescans; Epic and GOG installs open a confirmation
+  with the size reported by `legendary info` / `gogdl info`, the destination folder taken from
+  **Settings → New games**, a **Changer…** button for this install only, and **Installer**.
+  The parent folder is created when needed, and the game is only marked **Installé** once a
   matching local directory has been found. A dialog closing or a process exiting is never
   taken as proof. Legendary runs non-interactively (`-y --skip-sdl --skip-dlcs`, Windows
   platform): without a terminal its prompts made every install fail. A **double-click** on a
-  card installs the game, and a successful install creates the matching Quark entry
-  (default settings, cover, store link) so the game lands in the library ready to play.
-  While an install runs, **Mes jeux** shows its own progress bar — percentage, step, size,
-  speed and ETA parsed from Legendary/gogdl output — with a **Cancel** button. Covers are
-  imported as soon as the game is adopted, in the background, without blocking the page.
+  card opens an installed game or prepares the install sheet, and a successful install creates
+  the matching Quark entry (default settings, cover, store link) so the game lands in the
+  library ready to play. While an install runs, **Mes jeux** shows its own progress bar —
+  percentage, step, size, speed, ETA in **MB/s** parsed from Legendary/gogdl output — with a
+  **Cancel** button. Covers are imported as soon as the game is adopted, in the background,
+  without blocking the page.
 - **Save folders and snapshots from the same page**: custom save folders per installation,
   Ludusavi preview, backup, backup inventory and restore — see *Save files* below.
 - **Achievements in the game page**: next to **Actualités**, the **Succès** tab reads Epic
   achievements from `legendary achievements <app> --json` and GOG achievements from
   `gameplay.gog.com` with the gogdl session (`client_id` = product id, `user_id` from the
-  session), then shows unlocked/total, a progress bar and the full list (hidden achievements
+  session), then shows unlocked/total, a progress bar and the full list with each store's
+  achievement icon (downloaded once into `artwork/achievement-icons/`, hidden achievements
   stay hidden until unlocked), with a **session** badge for unlocks reported during play.
+  When the store publishes completion rates (GOG's `rarity`), each achievement shows the
+  percentage of players who unlocked it and the list is sorted from rarest to most common;
+  Epic achievements stay in the unlocked-then-name order when no rate is available.
   **Cloud saves are deliberately absent** — no verified source is wired, so Quark shows
   nothing rather than invented capabilities.
 - **Achievements from the running game**: every launch exports
@@ -253,9 +265,10 @@ with save snapshots through Ludusavi, an in-game overlay and F12 screenshots.
   and raise a desktop notification, while Steam stays silent. The X11 shortcut covers Proton
   games through XWayland; native Wayland capture uses `grim` or the desktop tools when
   available.
-- **Store playtime**: a game linked to Epic or GOG shows the store's own playtime
-  (Epic library service, GOG Galaxy sessions) instead of Quark's local counter. Steam games
-  keep local playtime because Steam does not publish it.
+- **Store playtime**: a game linked to Epic or GOG shows the store's own playtime (Epic
+  library service; GOG total read from the public profile's `matchedGameStats`, with Galaxy
+  sessions as a fallback) instead of Quark's local counter. Steam games keep local playtime
+  because Steam does not publish it.
 - **Uninstall from the card**: Epic and GOG cards offer **Uninstall…** with an explicit
   confirmation; the install folder is removed, saves and the Proton prefix are kept, and
   several uninstalls are queued. Removing a linked game from the library offers to delete its

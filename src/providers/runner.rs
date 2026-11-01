@@ -253,7 +253,7 @@ pub fn apply_progress(progress: &mut InstallProgress, line: &str) {
                 .next_back()
                 .filter(|value| value.chars().any(|c| c.is_ascii_digit()));
             if let Some(value) = value {
-                progress.speed = Some(format!("{value} Mo/s"));
+                progress.speed = Some(format!("{value} MB/s"));
             }
         }
     }
@@ -597,7 +597,7 @@ mod tests {
             &mut progress,
             " + Download\t- 18.42 MiB/s (raw) / 21.00 MiB/s (decompressed)",
         );
-        assert_eq!(progress.speed.as_deref(), Some("18.42 Mo/s"));
+        assert_eq!(progress.speed.as_deref(), Some("18.42 MB/s"));
     }
 
     #[test]

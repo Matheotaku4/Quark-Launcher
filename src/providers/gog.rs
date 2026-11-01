@@ -201,6 +201,24 @@ impl GogAdapter {
     }
 }
 
+/// Taille annoncée par `gogdl info`, quand gogdl la publie.
+pub fn install_size_from_info(text: &str) -> Option<u64> {
+    super::install_size_from_json(text)
+}
+
+/// Taille d'installation demandée à gogdl pour le jeu choisi.
+pub fn gog_install_size(game_id: &str) -> Result<Option<u64>, String> {
+    let adapter = GogAdapter::new(auth_config_path());
+    if !adapter.executable.is_file() {
+        return Err("gogdl n'est pas installé".to_string());
+    }
+    let output = adapter.run(GogAdapter::info_args(game_id, "windows"), None)?;
+    if output.exit_code != Some(0) {
+        return Err("gogdl n'a pas pu lire la taille du jeu".to_string());
+    }
+    Ok(install_size_from_info(&output.stdout))
+}
+
 /// Nom du dossier d'installation publié par `gogdl info`.
 pub fn folder_from_info(text: &str) -> Result<String, String> {
     let start = text

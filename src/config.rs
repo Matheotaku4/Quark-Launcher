@@ -472,6 +472,10 @@ pub struct Settings {
     /// Préfixe Proton prérempli dans chaque jeu ajouté. Le dossier est utilisé
     /// tel quel : Quark n'y crée aucun sous-dossier.
     pub default_prefix: Option<String>,
+    /// Dossier parent des installations Epic/GOG. Vide = `~/Games`.
+    /// C'est le dossier proposé dans la confirmation d'installation ; il peut
+    /// être changé pour une installation précise sans modifier ce réglage.
+    pub default_install_dir: Option<String>,
     /// Arguments préremplis dans chaque jeu ajouté.
     pub default_args: String,
     /// Anti-triche prérempli dans chaque jeu ajouté.
@@ -524,6 +528,7 @@ impl Default for Settings {
             country: "FR".to_string(),
             default_proton: None,
             default_prefix: None,
+            default_install_dir: None,
             default_args: String::new(),
             default_anticheat: AnticheatMode::None,
             default_launch: LaunchOptions::default(),
@@ -540,6 +545,22 @@ impl Default for Settings {
             home_tag: String::new(),
             home_status: GameStatus::None,
         }
+    }
+}
+
+impl Settings {
+    /// Dossier parent proposé pour les installations Epic/GOG.
+    ///
+    /// Un chemin vide n'est jamais inventé : sans réglage, Quark propose
+    /// `~/Games`, créé au moment de l'installation.
+    pub fn install_root(&self) -> PathBuf {
+        self.default_install_dir
+            .as_deref()
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(expand_tilde)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home_dir().join("Games"))
     }
 }
 
@@ -1074,6 +1095,19 @@ mod tests {
         assert_eq!(monogram_letter("Another World"), "A");
         assert_eq!(monogram_letter("   "), "?");
         assert_eq!(monogram_letter("A"), "A");
+    }
+
+    #[test]
+    fn le_dossier_d_installation_suit_le_reglage_ou_propose_games() {
+        let mut settings = Settings::default();
+        assert!(settings.install_root().ends_with("Games"));
+        settings.default_install_dir = Some("/tmp/quark-tests/jeux".to_string());
+        assert_eq!(
+            settings.install_root(),
+            PathBuf::from("/tmp/quark-tests/jeux")
+        );
+        settings.default_install_dir = Some("   ".to_string());
+        assert!(settings.install_root().ends_with("Games"));
     }
 
     #[test]

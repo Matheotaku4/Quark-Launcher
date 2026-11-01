@@ -24,8 +24,7 @@ impl QuarkApp {
         )> = None;
         let mut merge_keys: Vec<crate::providers::ProviderGameKey> = Vec::new();
         let mut split_key: Option<crate::providers::ProviderGameKey> = None;
-        let mut install_epic: Option<crate::providers::ProviderGameKey> = None;
-        let mut install_gog: Option<crate::providers::ProviderGameKey> = None;
+        let mut install_request: Option<crate::providers::ProviderGameKey> = None;
         let mut open_game: Option<crate::providers::ProviderGameKey> = None;
         let mut adopt: Option<crate::providers::ProviderGameKey> = None;
         let mut show_achievements: Option<crate::providers::ProviderGameKey> = None;
@@ -232,8 +231,7 @@ impl QuarkApp {
                                         &pal,
                                         &games[..shown],
                                         &mut install,
-                                        &mut install_epic,
-                                        &mut install_gog,
+                                        &mut install_request,
                                         &mut adopt,
                                         &mut show_achievements,
                                         &mut uninstall,
@@ -353,9 +351,6 @@ impl QuarkApp {
         if let Some((key, path)) = remove_save_folder {
             self.remove_save_folder(&key, &path);
         }
-        if let Some(key) = install_epic {
-            self.request_epic_install(ctx, &key);
-        }
         if merge_keys.len() >= 2 {
             match crate::providers::operations::merge_group(&merge_keys) {
                 Ok(group) => {
@@ -381,8 +376,8 @@ impl QuarkApp {
                 .retain(|group| group.members.len() > 1);
             self.touch();
         }
-        if let Some(key) = install_gog {
-            self.request_gog_install(ctx, &key);
+        if let Some(key) = install_request {
+            self.open_install_request(ctx, &key);
         }
         if let Some(key) = show_achievements {
             self.achievements_open = Some(key.clone());
@@ -442,8 +437,7 @@ impl QuarkApp {
         pal: &crate::theme::Palette,
         games: &[ProviderGame],
         install: &mut Option<u32>,
-        install_epic: &mut Option<crate::providers::ProviderGameKey>,
-        install_gog: &mut Option<crate::providers::ProviderGameKey>,
+        install_request: &mut Option<crate::providers::ProviderGameKey>,
         adopt: &mut Option<crate::providers::ProviderGameKey>,
         achievements: &mut Option<crate::providers::ProviderGameKey>,
         uninstall: &mut Option<crate::providers::ProviderGameKey>,
@@ -477,7 +471,9 @@ impl QuarkApp {
                         ui.add_space(gap);
                     }
                     let cover = self.cover_for(game);
-                    let texture = cover.as_ref().and_then(|path| self.texture(ui.ctx(), path));
+                    let texture = cover
+                        .as_ref()
+                        .and_then(|path| self.texture_thumb(ui.ctx(), path));
                     let appear = ((age - (index + slot) as f32 * 0.02) / 0.3).clamp(0.0, 1.0);
                     if appear < 1.0 {
                         ui.ctx().request_repaint();
@@ -490,8 +486,7 @@ impl QuarkApp {
                         appear,
                         texture.as_ref(),
                         &mut *install,
-                        &mut *install_epic,
-                        &mut *install_gog,
+                        &mut *install_request,
                         &mut *adopt,
                         &mut *achievements,
                         &mut *uninstall,
@@ -842,8 +837,7 @@ fn provider_card(
     appear: f32,
     texture: Option<&egui::TextureHandle>,
     install: &mut Option<u32>,
-    install_epic: &mut Option<crate::providers::ProviderGameKey>,
-    install_gog: &mut Option<crate::providers::ProviderGameKey>,
+    install_request: &mut Option<crate::providers::ProviderGameKey>,
     adopt: &mut Option<crate::providers::ProviderGameKey>,
     achievements: &mut Option<crate::providers::ProviderGameKey>,
     uninstall: &mut Option<crate::providers::ProviderGameKey>,
@@ -941,59 +935,73 @@ fn provider_card(
                 } else {
                     ui.label(RichText::new(status).size(10.0).color(status_color));
                 }
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    actions_menu(
-                        ui,
-                        pal,
-                        game,
-                        installed,
-                        install,
-                        install_epic,
-                        install_gog,
-                        adopt,
-                        achievements,
-                        uninstall,
-                        preview_save,
-                        inventory_save,
-                        choose_save_folder,
-                        remove_save_folder,
-                    );
-                });
             });
         },
     );
 
-    // Double-clic : installe le jeu s'il ne l'est pas encore, sinon l'ouvre
-    // dans la bibliothèque. C'est le geste attendu d'une grille de jeux.
+    // Clic gauche ou droit sur un jeu possédé mais absent : confirmation
+    // d'installation (taille + dossier + Installer). Sur un jeu installé (ou
+    // en cours), le clic droit ouvre le menu complet des actions, sans bouton
+    // « … » dans la carte.
+    let busy = matches!(
+        game.install_state,
+        InstallState::Installing | InstallState::Updating | InstallState::Repairing
+    );
+    let direct_install = game.owned && !installed && !busy;
+    if !direct_install {
+        response.context_menu(|ui| {
+            ui.set_min_width(210.0);
+            actions_menu_items(
+                ui,
+                pal,
+                game,
+                installed,
+                install,
+                install_request,
+                adopt,
+                achievements,
+                uninstall,
+                preview_save,
+                inventory_save,
+                choose_save_folder,
+                remove_save_folder,
+            );
+        });
+    }
+    if (response.clicked() || response.secondary_clicked()) && direct_install {
+        if game.key.provider == Provider::Steam {
+            if let Some(app_id) = game.key.product_id.parse::<u32>().ok() {
+                *install = Some(app_id);
+            }
+        } else {
+            *install_request = Some(game.key.clone());
+        }
+    }
+
+    // Double-clic : ouvre le jeu installé, prépare l'installation sinon.
     if response.double_clicked() {
-        let app_id = game.key.product_id.parse::<u32>().ok();
-        let legendary_ready = crate::providers::tools::ManagedToolId::Legendary
-            .installed_path()
-            .is_file();
-        let gogdl_ready = crate::providers::tools::ManagedToolId::Gogdl
-            .installed_path()
-            .is_file();
-        let busy = matches!(
-            game.install_state,
-            InstallState::Installing | InstallState::Updating | InstallState::Repairing
-        );
         if installed {
             *open = Some(game.key.clone());
         } else if busy {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(400));
-        } else if game.owned && game.key.provider == Provider::Steam && app_id.is_some() {
-            *install = app_id;
-        } else if game.owned && game.key.provider == Provider::Epic && legendary_ready {
-            *install_epic = Some(game.key.clone());
-        } else if game.owned && game.key.provider == Provider::Gog && gogdl_ready {
-            *install_gog = Some(game.key.clone());
+        } else if game.owned && game.key.provider == Provider::Steam {
+            if let Some(app_id) = game.key.product_id.parse::<u32>().ok() {
+                *install = Some(app_id);
+            }
+        } else if game.owned {
+            *install_request = Some(game.key.clone());
         } else {
             *open = Some(game.key.clone());
         }
     }
+    let hint = if direct_install {
+        "clic gauche ou droit pour installer"
+    } else {
+        "clic droit pour les actions"
+    };
     response.on_hover_text(format!(
-        "{} · {} · double-clic pour installer ou ouvrir · menu Actions",
+        "{} · {} · {hint} · double-clic pour ouvrir",
         game.title,
         provider_name(game.key.provider)
     ));
@@ -1060,14 +1068,13 @@ fn install_label(state: InstallState) -> &'static str {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn actions_menu(
+fn actions_menu_items(
     ui: &mut egui::Ui,
     pal: &crate::theme::Palette,
     game: &ProviderGame,
     installed: bool,
     install: &mut Option<u32>,
-    install_epic: &mut Option<crate::providers::ProviderGameKey>,
-    install_gog: &mut Option<crate::providers::ProviderGameKey>,
+    install_request: &mut Option<crate::providers::ProviderGameKey>,
     adopt: &mut Option<crate::providers::ProviderGameKey>,
     achievements: &mut Option<crate::providers::ProviderGameKey>,
     uninstall: &mut Option<crate::providers::ProviderGameKey>,
@@ -1097,88 +1104,78 @@ fn actions_menu(
         let _ = pal;
         return;
     }
-    ui.menu_button(
-        RichText::new("Actions").size(10.0).color(pal.text_dim),
-        |ui| {
-            ui.set_min_width(180.0);
-            if steam_installable && ui.button("Installer via Steam").clicked() {
-                *install = app_id;
+    ui.set_min_width(210.0);
+    if steam_installable && ui.button("Installer via Steam").clicked() {
+        *install = app_id;
+        ui.close();
+    }
+    if epic_installable && ui.button("Installer Epic…").clicked() {
+        *install_request = Some(game.key.clone());
+        ui.close();
+    }
+    if gog_installable && ui.button("Installer GOG…").clicked() {
+        *install_request = Some(game.key.clone());
+        ui.close();
+    }
+    if installed && game.quark_game_id.is_none() && ui.button("Ajouter à la bibliothèque").clicked()
+    {
+        *adopt = Some(game.key.clone());
+        ui.close();
+    }
+    if installed
+        && matches!(game.key.provider, Provider::Epic | Provider::Gog)
+        && ui.button("Désinstaller…").clicked()
+    {
+        *uninstall = Some(game.key.clone());
+        ui.close();
+    }
+    if installed && ludusavi_ready {
+        if ui.button("Aperçu sauvegarde").clicked() {
+            *preview_save = Some(game.key.clone());
+            ui.close();
+        }
+        if ui.button("Restaurer…").clicked() {
+            *inventory_save = Some(game.key.clone());
+            ui.close();
+        }
+    }
+    ui.separator();
+    match game.key.provider {
+        Provider::Epic if legendary_ready => {
+            if ui.button("Succès…").clicked() {
+                *achievements = Some(game.key.clone());
                 ui.close();
             }
-            if epic_installable && ui.button("Installer via Legendary").clicked() {
-                *install_epic = Some(game.key.clone());
+        }
+        Provider::Epic => {
+            ui.add_enabled(false, egui::Button::new("Succès…"))
+                .on_disabled_hover_text("Legendary n'est pas installé");
+        }
+        Provider::Gog if gogdl_ready => {
+            if ui.button("Succès…").clicked() {
+                *achievements = Some(game.key.clone());
                 ui.close();
             }
-            if gog_installable && ui.button("Installer via gogdl").clicked() {
-                *install_gog = Some(game.key.clone());
-                ui.close();
-            }
-            if installed
-                && game.quark_game_id.is_none()
-                && ui.button("Ajouter à la bibliothèque").clicked()
-            {
-                *adopt = Some(game.key.clone());
-                ui.close();
-            }
-            if installed
-                && matches!(game.key.provider, Provider::Epic | Provider::Gog)
-                && ui.button("Désinstaller…").clicked()
-            {
-                *uninstall = Some(game.key.clone());
-                ui.close();
-            }
-            if installed && ludusavi_ready {
-                if ui.button("Aperçu sauvegarde").clicked() {
-                    *preview_save = Some(game.key.clone());
-                    ui.close();
-                }
-                if ui.button("Restaurer…").clicked() {
-                    *inventory_save = Some(game.key.clone());
-                    ui.close();
-                }
-            }
-            ui.separator();
-            match game.key.provider {
-                Provider::Epic if legendary_ready => {
-                    if ui.button("Succès…").clicked() {
-                        *achievements = Some(game.key.clone());
-                        ui.close();
-                    }
-                }
-                Provider::Epic => {
-                    ui.add_enabled(
-                        false,
-                        egui::Button::new("Succès…").min_size(Vec2::new(0.0, 20.0)),
-                    )
-                    .on_disabled_hover_text("Legendary n'est pas installé");
-                }
-                Provider::Gog if gogdl_ready => {
-                    if ui.button("Succès…").clicked() {
-                        *achievements = Some(game.key.clone());
-                        ui.close();
-                    }
-                }
-                Provider::Gog => {
-                    ui.add_enabled(false, egui::Button::new("Succès…"))
-                        .on_disabled_hover_text(
-                            "gogdl n'est pas installé : Paramètres → Boutiques & outils",
-                        );
-                }
-                Provider::Steam => {}
-            }
-            if installed && ui.button("Dossiers de sauvegarde…").clicked() {
-                *choose_save_folder = Some(game.key.clone());
-                ui.close();
-            }
-            for path in &game.custom_save_paths {
-                let label = format!("Retirer {}", path.display());
-                if ui.button(label).clicked() {
-                    *remove_save_folder = Some((game.key.clone(), path.clone()));
-                    ui.close();
-                }
-            }
-        },
-    );
+        }
+        Provider::Gog => {
+            ui.add_enabled(false, egui::Button::new("Succès…"))
+                .on_disabled_hover_text(
+                    "gogdl n'est pas installé : Paramètres → Boutiques & outils",
+                );
+        }
+        Provider::Steam => {}
+    }
+    if installed && ui.button("Dossiers de sauvegarde…").clicked() {
+        *choose_save_folder = Some(game.key.clone());
+        ui.close();
+    }
+    for path in &game.custom_save_paths {
+        let label = format!("Retirer {}", path.display());
+        if ui.button(label).clicked() {
+            *remove_save_folder = Some((game.key.clone(), path.clone()));
+            ui.close();
+        }
+    }
 }
 
 #[cfg(test)]

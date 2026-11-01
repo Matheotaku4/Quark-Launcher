@@ -577,6 +577,18 @@ pub fn parse_achievements(body: &str) -> Result<AchievementInfo, String> {
         if !visible && !unlocked {
             continue;
         }
+        let icon_url = item
+            .get(if unlocked {
+                "image_url_unlocked"
+            } else {
+                "image_url_locked"
+            })
+            .or_else(|| item.get("image_url_unlocked"))
+            .or_else(|| item.get("image_url_locked"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|url| url.starts_with("https://") || url.starts_with("http://"))
+            .map(str::to_string);
         rows.push(AchievementRow {
             key: if key.is_empty() { name.clone() } else { key },
             id: item
@@ -601,6 +613,9 @@ pub fn parse_achievements(body: &str) -> Result<AchievementInfo, String> {
             unlocked,
             progress: if unlocked { 1.0 } else { 0.0 },
             session: false,
+            rarity: super::achievements::rarity_percent(item.get("rarity")),
+            icon_url,
+            icon_path: None,
         });
     }
     let mut info = AchievementInfo {
@@ -658,6 +673,128 @@ pub fn fetch_achievements(
     parse_achievements(&body)
 }
 
+/// Nom d'utilisateur GOG du compte connecté, nécessaire à la page de profil
+/// publique qui publie le temps de jeu total.
+fn gog_username(tokens: &GogTokens) -> Result<String, String> {
+    let response = client()
+        .get(format!("https://users.gog.com/users/{}", tokens.user_id))
+        .bearer_auth(&tokens.access_token)
+        .timeout(http_timeout())
+        .send()
+        .map_err(|_| "profil GOG injoignable pour le temps de jeu".to_string())?;
+    if !response.status().is_success() {
+        return Err("GOG a refusé le profil du compte pour le temps de jeu".to_string());
+    }
+    let body = response
+        .text()
+        .map_err(|_| "profil GOG illisible".to_string())?;
+    let root: Value =
+        serde_json::from_str(&body).map_err(|_| "profil GOG illisible".to_string())?;
+    root.get("username")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| "profil GOG sans nom d'utilisateur".to_string())
+}
+
+fn encode_path_segment(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+/// Temps de jeu publié sur la page de profil publique du compte.
+///
+/// `gameplay.gog.com` ne documente pas de lecture agrégée des sessions ; la
+/// page `/u/{pseudo}/game/{id}` publie en revanche `matchedGameStats`, avec
+/// `playtime` en minutes. C'est la valeur affichée par GOG GALAXY, y compris
+/// pour les parties commencées sur Windows.
+fn profile_playtime(tokens: &GogTokens, product_id: &str) -> Result<u64, String> {
+    let username = gog_username(tokens)?;
+    let response = client()
+        .get(format!(
+            "https://www.gog.com/u/{}/game/{}",
+            encode_path_segment(&username),
+            product_id
+        ))
+        .header("X-Gog-Lc", LOCALE)
+        .timeout(http_timeout())
+        .send()
+        .map_err(|_| "profil GOG injoignable pour le temps de jeu".to_string())?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "GOG a répondu {} pour le temps de jeu",
+            response.status().as_u16()
+        ));
+    }
+    let body = response
+        .text()
+        .map_err(|_| "profil GOG illisible pour le temps de jeu".to_string())?;
+    parse_profile_playtime(&body, &tokens.user_id)
+}
+
+/// Lit `window.profilesData.matchedGameStats = {"<user_id>": ...}`.
+/// La valeur est un objet `{"playtime": minutes}` ou un tableau (vide si le
+/// compte n'a jamais lancé le jeu).
+pub fn parse_profile_playtime(html: &str, user_id: &str) -> Result<u64, String> {
+    let marker = "matchedGameStats = ";
+    let start = html
+        .find(marker)
+        .map(|index| index + marker.len())
+        .ok_or_else(|| "GOG ne publie pas le temps de jeu sur ce profil".to_string())?;
+    let rest = &html[start..];
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut end = None;
+    for (index, character) in rest.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match character {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    end = Some(index + 1);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let end = end.ok_or_else(|| "temps de jeu GOG illisible".to_string())?;
+    let root: Value =
+        serde_json::from_str(&rest[..end]).map_err(|_| "temps de jeu GOG illisible".to_string())?;
+    let Some(stats) = root.get(user_id) else {
+        return Err("GOG ne publie pas le temps de jeu de ce compte".to_string());
+    };
+    let minutes = match stats {
+        Value::Object(map) => map.get("playtime").and_then(Value::as_u64).unwrap_or(0),
+        Value::Array(items) => items
+            .iter()
+            .find_map(|item| item.get("playtime").and_then(Value::as_u64))
+            .unwrap_or(0),
+        _ => 0,
+    };
+    Ok(minutes.saturating_mul(60))
+}
+
 /// Temps de jeu GOG, reconstruit à partir des sessions Galaxy du compte.
 /// Chaque session publie `time` en minutes ; les formes `seconds` et
 /// `duration` sont acceptées au cas où GOG change d'unité.
@@ -683,7 +820,10 @@ pub fn gog_playtime(auth_path: &Path, product_id: &str, now: i64) -> Result<u64,
             tokens.user_id
         ),
     ];
-    let mut last_error = "GOG ne publie pas de temps de jeu pour ce jeu".to_string();
+    let mut last_error = match profile_playtime(&tokens, product_id) {
+        Ok(seconds) => return Ok(seconds),
+        Err(error) => error,
+    };
     for url in urls {
         let response = gameplay_get(&url, &tokens.access_token)?;
         if !response.status().is_success() {
@@ -892,6 +1032,18 @@ mod tests {
     }
 
     #[test]
+    fn le_profil_gog_donne_le_temps_total_en_minutes() {
+        let html = r#"<script>
+            window.profilesData.matchedGameStats = {"456":{"playtime":2966,"lastSession":"2020-05-28T21:28:01+00:00"}};
+        </script>"#;
+        assert_eq!(parse_profile_playtime(html, "456").unwrap(), 2966 * 60);
+        let vide = r#"window.profilesData.matchedGameStats = {"456":[]};"#;
+        assert_eq!(parse_profile_playtime(vide, "456").unwrap(), 0);
+        assert!(parse_profile_playtime(html, "999").is_err());
+        assert!(parse_profile_playtime("<html></html>", "456").is_err());
+    }
+
+    #[test]
     fn session_du_fichier_gogdl_est_lue_par_client() {
         let tokens = read_tokens(SESSION).unwrap();
         assert_eq!(tokens.access_token, "access-1");
@@ -938,8 +1090,8 @@ mod tests {
         let body = r#"{
           "total_count": 3,
           "items": [
-            {"achievement_id": "11", "achievement_key": "ACH_FIRST", "name": "Premier", "description": "Fini le niveau 1", "visible": true, "date_unlocked": "2026-01-01T00:00:00+00:00", "image_url_unlocked": ""},
-            {"achievement_id": "12", "achievement_key": "ACH_SECOND", "name": "Deuxième", "description": "Fini le niveau 2", "visible": true, "date_unlocked": null, "image_url_unlocked": ""},
+            {"achievement_id": "11", "achievement_key": "ACH_FIRST", "name": "Premier", "description": "Fini le niveau 1", "visible": true, "date_unlocked": "2026-01-01T00:00:00+00:00", "image_url_unlocked": "", "rarity": 42.5},
+            {"achievement_id": "12", "achievement_key": "ACH_SECOND", "name": "Deuxième", "description": "Fini le niveau 2", "visible": true, "date_unlocked": null, "image_url_unlocked": "", "rarity": 7.25},
             {"achievement_id": "13", "achievement_key": "ACH_SECRET", "name": "Secret", "description": "Caché", "visible": false, "date_unlocked": null, "image_url_unlocked": ""},
             {"achievement_id": "14", "achievement_key": "ACH_SECRET_2", "name": "Secret débloqué", "description": "Caché", "visible": false, "date_unlocked": "2026-01-02T00:00:00+00:00", "image_url_unlocked": ""}
           ]
@@ -954,6 +1106,20 @@ mod tests {
             info.rows
                 .iter()
                 .any(|row| row.name == "Secret débloqué" && row.id == "14")
+        );
+        assert_eq!(
+            info.rows
+                .iter()
+                .find(|row| row.name == "Premier")
+                .and_then(|row| row.rarity),
+            Some(42.5)
+        );
+        assert_eq!(
+            info.rows
+                .iter()
+                .find(|row| row.name == "Deuxième")
+                .and_then(|row| row.rarity),
+            Some(7.25)
         );
         assert!(parse_achievements("pas du json").is_err());
         assert!(parse_achievements("{}").is_err());

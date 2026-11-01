@@ -1,3 +1,35 @@
+## Quark 1.0.6 — installations confirmées, grilles légères et images des succès
+
+- **Confirmer avant d'installer** : un clic gauche ou droit sur une carte Epic/GOG non
+  installée ouvre une fenêtre avec le titre, la **taille à télécharger**, le **dossier
+  d'installation** et un bouton **Installer**. Le dossier proposé vient de **Paramètres →
+  Nouveaux jeux → Dossier d'installation des boutiques** (`~/Games` par défaut) ; **Changer…**
+  permet d'en choisir un autre pour cette installation seulement.
+- **Dossier par défaut respecté** : Legendary et gogdl reçoivent désormais ce dossier parent,
+  au lieu de rouvrir systématiquement le sélecteur. Le dossier est créé si nécessaire.
+- **Débit en MB/s** : les panneaux d'installation et de téléchargement affichent la vitesse en
+  **MB/s**, avec la taille, l'ETA et le bouton **Annuler**.
+- **Cartes plus légères** : les grilles utilisent des miniatures de **360 px** au lieu des
+  jaquettes pleines (600×900 ou 1920×620), ce qui réduit fortement la mémoire GPU et le coût
+  d'envoi des textures quand on clique sur **Afficher … de jeux de plus**. Les jaquettes
+  restent nettes dans la fiche jeu.
+- **Couvertures récupérées plus vite** : jusqu'à **quatre téléchargements en parallèle** et
+  32 jeux préparés par balayage. Steam, GOG puis le repli Steam restent les sources, avec le
+  monogramme seulement en dernier recours.
+- **Temps de jeu GOG réparé** : Quark lit le total publié sur la page de profil GOG
+  (`matchedGameStats`, en minutes), au lieu de dépendre uniquement des sessions Galaxy. Les
+  sessions restent un repli quand le profil est privé ou indisponible. Le temps local n'est
+  toujours jamais substitué à celui de la boutique.
+- **Images des succès** : les URL `image_url_unlocked` / `image_url_locked` de GOG et les
+  icônes publiées par Legendary pour Epic sont téléchargées dans
+  `~/.local/share/quark/artwork/achievement-icons/` et affichées à côté de chaque succès.
+  L'image est mise en cache, réduite à 96 px et n'est jamais redemandée au réseau.
+- **Succès triés par rareté** : GOG publie le pourcentage de joueurs ayant obtenu chaque
+  succès (`rarity`). La liste l'affiche et se trie **du plus rare au plus courant**, comme
+  les trieurs de rareté d'Epic ou de Heroic ; un succès sans pourcentage connu (Epic le
+  publie rarement) reste en fin de liste. La progression locale d'un succès à paliers est
+  désormais libellée « progression » pour ne pas être confondue avec ce pourcentage.
+
 ## Quark 1.0.5 — overlay en jeu, téléchargements sous la main et temps de jeu des boutiques
 
 - **Overlay en jeu, actif par défaut** : dès qu'un jeu lancé par Quark démarre, une petite
