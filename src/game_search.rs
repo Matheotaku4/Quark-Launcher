@@ -132,9 +132,7 @@ fn fetch_text(url: &str, accept: &str) -> Result<String, String> {
             response.status().as_u16()
         ));
     }
-    response
-        .text()
-        .map_err(|_| "réponse du site illisible".to_string())
+    crate::net::text(response, crate::net::MAX_HTML, "réponse du site")
 }
 
 fn json_root(text: &str) -> Result<Value, String> {

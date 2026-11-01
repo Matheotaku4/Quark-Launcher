@@ -59,6 +59,7 @@ pub fn installed_games(
             },
             title: steam.name.clone(),
             owned: true,
+            install_root: steam.dir.parent().map(std::path::Path::to_path_buf),
             install_path: Some(steam.dir.clone()),
             custom_save_paths: Vec::new(),
             cover_url: Some(cover_url(steam.app_id)),
@@ -113,6 +114,7 @@ pub fn parse_owned(json: &str) -> Result<Vec<ProviderGame>, String> {
             title: title.to_string(),
             owned: true,
             install_path: None,
+            install_root: None,
             custom_save_paths: Vec::new(),
             cover_url: Some(cover_url(entry.appid)),
             install_exe: None,
@@ -271,9 +273,7 @@ pub fn request_install(app_id: u32) -> Result<(), String> {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    command
-        .spawn()
-        .map(|_| ())
+    crate::process::spawn_and_reap(&mut command)
         .map_err(|_| "impossible d'ouvrir Steam (xdg-open indisponible)".to_string())
 }
 
@@ -343,6 +343,7 @@ mod tests {
             title: "Portal 2".into(),
             owned: true,
             install_path: Some(PathBuf::from("/steam/Portal 2")),
+            install_root: None,
             custom_save_paths: Vec::new(),
             cover_url: None,
             install_exe: None,
@@ -359,6 +360,7 @@ mod tests {
             title: "Portal".into(),
             owned: true,
             install_path: None,
+            install_root: None,
             custom_save_paths: Vec::new(),
             cover_url: None,
             install_exe: None,

@@ -49,8 +49,7 @@ pub fn fetch(
     if !status.is_success() {
         return Err(format!("Steam a répondu {}", status.as_u16()));
     }
-    let feed: Feed = response
-        .json()
+    let feed: Feed = crate::net::json(response, crate::net::MAX_JSON, "flux d'actualités")
         .map_err(|err| format!("flux illisible : {err}"))?;
 
     let mut items: Vec<NewsItem> = feed
@@ -96,8 +95,8 @@ pub fn open_in_browser(url: &str) -> Result<(), String> {
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
-        match cmd.spawn() {
-            Ok(_) => return Ok(()),
+        match crate::process::spawn_and_reap(&mut cmd) {
+            Ok(()) => return Ok(()),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
             Err(err) => return Err(format!("{} : {err}", args[0])),
         }

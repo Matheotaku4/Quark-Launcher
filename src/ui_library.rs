@@ -1603,11 +1603,14 @@ impl QuarkApp {
                             ui.spacing_mut().item_spacing.y = 1.0;
                             ui.horizontal(|ui| {
                                 ui.label(
-                                    RichText::new(&row.name).size(12.0).color(if row.unlocked {
-                                        pal.text
-                                    } else {
-                                        pal.text_dim
-                                    }),
+                                    RichText::new(&row.name)
+                                        .size(12.5)
+                                        .strong()
+                                        .color(if row.unlocked {
+                                            pal.text
+                                        } else {
+                                            pal.text_dim
+                                        }),
                                 );
                                 if row.session {
                                     ui.label(
@@ -1642,8 +1645,8 @@ impl QuarkApp {
                             if !row.description.is_empty() {
                                 ui.label(
                                     RichText::new(&row.description)
-                                        .size(10.5)
-                                        .color(pal.text_faint),
+                                        .size(11.0)
+                                        .color(pal.text_dim),
                                 );
                             }
                         });

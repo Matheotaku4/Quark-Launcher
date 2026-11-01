@@ -244,10 +244,7 @@ fn download_icon(url: &str, folder: &Path, key: &str) -> Option<PathBuf> {
     if !response.status().is_success() {
         return None;
     }
-    let bytes = response.bytes().ok()?;
-    if bytes.len() > 4 * 1024 * 1024 {
-        return None;
-    }
+    let bytes = crate::net::bytes(response, 4 * 1024 * 1024, "icône de succès").ok()?;
     let image = image::load_from_memory(&bytes).ok()?.to_rgba8();
     let (width, height) = (image.width().max(1), image.height().max(1));
     let scale = (96.0 / width.max(height) as f32).min(1.0);

@@ -6,3 +6,6 @@ artifacts/
 # Outils de travail locaux
 __pycache__/
 .quark-toolchain/
+
+# Configuration locale de test
+.quark-home/

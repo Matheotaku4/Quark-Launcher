@@ -234,6 +234,113 @@ pub fn folder_from_info(text: &str) -> Result<String, String> {
         .ok_or_else(|| "gogdl ne publie pas de dossier pour ce jeu".to_string())
 }
 
+/// Retrouve le dossier réellement créé par gogdl. `gogdl info` publie un
+/// `folder_name`, mais certaines versions ou certains jeux créent un dossier
+/// légèrement différent (ponctuation, suffixe de langue, ancien dossier déjà
+/// présent). On vérifie donc le dossier annoncé, puis les dossiers voisins qui
+/// portent le manifeste GOG du jeu avant de déclarer l'installation échouée.
+pub fn resolve_install_path(
+    destination: &Path,
+    folder_hint: &str,
+    product_id: &str,
+) -> Option<PathBuf> {
+    let exact = destination.join(folder_hint);
+    if is_game_directory(&exact, product_id) {
+        return Some(exact);
+    }
+    // Certaines versions installent directement dans le dossier choisi.
+    if is_game_directory(destination, product_id) {
+        return Some(destination.to_path_buf());
+    }
+
+    let marker = format!("goggame-{product_id}.info").to_lowercase();
+    let mut candidates: Vec<(u8, std::time::SystemTime, PathBuf)> = Vec::new();
+    for entry in std::fs::read_dir(destination).ok()?.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Ok(files) = std::fs::read_dir(&path) else {
+            continue;
+        };
+        let mut score = 0;
+        let mut modified = std::time::SystemTime::UNIX_EPOCH;
+        for file in files.flatten() {
+            let name = file.file_name().to_string_lossy().to_lowercase();
+            if name == marker {
+                score = 3;
+            } else if score < 2 && name.starts_with("goggame-") && name.ends_with(".info") {
+                score = 2;
+            } else if score < 1
+                && (name.ends_with(".exe") || name.ends_with(".info") || name == "gameinfo")
+            {
+                score = 1;
+            }
+            if let Ok(time) = file.metadata().and_then(|meta| meta.modified()) {
+                modified = modified.max(time);
+            }
+        }
+        if score > 0 {
+            candidates.push((score, modified, path));
+        }
+    }
+    candidates.sort_by(|left, right| {
+        right
+            .0
+            .cmp(&left.0)
+            .then_with(|| right.1.cmp(&left.1))
+            .then_with(|| left.2.cmp(&right.2))
+    });
+    // Un manifeste portant l'identifiant exact est la preuve la plus forte.
+    if let Some((3, _, path)) = candidates.first() {
+        return Some(path.clone());
+    }
+    // Sinon, seulement un dossier dont le nom ressemble à celui annoncé, ou
+    // l'unique dossier de jeu trouvé : jamais un autre jeu installé à côté.
+    let hint_key = folder_key(folder_hint);
+    if let Some((score, _, path)) = candidates.iter().find(|(score, _, path)| {
+        *score <= 1
+            && path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| folder_key(name) == hint_key)
+    }) {
+        let _ = score;
+        return Some(path.clone());
+    }
+    (candidates.len() == 1 && candidates[0].0 <= 1).then(|| candidates[0].2.clone())
+}
+
+fn folder_key(name: &str) -> String {
+    name.chars()
+        .filter(|character| character.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn is_game_directory(dir: &Path, product_id: &str) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    let marker = format!("goggame-{product_id}.info").to_lowercase();
+    let mut names = Vec::new();
+    for entry in entries.flatten() {
+        names.push(entry.file_name().to_string_lossy().to_lowercase());
+    }
+    let has_other_manifest = names
+        .iter()
+        .any(|name| name.starts_with("goggame-") && name.ends_with(".info") && name != &marker);
+    if has_other_manifest {
+        return false;
+    }
+    names.iter().any(|name| {
+        name == &marker
+            || name.ends_with(".exe")
+            || name == "gameinfo"
+            || (name.starts_with("goggame-") && name.ends_with(".info"))
+    })
+}
+
 /// Exécutable le plus plausible dans un dossier GOG installé : le plus court
 /// chemin `.exe` sous la racine, sinon un binaire Linux portant le nom du jeu.
 pub fn find_executable(root: &Path, title: &str) -> Option<PathBuf> {
@@ -279,6 +386,14 @@ pub fn find_executable(root: &Path, title: &str) -> Option<PathBuf> {
 }
 
 /// Fusionne la bibliothèque GOG rafraîchie sans perdre l'état local.
+fn gog_title_key(title: &str) -> String {
+    super::gog_library::clean_gog_title(title)
+        .chars()
+        .filter(|character| character.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
 pub fn merge_gog(existing: &[ProviderGame], refreshed: &[ProviderGame]) -> Vec<ProviderGame> {
     let mut merged: Vec<ProviderGame> = existing
         .iter()
@@ -287,10 +402,24 @@ pub fn merge_gog(existing: &[ProviderGame], refreshed: &[ProviderGame]) -> Vec<P
         .collect();
     for incoming in refreshed {
         let mut game = incoming.clone();
-        if let Some(previous) = existing
+        // La déduplication GOG peut garder l'identifiant de la fiche normale
+        // alors que l'installation suivie appartient à l'ancienne fiche
+        // « Amazon Prime » : on récupère l'état par titre en priorité.
+        let previous = existing
             .iter()
             .find(|previous| previous.key == incoming.key)
-        {
+            .or_else(|| {
+                existing
+                    .iter()
+                    .filter(|previous| {
+                        previous.key.provider == Provider::Gog
+                            && gog_title_key(&previous.title) == gog_title_key(&incoming.title)
+                    })
+                    .max_by_key(|previous| {
+                        (previous.install_state == InstallState::Installed) as u8
+                    })
+            });
+        if let Some(previous) = previous {
             game.custom_save_paths = previous.custom_save_paths.clone();
             if game.quark_game_id.is_none() {
                 game.quark_game_id = previous.quark_game_id.clone();
@@ -300,6 +429,9 @@ pub fn merge_gog(existing: &[ProviderGame], refreshed: &[ProviderGame]) -> Vec<P
             }
             if game.install_exe.is_none() {
                 game.install_exe = previous.install_exe.clone();
+            }
+            if game.install_root.is_none() {
+                game.install_root = previous.install_root.clone();
             }
             if previous.install_state == InstallState::Installed
                 && previous
@@ -403,6 +535,29 @@ mod tests {
             .unwrap();
         assert!(adapter.login_with_code("code").is_ok());
         assert!(GogAdapter::auth_config_has_tokens(&auth));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn le_dossier_reel_est_retrouve_meme_si_gogdl_a_change_son_nom() {
+        let root = std::env::temp_dir().join(format!(
+            "quark-gog-install-{}-{}",
+            std::process::id(),
+            crate::config::now_ts()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("Call of Juarez")).unwrap();
+        std::fs::write(root.join("Call of Juarez/goggame-123.info"), "{}").unwrap();
+        // Un autre jeu installé à côté ne doit jamais être choisi.
+        std::fs::create_dir_all(root.join("Autre jeu")).unwrap();
+        std::fs::write(root.join("Autre jeu/goggame-999.info"), "{}").unwrap();
+        let found = resolve_install_path(&root, "Call of Juarez Prime", "123").unwrap();
+        assert_eq!(found, root.join("Call of Juarez"));
+        assert_eq!(
+            resolve_install_path(&root, "Call of Juarez", "123").unwrap(),
+            root.join("Call of Juarez")
+        );
+        assert!(resolve_install_path(&root, "Call of Juarez", "404").is_none());
         let _ = std::fs::remove_dir_all(&root);
     }
 

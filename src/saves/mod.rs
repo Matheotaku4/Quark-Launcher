@@ -165,9 +165,6 @@ impl SaveManager {
     }
 
     fn update_custom_game_config(&self, identity: &SaveIdentity) -> Result<(), String> {
-        if identity.custom_paths.is_empty() {
-            return Ok(());
-        }
         let files: Vec<String> = identity
             .custom_paths
             .iter()
@@ -190,7 +187,11 @@ impl SaveManager {
             }
             Err(_) => return Err("configuration Ludusavi isolée inaccessible".into()),
         };
-        upsert_custom_game(&mut config, &identity.ludusavi_title, &files)?;
+        if files.is_empty() {
+            remove_custom_game_files(&mut config, &identity.ludusavi_title)?;
+        } else {
+            upsert_custom_game(&mut config, &identity.ludusavi_title, &files)?;
+        }
         let yaml = serde_yaml_ng::to_string(&config)
             .map_err(|_| "configuration Ludusavi impossible à sérialiser".to_string())?;
         write_config_atomic(&config_path, yaml.as_bytes())
@@ -450,6 +451,34 @@ fn read_ludusavi_config(path: &Path) -> Result<serde_yaml_ng::Value, String> {
     Ok(config)
 }
 
+/// Retire les chemins gérés par Quark quand l'utilisateur a détaché le dernier
+/// dossier. L'entrée et ses autres clés (registry, integration…) sont gardées.
+fn remove_custom_game_files(
+    config: &mut serde_yaml_ng::Value,
+    title: &str,
+) -> Result<(), String> {
+    let Some(games) = config
+        .as_mapping_mut()
+        .and_then(|mapping| mapping.get_mut(serde_yaml_ng::Value::from("customGames")))
+        .and_then(serde_yaml_ng::Value::as_sequence_mut)
+    else {
+        return Ok(());
+    };
+    let Some(entry) = games.iter_mut().find(|entry| {
+        entry.get("name").and_then(serde_yaml_ng::Value::as_str) == Some(title)
+    }) else {
+        return Ok(());
+    };
+    let Some(mapping) = entry.as_mapping_mut() else {
+        return Ok(());
+    };
+    mapping.insert(
+        serde_yaml_ng::Value::from("files"),
+        serde_yaml_ng::Value::Sequence(Vec::new()),
+    );
+    Ok(())
+}
+
 /// Ajoute les dossiers personnalisés Quark à l'entrée `customGames` du titre,
 /// sans toucher au reste du fichier ni aux autres clés de cette entrée.
 fn upsert_custom_game(
@@ -570,9 +599,11 @@ fn validate_backup_id_in_inventory(backups: &[BackupInfo], backup_id: &str) -> R
 pub fn validate_restore_preview_paths(
     identity: &SaveIdentity,
     preview: &BackupPreview,
-    home: &Path,
+    _home: &Path,
 ) -> Result<(), String> {
-    let mut allowed_roots = vec![home.to_path_buf()];
+    // Pas de racine `$HOME` entière : une preview Ludusavi ne doit pas pouvoir
+    // écraser `.bashrc`, `.ssh/authorized_keys` ou un profil de navigateur.
+    let mut allowed_roots = Vec::new();
     if let Some(install_path) = &identity.install_path {
         allowed_roots.push(install_path.clone());
     }
@@ -594,8 +625,10 @@ pub fn validate_restore_preview_paths(
         {
             return Err("destination de restauration relative ou avec traversal refusée".into());
         }
+        // `symlink_metadata` voit aussi les liens cassés, contrairement à
+        // `exists()` : on refuse alors au lieu de remonter au parent.
         let mut ancestor = path;
-        while !ancestor.exists() {
+        while std::fs::symlink_metadata(ancestor).is_err() {
             ancestor = ancestor
                 .parent()
                 .ok_or_else(|| "destination de restauration invalide".to_string())?;
@@ -603,12 +636,35 @@ pub fn validate_restore_preview_paths(
         let canonical_ancestor = ancestor
             .canonicalize()
             .map_err(|_| "destination de restauration inaccessible".to_string())?;
-        let lexical_allowed = allowed_roots.iter().any(|root| path.starts_with(root));
+        let lexical_root = allowed_roots
+            .iter()
+            .find(|root| path.starts_with(root))
+            .ok_or_else(|| {
+                "destination de restauration hors des dossiers autorisés".to_string()
+            })?;
         let resolved_allowed = canonical_roots
             .iter()
             .any(|root| canonical_ancestor.starts_with(root));
-        if !lexical_allowed || !resolved_allowed {
-            return Err("destination de restauration hors des dossiers autorisés (ou lien symbolique sortant)".into());
+        if !resolved_allowed {
+            return Err(
+                "destination de restauration hors des dossiers autorisés (ou lien symbolique sortant)"
+                    .into(),
+            );
+        }
+        // Aucun composant sous la racine autorisée ne peut être un lien : sinon
+        // Ludusavi écrirait à travers vers une destination non validée.
+        let mut cursor = lexical_root.clone();
+        for component in path
+            .strip_prefix(lexical_root)
+            .map_err(|_| "destination de restauration invalide".to_string())?
+            .components()
+        {
+            cursor.push(component);
+            if let Ok(metadata) = std::fs::symlink_metadata(&cursor) {
+                if metadata.file_type().is_symlink() {
+                    return Err("destination de restauration passant par un lien symbolique".into());
+                }
+            }
         }
     }
     Ok(())
@@ -1003,6 +1059,36 @@ mod tests {
         assert!(validate_restore_preview_paths(&game, &relative, &home).is_err());
     }
 
+    #[test]
+    fn restore_preview_ne_peut_pas_ecrire_dans_le_dossier_personnel() {
+        let manager = TestManager::new();
+        let home = manager.root.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let sensitive = home.join(".bashrc");
+        std::fs::write(&sensitive, b"original").unwrap();
+        let game = SaveIdentity {
+            install_path: Some(manager.root.join("game")),
+            ..identity(Provider::Steam, "620", "Portal 2")
+        };
+        std::fs::create_dir_all(game.install_path.as_ref().unwrap()).unwrap();
+        let preview = BackupPreview {
+            title: "Portal 2".into(),
+            files: vec![PreviewFile {
+                path: sensitive.display().to_string(),
+                change: Some("Different".into()),
+                bytes: Some(1),
+                failed: false,
+                ignored: false,
+            }],
+            errors: vec![],
+            changed_games: Some(1),
+            processed_games: Some(1),
+            processed_bytes: Some(1),
+        };
+        assert!(validate_restore_preview_paths(&game, &preview, &home).is_err());
+        assert_eq!(std::fs::read(&sensitive).unwrap(), b"original");
+    }
+
     #[cfg(unix)]
     #[test]
     fn restore_preview_rejects_a_symlink_ancestor_that_escapes_allowed_roots() {
@@ -1069,6 +1155,31 @@ mod tests {
         assert_eq!(games[0]["name"], "Earlier");
         assert_eq!(games[1]["name"], "Portal 2");
         assert_eq!(games[1]["files"][0], custom.display().to_string());
+    }
+
+    #[test]
+    fn retirer_le_dernier_dossier_personnalise_nettoie_aussi_ludusavi() {
+        let manager = TestManager::new();
+        std::fs::create_dir_all(&manager.manager.config).unwrap();
+        let config_path = manager.manager.config.join("config.yaml");
+        let custom = manager.root.join("custom-save");
+        std::fs::create_dir_all(&custom).unwrap();
+        let mut game = SaveIdentity {
+            custom_paths: vec![custom.clone()],
+            ..identity(Provider::Steam, "620", "Portal 2")
+        };
+        manager.manager.update_custom_game_config(&game).unwrap();
+        game.custom_paths.clear();
+        manager.manager.update_custom_game_config(&game).unwrap();
+        let config: serde_json::Value =
+            serde_yaml_ng::from_slice(&std::fs::read(config_path).unwrap()).unwrap();
+        let entry = config["customGames"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["name"] == "Portal 2")
+            .unwrap();
+        assert!(entry["files"].as_array().unwrap().is_empty());
     }
 
     #[test]

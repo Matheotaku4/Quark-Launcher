@@ -138,12 +138,7 @@ fn download_as(url: &str, path: &Path, wide: bool) -> Result<PathBuf, String> {
             response.status().as_u16()
         ));
     }
-    let bytes = response
-        .bytes()
-        .map_err(|_| "image de boutique illisible".to_string())?;
-    if bytes.len() > 12 * 1024 * 1024 {
-        return Err("image de boutique trop volumineuse".to_string());
-    }
+    let bytes = crate::net::bytes(response, 12 * 1024 * 1024, "image de boutique")?;
     let image = image::load_from_memory(&bytes)
         .map_err(|_| "image de boutique illisible".to_string())?;
     if image.width() < 96 || image.height() < 96 {

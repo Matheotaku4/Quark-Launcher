@@ -553,11 +553,13 @@ fn search_hit_row(
             );
         },
     );
-    painter.text(
-        Pos2::new(rect.right() - 16.0, rect.center().y),
-        Align2::RIGHT_CENTER,
-        "↗",
-        FontId::proportional(13.0),
+    widgets::paint_icon(
+        ui,
+        Rect::from_center_size(
+            Pos2::new(rect.right() - 18.0, rect.center().y),
+            Vec2::splat(14.0),
+        ),
+        Icon::ExternalLink,
         pal.text_faint,
     );
     let clicked = response.clicked();
@@ -641,6 +643,9 @@ fn section_caption(section: &StoreSection) -> Option<String> {
     let mut parts = vec![format!("{} jeux", section.items.len())];
     if with_players > 0 {
         parts.push(format!("{with_players} pics de joueurs"));
+    }
+    if section.title.contains("Populaires") {
+        parts.push("classement officiel Steam".to_string());
     }
     Some(parts.join(" · "))
 }

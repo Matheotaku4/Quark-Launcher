@@ -60,6 +60,10 @@ pub struct ProviderGame {
     pub title: String,
     pub owned: bool,
     pub install_path: Option<PathBuf>,
+    /// Racine choisie lors de l'installation (Epic/GOG/Steam). Sert à refuser
+    /// toute suppression récursive hors de cette racine.
+    #[serde(default)]
+    pub install_root: Option<PathBuf>,
     #[serde(default)]
     pub custom_save_paths: Vec<PathBuf>,
     pub install_state: InstallState,
@@ -85,6 +89,7 @@ impl Default for ProviderGame {
             title: String::new(),
             owned: false,
             install_path: None,
+            install_root: None,
             custom_save_paths: Vec::new(),
             cover_url: None,
             install_exe: None,

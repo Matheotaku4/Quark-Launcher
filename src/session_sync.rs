@@ -19,8 +19,13 @@ use crate::providers::{Provider, ProviderGameKey, SessionUnlock};
 use eframe::egui;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::Duration;
+
+/// Le fichier existait mais n'a pas pu être lu : ne jamais le remplacer par
+/// une carte vide, ce qui effacerait les succès en attente.
+static SESSION_UNLOCKS_UNREADABLE: AtomicBool = AtomicBool::new(false);
 
 pub fn session_unlocks_path() -> PathBuf {
     crate::config::data_dir().join("session-achievements.json")
@@ -57,25 +62,80 @@ struct SessionUnlockFile {
     games: std::collections::BTreeMap<String, Vec<SessionUnlock>>,
 }
 
-pub fn load_session_unlocks() -> HashMap<ProviderGameKey, Vec<SessionUnlock>> {
-    let Ok(text) = std::fs::read_to_string(session_unlocks_path()) else {
-        return HashMap::new();
+pub fn load_session_unlocks() -> (HashMap<ProviderGameKey, Vec<SessionUnlock>>, Option<String>) {
+    let path = session_unlocks_path();
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return (HashMap::new(), None);
+        }
+        Err(error) => {
+            SESSION_UNLOCKS_UNREADABLE.store(true, Ordering::SeqCst);
+            return (
+                HashMap::new(),
+                Some(format!(
+                    "Succès de session illisibles ({}) : {error}. Le fichier ne sera pas écrasé.",
+                    path.display()
+                )),
+            );
+        }
     };
-    let Ok(file) = serde_json::from_str::<SessionUnlockFile>(&text) else {
-        return HashMap::new();
+    let file = match serde_json::from_str::<SessionUnlockFile>(&text) {
+        Ok(file) => file,
+        Err(error) => {
+            let backup = unique_backup_path("session-achievements.json");
+            let _ = std::fs::copy(&path, &backup);
+            SESSION_UNLOCKS_UNREADABLE.store(true, Ordering::SeqCst);
+            return (
+                HashMap::new(),
+                Some(format!(
+                    "Succès de session illisibles ({}) : {error}. Copie conservée dans {} ; le fichier ne sera pas écrasé.",
+                    path.display(),
+                    backup.display()
+                )),
+            );
+        }
     };
-    file.games
-        .into_iter()
-        .filter_map(|(id, unlocks)| parse_provider_key_id(&id).map(|key| (key, unlocks)))
-        .collect()
+    (
+        file.games
+            .into_iter()
+            .filter_map(|(id, unlocks)| parse_provider_key_id(&id).map(|key| (key, unlocks)))
+            .collect(),
+        None,
+    )
 }
 
-pub fn save_session_unlocks(unlocks: &HashMap<ProviderGameKey, Vec<SessionUnlock>>) {
+fn unique_backup_path(base: &str) -> PathBuf {
+    let dir = crate::config::data_dir();
+    let stamp = crate::config::now_ts();
+    for attempt in 0..100 {
+        let name = if attempt == 0 {
+            format!("{base}.corrompu-{stamp}")
+        } else {
+            format!("{base}.corrompu-{stamp}-{attempt}")
+        };
+        let path = dir.join(name);
+        if !path.exists() {
+            return path;
+        }
+    }
+    dir.join(format!("{base}.corrompu-{stamp}-{}", std::process::id()))
+}
+
+pub fn save_session_unlocks(
+    unlocks: &HashMap<ProviderGameKey, Vec<SessionUnlock>>,
+) -> Result<(), String> {
+    if SESSION_UNLOCKS_UNREADABLE.load(Ordering::SeqCst) {
+        return Err(
+            "fichier de succès de session illisible : sauvegarde refusée pour ne pas l'écraser"
+                .to_string(),
+        );
+    }
     let path = session_unlocks_path();
-    let Some(parent) = path.parent() else {
-        return;
-    };
-    let _ = std::fs::create_dir_all(parent);
+    let parent = path
+        .parent()
+        .ok_or_else(|| "dossier des succès de session introuvable".to_string())?;
+    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     let file = SessionUnlockFile {
         version: 1,
         games: unlocks
@@ -83,12 +143,46 @@ pub fn save_session_unlocks(unlocks: &HashMap<ProviderGameKey, Vec<SessionUnlock
             .map(|(key, unlocks)| (provider_key_id(key), unlocks.clone()))
             .collect(),
     };
-    let Ok(text) = serde_json::to_string_pretty(&file) else {
-        return;
-    };
-    let temp = path.with_extension("json.tmp");
-    if std::fs::write(&temp, text).is_ok() {
-        let _ = std::fs::rename(&temp, &path);
+    let text = serde_json::to_string_pretty(&file).map_err(|error| error.to_string())?;
+    let temp = path.with_extension(format!(
+        "json.tmp-{}-{}",
+        std::process::id(),
+        crate::config::now_ts()
+    ));
+    let result = (|| -> Result<(), String> {
+        use std::io::Write as _;
+        let mut options = std::fs::OpenOptions::new();
+        options.create_new(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        let mut output = options.open(&temp).map_err(|error| error.to_string())?;
+        output
+            .write_all(text.as_bytes())
+            .map_err(|error| error.to_string())?;
+        output.sync_all().map_err(|error| error.to_string())?;
+        std::fs::rename(&temp, &path).map_err(|error| error.to_string())?;
+        if let Ok(directory) = std::fs::File::open(parent) {
+            let _ = directory.sync_all();
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
+}
+
+/// Confirme uniquement le succès réellement envoyé : les autres déblocages de
+/// la même session restent en attente et seront envoyés ensuite.
+fn mark_synced(unlocks: &mut [crate::providers::SessionUnlock], achievement: &str) {
+    if let Some(unlock) = unlocks
+        .iter_mut()
+        .find(|unlock| unlock.key.eq_ignore_ascii_case(achievement))
+    {
+        unlock.synced = true;
     }
 }
 
@@ -196,7 +290,9 @@ impl QuarkApp {
                 self.toast_info(format!("Succès « {title} » enregistré pour cette session"));
             }
         }
-        save_session_unlocks(&self.session_unlocks);
+        if let Err(error) = save_session_unlocks(&self.session_unlocks) {
+            self.toast_error(format!("Succès de session non enregistrés : {error}"));
+        }
         self.start_gog_unlock(ctx);
     }
 
@@ -220,6 +316,7 @@ impl QuarkApp {
         let repaint = ctx.clone();
         let product_id = key.product_id.clone();
         let sent_key = key.clone();
+        let sent_achievement = achievement.clone();
         std::thread::spawn(move || {
             let result = crate::providers::gog_library::unlock_for_session(
                 &crate::providers::gog::auth_config_path(),
@@ -227,7 +324,7 @@ impl QuarkApp {
                 &achievement,
                 crate::config::now_ts(),
             );
-            let _ = tx.send((sent_key, result));
+            let _ = tx.send((sent_key, sent_achievement, result));
             repaint.request_repaint();
         });
         self.gog_unlock_job = Some(rx);
@@ -239,30 +336,32 @@ impl QuarkApp {
             return;
         };
         match result {
-            Ok((key, Ok(Some(name)))) => {
+            Ok((key, achievement, Ok(Some(name)))) => {
                 self.gog_unlock_job = None;
                 if let Some(unlocks) = self.session_unlocks.get_mut(&key) {
-                    for unlock in unlocks.iter_mut().filter(|unlock| !unlock.synced) {
-                        unlock.synced = true;
-                    }
+                    mark_synced(unlocks, &achievement);
                 }
-                save_session_unlocks(&self.session_unlocks);
+                if let Err(error) = save_session_unlocks(&self.session_unlocks) {
+                    self.toast_error(format!("Succès de session non enregistrés : {error}"));
+                }
                 // La liste déjà chargée pour ce jeu doit refléter l'écriture.
                 self.achievements.remove(&key);
                 self.toast_info(format!("Succès GOG « {name} » synchronisé"));
                 self.start_gog_unlock(ctx);
             }
-            Ok((key, Ok(None))) => {
+            Ok((key, achievement, Ok(None))) => {
                 self.gog_unlock_job = None;
+                // `Ok(None)` signifie que GOG connaît déjà ce succès comme
+                // débloqué : seule cette clé est confirmée.
                 if let Some(unlocks) = self.session_unlocks.get_mut(&key) {
-                    for unlock in unlocks.iter_mut().filter(|unlock| !unlock.synced) {
-                        unlock.synced = true;
-                    }
+                    mark_synced(unlocks, &achievement);
                 }
-                save_session_unlocks(&self.session_unlocks);
+                if let Err(error) = save_session_unlocks(&self.session_unlocks) {
+                    self.toast_error(format!("Succès de session non enregistrés : {error}"));
+                }
                 self.start_gog_unlock(ctx);
             }
-            Ok((_key, Err(error))) => {
+            Ok((_key, _achievement, Err(error))) => {
                 self.gog_unlock_job = None;
                 self.toast_error(format!("Succès GOG non synchronisé : {error}"));
             }
@@ -329,5 +428,36 @@ impl QuarkApp {
         self.poll_gog_unlock(ctx);
         self.poll_adopt_cover();
         self.ensure_provider_artwork(ctx);
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::providers::{Provider, SessionUnlock};
+
+    fn unlock(key: &str) -> SessionUnlock {
+        SessionUnlock {
+            key: key.to_string(),
+            name: key.to_string(),
+            description: String::new(),
+            at: 0,
+            synced: false,
+        }
+    }
+
+    #[test]
+    fn un_seul_succes_gog_est_marque_synchronise() {
+        let mut unlocks = vec![unlock("ACH_ONE"), unlock("ACH_TWO")];
+        mark_synced(&mut unlocks, "ach_one");
+        assert!(unlocks[0].synced);
+        assert!(!unlocks[1].synced);
+        // La clé du jeu reste distincte de celle du succès.
+        let key = ProviderGameKey {
+            provider: Provider::Gog,
+            product_id: "1207658924".into(),
+        };
+        assert_eq!(provider_key_id(&key), "gog:1207658924");
     }
 }

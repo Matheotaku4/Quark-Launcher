@@ -128,8 +128,7 @@ fn product_body(product_id: &str) -> Result<String, String> {
             response.status().as_u16()
         ));
     }
-    response
-        .text()
+    crate::net::text(response, crate::net::MAX_JSON, "fiche GOG")
         .map_err(|_| "fiche GOG illisible".to_string())
 }
 
@@ -357,6 +356,77 @@ pub fn usable_tokens(auth_path: &Path, now: i64) -> Result<GogTokens, String> {
     read_tokens(&merged)
 }
 
+/// Titre GOG sans le suffixe d'édition « Amazon Prime » ajouté à certains
+/// produits offerts. Sans ce nettoyage, la même fiche apparaissait deux fois :
+/// une version normale et une version « Nom + Amazon Prime ».
+pub fn clean_gog_title(title: &str) -> String {
+    const SUFFIXES: [&str; 12] = [
+        " - amazon prime gaming",
+        " (amazon prime gaming)",
+        " [amazon prime gaming]",
+        " amazon prime gaming",
+        " - prime gaming",
+        " (prime gaming)",
+        " [prime gaming]",
+        " prime gaming",
+        " - amazon prime",
+        " (amazon prime)",
+        " [amazon prime]",
+        " + amazon prime",
+    ];
+    let trimmed = title.trim();
+    let lower = trimmed.to_lowercase();
+    for suffix in SUFFIXES {
+        if lower.ends_with(suffix) {
+            if let Some(stripped) = trimmed.get(..trimmed.len() - suffix.len()) {
+                let cleaned = stripped.trim();
+                if !cleaned.is_empty() {
+                    return cleaned.to_string();
+                }
+            }
+        }
+    }
+    // Dernière forme observée : « Nom du jeu Amazon Prime » sans séparateur.
+    if lower.ends_with(" amazon prime") {
+        if let Some(stripped) = trimmed.get(..trimmed.len() - " amazon prime".len()) {
+            let cleaned = stripped.trim();
+            if !cleaned.is_empty() {
+                return cleaned.to_string();
+            }
+        }
+    }
+    trimmed.to_string()
+}
+
+fn title_key(title: &str) -> String {
+    title
+        .chars()
+        .filter(|character| character.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Nettoie les titres et fusionne les doublons créés par Amazon Prime. La fiche
+/// sans suffixe est gardée en priorité, avec son identifiant GOG d'origine.
+fn dedupe_gog_titles(games: &mut Vec<OwnedGame>) {
+    for game in games.iter_mut() {
+        game.title = clean_gog_title(&game.title);
+    }
+    games.sort_by(|left, right| {
+        title_key(&left.title)
+            .cmp(&title_key(&right.title))
+            .then_with(|| left.title.len().cmp(&right.title.len()))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    games.dedup_by(|right, left| title_key(&right.title) == title_key(&left.title));
+    games.sort_by(|left, right| {
+        left.title
+            .to_lowercase()
+            .cmp(&right.title.to_lowercase())
+            .then_with(|| left.id.cmp(&right.id))
+    });
+}
+
 /// Identifiants des jeux possédés (`{"owned": [...]}`).
 pub fn parse_owned_ids(body: &str) -> Result<Vec<String>, String> {
     let root: Value =
@@ -421,12 +491,13 @@ pub fn parse_products(body: &str) -> Result<Vec<OwnedGame>, String> {
         }
         games.push(OwnedGame {
             id,
-            title,
+            title: clean_gog_title(&title),
             cover_url: None,
         });
     }
     games.sort_by(|left, right| left.title.to_lowercase().cmp(&right.title.to_lowercase()));
     games.dedup_by(|left, right| left.id == right.id);
+    dedupe_gog_titles(&mut games);
     Ok(games)
 }
 
@@ -453,8 +524,7 @@ fn owned_ids(token: &str) -> Result<Vec<String>, String> {
     if !response.status().is_success() {
         return Err(describe_status(response.status()));
     }
-    let body = response
-        .text()
+    let body = crate::net::text(response, crate::net::MAX_JSON, "réponse GOG")
         .map_err(|_| "réponse GOG illisible".to_string())?;
     parse_owned_ids(&body)
 }
@@ -472,8 +542,7 @@ fn filtered_products(token: &str) -> Result<Vec<OwnedGame>, String> {
         if !response.status().is_success() {
             return Err(describe_status(response.status()));
         }
-        let body = response
-            .text()
+        let body = crate::net::text(response, crate::net::MAX_JSON, "réponse GOG")
             .map_err(|_| "réponse GOG illisible".to_string())?;
         let root: Value =
             serde_json::from_str(&body).map_err(|_| "réponse GOG illisible".to_string())?;
@@ -502,7 +571,7 @@ fn filtered_products(token: &str) -> Result<Vec<OwnedGame>, String> {
             }
             games.push(OwnedGame {
                 id,
-                title,
+                title: clean_gog_title(&title),
                 cover_url: None,
             });
         }
@@ -514,6 +583,7 @@ fn filtered_products(token: &str) -> Result<Vec<OwnedGame>, String> {
     }
     games.sort_by(|left, right| left.title.to_lowercase().cmp(&right.title.to_lowercase()));
     games.dedup_by(|left, right| left.id == right.id);
+    dedupe_gog_titles(&mut games);
     Ok(games)
 }
 
@@ -548,13 +618,13 @@ pub fn library(token: &str) -> Result<Vec<OwnedGame>, String> {
         if !response.status().is_success() {
             return Err(describe_status(response.status()));
         }
-        let body = response
-            .text()
+        let body = crate::net::text(response, crate::net::MAX_JSON, "fiches GOG")
             .map_err(|_| "fiches GOG illisibles".to_string())?;
         games.extend(parse_products(&body)?);
     }
     games.sort_by(|left, right| left.title.to_lowercase().cmp(&right.title.to_lowercase()));
     games.dedup_by(|left, right| left.id == right.id);
+    dedupe_gog_titles(&mut games);
     if games.is_empty() {
         return Err("aucune fiche GOG exploitable pour ce compte".to_string());
     }
@@ -689,8 +759,7 @@ pub fn fetch_achievements(
             status => format!("GOG a répondu {status} pour les succès"),
         });
     }
-    let body = response
-        .text()
+    let body = crate::net::text(response, crate::net::MAX_JSON, "succès GOG")
         .map_err(|_| "succès GOG illisibles".to_string())?;
     parse_achievements(&body)
 }
@@ -707,8 +776,7 @@ fn gog_username(tokens: &GogTokens) -> Result<String, String> {
     if !response.status().is_success() {
         return Err("GOG a refusé le profil du compte pour le temps de jeu".to_string());
     }
-    let body = response
-        .text()
+    let body = crate::net::text(response, crate::net::MAX_JSON, "profil GOG")
         .map_err(|_| "profil GOG illisible".to_string())?;
     let root: Value =
         serde_json::from_str(&body).map_err(|_| "profil GOG illisible".to_string())?;
@@ -756,8 +824,7 @@ fn profile_playtime(tokens: &GogTokens, product_id: &str) -> Result<u64, String>
             response.status().as_u16()
         ));
     }
-    let body = response
-        .text()
+    let body = crate::net::text(response, crate::net::MAX_JSON, "profil GOG")
         .map_err(|_| "profil GOG illisible pour le temps de jeu".to_string())?;
     parse_profile_playtime(&body, &tokens.user_id)
 }
@@ -859,8 +926,7 @@ pub fn gog_playtime(auth_path: &Path, product_id: &str, now: i64) -> Result<u64,
             };
             continue;
         }
-        let body = response
-            .text()
+        let body = crate::net::text(response, crate::net::MAX_JSON, "temps de jeu GOG")
             .map_err(|_| "temps de jeu GOG illisible".to_string())?;
         match parse_sessions_seconds(&body) {
             Ok(seconds) => return Ok(seconds),
@@ -999,6 +1065,7 @@ pub fn to_games(entries: &[OwnedGame], fetched_at: i64) -> Vec<ProviderGame> {
             title: entry.title.clone(),
             owned: true,
             install_path: None,
+            install_root: None,
             custom_save_paths: Vec::new(),
             cover_url: entry.cover_url.clone(),
             install_exe: None,
@@ -1247,6 +1314,30 @@ mod tests {
             }]
         );
         assert!(parse_products("nope").is_err());
+    }
+
+    #[test]
+    fn les_doublons_amazon_prime_sont_nettoyes_et_fusionnes() {
+        assert_eq!(clean_gog_title("Call of Juarez Amazon Prime"), "Call of Juarez");
+        assert_eq!(
+            clean_gog_title("Call of Juarez + Amazon Prime"),
+            "Call of Juarez"
+        );
+        assert_eq!(
+            clean_gog_title("Call of Juarez (Prime Gaming)"),
+            "Call of Juarez"
+        );
+        assert_eq!(clean_gog_title("Amazon Prime"), "Amazon Prime");
+        let body = r#"[
+          {"id": 1, "title": "Call of Juarez", "game_type": "game"},
+          {"id": 2, "title": "Call of Juarez Amazon Prime", "game_type": "game"},
+          {"id": 3, "title": "Autre jeu", "game_type": "game"}
+        ]"#;
+        let games = parse_products(body).unwrap();
+        assert_eq!(games.len(), 2);
+        assert_eq!(games[0].title, "Autre jeu");
+        assert_eq!(games[1].title, "Call of Juarez");
+        assert_eq!(games[1].id, "1");
     }
 
     #[test]

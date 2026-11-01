@@ -23,12 +23,18 @@ pub fn home_dir() -> PathBuf {
 }
 
 pub fn config_dir() -> PathBuf {
+    if let Some(path) = std::env::var_os("QUARK_CONFIG_DIR") {
+        return PathBuf::from(path);
+    }
     dirs::config_dir()
         .unwrap_or_else(|| home_dir().join(".config"))
         .join("quark")
 }
 
 pub fn data_dir() -> PathBuf {
+    if let Some(path) = std::env::var_os("QUARK_DATA_DIR") {
+        return PathBuf::from(path);
+    }
     dirs::data_dir()
         .unwrap_or_else(|| home_dir().join(".local/share"))
         .join("quark")
@@ -883,6 +889,29 @@ pub struct Library {
     pub settings: Settings,
     /// Installations des boutiques externes, séparées des fiches Quark.
     pub provider_library: crate::providers::ProviderLibrary,
+    /// Erreur de chargement : la bibliothèque reste alors en lecture seule
+    /// pour ne jamais écraser un fichier illisible ou inaccessible.
+    #[serde(skip)]
+    pub load_error: Option<String>,
+}
+
+/// Nom de secours unique : une nouvelle corruption ne doit jamais écraser la
+/// copie de la précédente.
+fn unique_corrupt_path(base: &str) -> PathBuf {
+    let dir = config_dir();
+    let stamp = now_ts();
+    for attempt in 0..100 {
+        let name = if attempt == 0 {
+            format!("{base}.corrompu-{stamp}")
+        } else {
+            format!("{base}.corrompu-{stamp}-{attempt}")
+        };
+        let path = dir.join(name);
+        if !path.exists() {
+            return path;
+        }
+    }
+    dir.join(format!("{base}.corrompu-{stamp}-{}", std::process::id()))
 }
 
 impl Library {
@@ -906,29 +935,79 @@ impl Library {
 
     pub fn load() -> Self {
         let path = config_path();
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            return Self::default();
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Self::default();
+            }
+            Err(error) => {
+                let message = format!(
+                    "Bibliothèque illisible ({}) : {error}. Aucune sauvegarde ne sera faite pour ne pas écraser le fichier.",
+                    path.display()
+                );
+                eprintln!("[quark] {message}");
+                return Self {
+                    load_error: Some(message),
+                    ..Self::default()
+                };
+            }
         };
         match serde_json::from_str::<Library>(&text) {
             Ok(mut lib) => {
                 lib.migrate_defaults();
                 lib
             }
-            Err(err) => {
-                eprintln!("[quark] config illisible ({}): {err}", path.display());
-                let backup = config_dir().join("config.json.corrompu");
+            Err(error) => {
+                let backup = unique_corrupt_path("config.json");
                 let _ = std::fs::copy(&path, &backup);
-                Self::default()
+                let message = format!(
+                    "Bibliothèque illisible ({}) : {error}. Copie conservée dans {}. Aucune sauvegarde ne sera faite pour ne pas écraser le fichier.",
+                    path.display(),
+                    backup.display()
+                );
+                eprintln!("[quark] {message}");
+                Self {
+                    load_error: Some(message),
+                    ..Self::default()
+                }
             }
         }
     }
 
+    /// Écrit la configuration de façon durable : fichier temporaire, `fsync`,
+    /// puis renommage atomique. Un chargement en erreur rend la sauvegarde
+    /// impossible tant que l'utilisateur n'a pas réparé le fichier.
     pub fn save(&self) -> Result<(), String> {
+        if let Some(error) = &self.load_error {
+            return Err(error.clone());
+        }
         std::fs::create_dir_all(config_dir()).map_err(|e| e.to_string())?;
         let text = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
-        let tmp = config_dir().join("config.json.tmp");
-        std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, config_path()).map_err(|e| e.to_string())
+        let tmp = config_dir().join(format!(
+            "config.json.tmp-{}-{}-{}",
+            std::process::id(),
+            now_ts(),
+            new_id()
+        ));
+        let result = (|| -> Result<(), String> {
+            use std::io::Write as _;
+            let mut file = std::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&tmp)
+                .map_err(|e| e.to_string())?;
+            file.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+            file.sync_all().map_err(|e| e.to_string())?;
+            std::fs::rename(&tmp, config_path()).map_err(|e| e.to_string())?;
+            if let Ok(directory) = std::fs::File::open(config_dir()) {
+                let _ = directory.sync_all();
+            }
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+        result
     }
 
     /// Ancienne version : `settings.env` était appliqué à tous les lancements.
@@ -936,6 +1015,21 @@ impl Library {
     /// verse une seule fois dans ceux qui n'en ont pas encore : le lancement
     /// des jeux existants ne change pas.
     pub fn migrate_defaults(&mut self) {
+        // Anciennes installations : rattache une fiche fournisseur à la racine
+        // par défaut quand son chemin y est clairement contenu, pour que la
+        // désinstallation puisse vérifier la racine. Indépendant de
+        // `defaults_migrated`, déjà vrai dans les configurations récentes.
+        let root = self.settings.install_root();
+        for game in &mut self.provider_library.games {
+            if game.install_root.is_none()
+                && game
+                    .install_path
+                    .as_ref()
+                    .is_some_and(|path| path.starts_with(&root))
+            {
+                game.install_root = Some(root.clone());
+            }
+        }
         if self.settings.defaults_migrated {
             return;
         }
@@ -1337,6 +1431,7 @@ mod tests {
                 title: "Celeste".to_string(),
                 owned: true,
                 install_path: Some(PathBuf::from("/games/Celeste")),
+                install_root: None,
                 custom_save_paths: Vec::new(),
                 cover_url: None,
                 install_exe: None,
@@ -1371,4 +1466,11 @@ mod tests {
             crate::providers::CapabilityState::RequiresSetup("choose a save directory".to_string())
         );
     }
+    #[test]
+    fn une_bibliotheque_illisible_ne_peut_pas_etre_sauvegardee() {
+        let mut library = Library::default();
+        library.load_error = Some("config.json illisible".to_string());
+        assert!(library.save().is_err());
+    }
+
 }

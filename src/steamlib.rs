@@ -112,6 +112,11 @@ pub fn installed() -> Result<Vec<SteamGame>, String> {
             let Some((app_id, title, installdir)) = manifest(&text) else {
                 continue;
             };
+            // `installdir` vient d'un fichier éditable : un seul composant, sans
+            // `..` ni séparateur, sinon le chemin sortirait de `steamapps/common`.
+            if !safe_install_dir(&installdir) {
+                continue;
+            }
             if games.iter().any(|game| game.app_id == app_id) {
                 continue;
             }
@@ -239,9 +244,9 @@ pub fn find_exe(dir: &Path, title: &str, installdir: &str) -> Option<PathBuf> {
         .filter(|text| !text.is_empty())
         .collect();
 
-    let mut found: Vec<(u64, bool, PathBuf)> = Vec::new();
-    walk(dir, 0, &mut found);
-    let mut candidates: Vec<(u64, bool, PathBuf)> = found
+    let mut found: Vec<(u64, u8, PathBuf)> = Vec::new();
+    walk(dir, 0, &wanted, &mut found);
+    let mut candidates: Vec<(u64, u8, PathBuf)> = found
         .into_iter()
         .filter(|(_, _, path)| {
             let name = path
@@ -256,11 +261,10 @@ pub fn find_exe(dir: &Path, title: &str, installdir: &str) -> Option<PathBuf> {
             .then_with(|| b.0.cmp(&a.0))
             .then_with(|| a.2.cmp(&b.2))
     });
-    let _ = &wanted;
     candidates.into_iter().next().map(|(_, _, path)| path)
 }
 
-fn walk(dir: &Path, depth: usize, out: &mut Vec<(u64, bool, PathBuf)>) {
+fn walk(dir: &Path, depth: usize, wanted: &[String], out: &mut Vec<(u64, u8, PathBuf)>) {
     if depth > 3 {
         return;
     }
@@ -281,7 +285,7 @@ fn walk(dir: &Path, depth: usize, out: &mut Vec<(u64, bool, PathBuf)>) {
             ) {
                 continue;
             }
-            walk(&path, depth + 1, out);
+            walk(&path, depth + 1, wanted, out);
         } else if path
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
@@ -291,25 +295,43 @@ fn walk(dir: &Path, depth: usize, out: &mut Vec<(u64, bool, PathBuf)>) {
                 .file_stem()
                 .map(|stem| crate::scan::normalize(&stem.to_string_lossy()))
                 .unwrap_or_default();
-            // Un exécutable dont le nom est contenu dans celui du dossier (ou
-            // l'inverse) est un bon candidat : « Witcher3.exe » dans
-            // « The Witcher 3 ».
-            let matches_name = !stem.is_empty()
-                && (dir_hint(&path)
-                    .map(|hint| hint.contains(&stem) || stem.contains(&hint))
-                    .unwrap_or(false));
-            out.push((size, matches_name, path));
+            // Le titre et `installdir` sont la meilleure information : une
+            // correspondance exacte passe avant un lanceur plus gros.
+            let folder = dir
+                .file_name()
+                .map(|name| crate::scan::normalize(&name.to_string_lossy()))
+                .unwrap_or_default();
+            let score = if !stem.is_empty() && wanted.iter().any(|name| *name == stem) {
+                2
+            } else if !stem.is_empty()
+                && wanted.iter().any(|name| {
+                    name.contains(&stem)
+                        || stem.contains(name.as_str())
+                        || (!folder.is_empty()
+                            && (name.contains(&folder) || folder.contains(name.as_str())))
+                })
+            {
+                1
+            } else {
+                0
+            };
+            out.push((size, score, path));
         }
     }
 }
 
-/// Nom du dossier de jeu au-dessus de l'exécutable, normalisé.
-fn dir_hint(path: &Path) -> Option<String> {
-    path.parent()
-        .and_then(|parent| parent.parent())
-        .and_then(|parent| parent.file_name())
-        .map(|name| crate::scan::normalize(&name.to_string_lossy()))
+/// Un `installdir` de manifeste Steam doit rester un simple nom de dossier.
+fn safe_install_dir(value: &str) -> bool {
+    let path = Path::new(value);
+    !value.trim().is_empty()
+        && !value.contains('/')
+        && !value.contains('\\')
+        && value != "."
+        && value != ".."
+        && path.components().count() == 1
+        && matches!(path.components().next(), Some(std::path::Component::Normal(_)))
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -389,4 +411,29 @@ mod tests {
         assert_eq!(exe.file_name().unwrap(), "game.exe");
         let _ = std::fs::remove_dir_all(&dir);
     }
+    #[test]
+    fn un_lanceur_plus_gros_ne_masque_pas_l_executable_du_jeu() {
+        let dir = std::env::temp_dir().join(format!(
+            "quark-steam-launcher-{}-{}",
+            std::process::id(),
+            crate::config::now_ts()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("bin")).unwrap();
+        std::fs::write(dir.join("bin/MonJeu.exe"), vec![0u8; 512]).unwrap();
+        std::fs::write(dir.join("Launcher.exe"), vec![0u8; 90_000]).unwrap();
+        let exe = find_exe(&dir, "Mon Jeu", "MonJeu").expect("exécutable");
+        assert_eq!(exe.file_name().unwrap(), "MonJeu.exe");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn un_installdir_steam_ne_peut_pas_sortir_de_common() {
+        assert!(safe_install_dir("Portal 2"));
+        assert!(!safe_install_dir("../Documents"));
+        assert!(!safe_install_dir("a/b"));
+        assert!(!safe_install_dir(".."));
+        assert!(!safe_install_dir(""));
+    }
+
 }

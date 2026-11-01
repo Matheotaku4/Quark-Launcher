@@ -277,6 +277,23 @@ pub fn run_streaming(
     run_inner(command, timeout, cancellation, Some(progress))
 }
 
+/// Tue tout le groupe du fournisseur, pas seulement le processus direct.
+fn kill_process_group(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    {
+        let pid = child.id() as i32;
+        if pid > 0 {
+            // Le groupe a été créé avec `process_group(0)` : son identifiant
+            // est celui du chef.
+            unsafe {
+                libc::kill(-pid, libc::SIGKILL);
+            }
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 fn run_inner(
     command: ProviderCommand,
     timeout: Duration,
@@ -298,6 +315,13 @@ fn run_inner(
         .stderr(Stdio::piped());
     if let Some(cwd) = &command.cwd {
         process.current_dir(cwd);
+    }
+    // Groupe dédié : `legendary` et `gogdl` lancent des scripts et des
+    // processus d'extraction qui doivent aussi être arrêtés.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+        process.process_group(0);
     }
     let mut child = process
         .spawn()
@@ -331,13 +355,11 @@ fn run_inner(
             .as_ref()
             .is_some_and(|flag| flag.load(Ordering::SeqCst))
         {
-            let _ = child.kill();
-            let _ = child.wait();
+            kill_process_group(&mut child);
             return Err("commande fournisseur annulée".to_string());
         }
         if started.elapsed() >= timeout {
-            let _ = child.kill();
-            let _ = child.wait();
+            kill_process_group(&mut child);
             return Err("commande fournisseur dépassant le délai autorisé".to_string());
         }
         match child.try_wait() {
@@ -346,8 +368,7 @@ fn run_inner(
                 Duration::from_millis(10).min(timeout.saturating_sub(started.elapsed())),
             ),
             Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
+                kill_process_group(&mut child);
                 return Err("impossible de vérifier l'état de la commande fournisseur".to_string());
             }
         }

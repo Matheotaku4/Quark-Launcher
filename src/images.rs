@@ -352,10 +352,21 @@ pub fn draw_cover_blend_to_background(
     let mut mesh = egui::Mesh::with_texture(texture.id());
     let clear = egui::Color32::from_white_alpha(0);
     let dense = egui::Color32::from_white_alpha(235);
-    mesh.colored_vertex(strip.left_top(), clear);
-    mesh.colored_vertex(strip.right_top(), clear);
-    mesh.colored_vertex(strip.left_bottom(), dense);
-    mesh.colored_vertex(strip.right_bottom(), dense);
+    // `Mesh::colored_vertex` refuse un maillage déjà associé à une texture
+    // (debug_assert) : on ajoute les sommets directement, l'UV est corrigée
+    // juste après.
+    for (pos, color) in [
+        (strip.left_top(), clear),
+        (strip.right_top(), clear),
+        (strip.left_bottom(), dense),
+        (strip.right_bottom(), dense),
+    ] {
+        mesh.vertices.push(egui::epaint::Vertex {
+            pos,
+            uv: egui::epaint::WHITE_UV,
+            color,
+        });
+    }
     // UV alignées sur la bande réellement couverte par la texture.
     let uvs = [(u0, v0), (u1, v0), (u0, v1), (u1, v1)];
     for (index, (u, v)) in uvs.iter().enumerate() {

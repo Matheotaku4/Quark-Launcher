@@ -16,6 +16,8 @@
 use crate::providers::SessionUnlock;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
@@ -25,6 +27,11 @@ pub const ENV_TOKEN: &str = "QUARK_ACHIEVEMENTS_TOKEN";
 /// Taille maximale d'une requête : un succès tient en quelques centaines
 /// d'octets, le plafond évite qu'un client local fasse grossir la mémoire.
 const MAX_REQUEST: usize = 16 * 1024;
+/// Connexions simultanées : un client local lent ne doit pas retarder les
+/// autres rapports, mais un scan ne doit pas non plus créer sans limite des
+/// threads et des descripteurs.
+const MAX_CONNECTIONS: usize = 32;
+const READ_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub struct Bridge {
     url: String,
@@ -59,17 +66,45 @@ pub fn start(
         .map_err(|_| "pont des succès sans adresse locale".to_string())?;
     let token = random_token()?;
     let url = format!("http://{addr}/achievements");
-    let expected = token.clone();
-    std::thread::spawn(move || {
-        for stream in listener.incoming() {
-            let Ok(mut stream) = stream else {
-                continue;
-            };
-            let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-            let _ = handle(&mut stream, &expected, &events);
-            wake();
-        }
-    });
+    let expected = Arc::new(token.clone());
+    let wake = Arc::new(wake);
+    let active = Arc::new(AtomicUsize::new(0));
+    std::thread::Builder::new()
+        .name("quark-achievements-bridge".into())
+        .spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else {
+                    continue;
+                };
+                // Chaque connexion a son propre thread : une requête lente ne
+                // bloque plus l'acceptation des suivantes.
+                if active.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
+                    active.fetch_sub(1, Ordering::SeqCst);
+                    let _ = stream.set_write_timeout(Some(READ_TIMEOUT));
+                    let _ = respond(
+                        &mut stream,
+                        "503 Service Unavailable",
+                        r#"{"ok":false,"error":"trop de connexions"}"#,
+                    );
+                    wake();
+                    continue;
+                }
+                let token = expected.clone();
+                let events = events.clone();
+                let wake = wake.clone();
+                let active = active.clone();
+                let _ = std::thread::Builder::new()
+                    .name("quark-achievement-report".into())
+                    .spawn(move || {
+                        let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
+                        let _ = stream.set_write_timeout(Some(READ_TIMEOUT));
+                        let _ = handle(&mut stream, token.as_str(), &events);
+                        wake();
+                        active.fetch_sub(1, Ordering::SeqCst);
+                    });
+            }
+        })
+        .map_err(|_| "impossible de démarrer le pont des succès".to_string())?;
     Ok(Bridge { url, token })
 }
 
@@ -316,6 +351,30 @@ mod tests {
         assert_eq!(report.unlock.name, "Premier pas");
         assert_eq!(report.unlock.at, 1_700_000_000);
         assert!(!report.unlock.synced);
+    }
+
+    #[test]
+    fn une_connexion_lente_ne_bloque_pas_un_autre_rapport() {
+        let (tx, rx) = channel();
+        let bridge = start(tx, || {}).unwrap();
+        let addr = bridge
+            .url()
+            .trim_start_matches("http://")
+            .split('/')
+            .next()
+            .unwrap()
+            .to_string();
+        // Ouvre une connexion sans envoyer d'en-têtes, comme un client local
+        // bloqué : le pont ne doit pas attendre son timeout pour accepter la
+        // requête suivante.
+        let _slow = TcpStream::connect(&addr).unwrap();
+        let body = r#"{"game":"quark-1","achievement":"ACH_FAST","name":"Rapide"}"#;
+        let response = call(&bridge, body, bridge.token());
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(2)).unwrap().unlock.key,
+            "ACH_FAST"
+        );
     }
 
     #[test]

@@ -12,8 +12,10 @@ mod fonts;
 mod game_search;
 mod icon;
 mod images;
+mod net;
 mod news;
 mod overlay;
+mod process;
 mod proton;
 mod protondb;
 mod providers;
@@ -116,7 +118,7 @@ fn cli(args: &[String]) -> Option<i32> {
                         match release.archive() {
                             Some(asset) => {
                                 let dir = config::data_dir().join("updates");
-                                match update::download(&client, asset, &dir) {
+                                match update::download(&client, &release, asset, &dir) {
                                     Ok(path) => {
                                         println!(
                                             "archive téléchargée : {} ({} octets)",

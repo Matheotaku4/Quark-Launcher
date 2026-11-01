@@ -226,8 +226,16 @@ impl QuarkApp {
                                             .unwrap_or(0);
                                         ui.horizontal_wrapped(|ui| {
                                             for (index, url) in urls.iter().enumerate() {
-                                                if artwork_choice(ui, &pal, url, index == selected)
-                                                    .clicked()
+                                                let preview = plan
+                                                    .preview(kind, index)
+                                                    .unwrap_or(url);
+                                                if artwork_choice(
+                                                    ui,
+                                                    &pal,
+                                                    preview,
+                                                    index == selected,
+                                                )
+                                                .clicked()
                                                 {
                                                     pick_artwork = Some((kind, index));
                                                 }
@@ -251,7 +259,7 @@ impl QuarkApp {
 
                     ui.add_space(14.0);
                     ui.horizontal(|ui| {
-                        if widgets::ghost_button(ui, "← Retour", &pal, Icon::None).clicked() {
+                        if widgets::ghost_button(ui, "Retour", &pal, Icon::ArrowLeft).clicked() {
                             back = true;
                         }
                         ui.add_space(10.0);
@@ -359,7 +367,7 @@ impl QuarkApp {
 
                     ui.add_space(14.0);
                     ui.horizontal(|ui| {
-                        if widgets::ghost_button(ui, "← Retour", &pal, Icon::None).clicked() {
+                        if widgets::ghost_button(ui, "Retour", &pal, Icon::ArrowLeft).clicked() {
                             back = true;
                         }
                         ui.add_space(10.0);
@@ -1786,6 +1794,32 @@ impl QuarkApp {
             return;
         }
         let pal = self.pal;
+        // La recherche de liaison appartient au jeu ouvert : on repart d'une
+        // requête propre en changeant de fiche, sans perdre les résultats du
+        // même jeu pendant l'édition.
+        if self.game_link_for.as_deref() != Some(game.id.as_str()) {
+            self.game_link_for = Some(game.id.clone());
+            self.game_link_query = game.name.clone();
+            self.game_link_results.clear();
+            self.game_link_warnings.clear();
+            self.game_link_loading = false;
+            self.game_link_rx = None;
+        }
+        // La fiche enregistrée reste la référence pendant toute l'édition : un
+        // « Lier » cliqué avant « Enregistrer » ne doit pas se comparer à lui-
+        // même et doit donc déclencher le téléchargement des images.
+        let (original_app_id, original_sgdb_id) = self
+            .lib
+            .get(&game.id)
+            .map(|saved| (saved.steam_app_id, saved.sgdb_id))
+            .unwrap_or((game.steam_app_id, game.sgdb_id));
+        let link_results = self.game_link_results.clone();
+        let link_warnings = self.game_link_warnings.clone();
+        let link_loading = self.game_link_loading;
+        let mut link_query = self.game_link_query.clone();
+        let mut search_link = false;
+        let mut link_hit: Option<crate::artwork::SearchHit> = None;
+        let mut unlink = false;
         let mut cancel = false;
         let mut save = false;
         let mut browse_exe = false;
@@ -1893,6 +1927,110 @@ impl QuarkApp {
                         refresh_meta = true;
                     }
                 });
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(
+                        "Lie ce jeu à une fiche Steam ou SteamGridDB pour récupérer sa jaquette, \
+                         sa bannière, son logo et son icône.",
+                    )
+                    .size(11.0)
+                    .color(pal.text_faint),
+                );
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    let field = (ui.available_width() - 128.0).max(180.0);
+                    ui.add(
+                        egui::TextEdit::singleline(&mut link_query)
+                            .hint_text("Rechercher un jeu (Steam, SteamGridDB)…")
+                            .desired_width(field),
+                    );
+                    if widgets::ghost_button(ui, "Rechercher", &pal, Icon::Search).clicked() {
+                        search_link = true;
+                    }
+                });
+                if link_loading {
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Spinner::new().size(12.0));
+                        ui.label(
+                            RichText::new("Recherche des fiches…")
+                                .size(11.0)
+                                .color(pal.text_dim),
+                        );
+                    });
+                }
+                if !link_results.is_empty() {
+                    ui.add_space(4.0);
+                    egui::ScrollArea::vertical()
+                        .id_salt("quark_game_link_results")
+                        .max_height(150.0)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            for hit in link_results.iter().take(6) {
+                                egui::Frame::new()
+                                    .fill(pal.surface)
+                                    .corner_radius(4.0)
+                                    .inner_margin(egui::Margin::symmetric(8, 4))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            let text_width =
+                                                (ui.available_width() - 68.0).max(140.0);
+                                            ui.allocate_ui_with_layout(
+                                                Vec2::new(text_width, 34.0),
+                                                Layout::top_down(Align::Min),
+                                                |ui| {
+                                                    ui.spacing_mut().item_spacing.y = 0.0;
+                                                    ui.horizontal(|ui| {
+                                                        ui.label(
+                                                            RichText::new(hit.source.label())
+                                                                .size(9.5)
+                                                                .strong()
+                                                                .color(pal.text_faint),
+                                                        );
+                                                        ui.add(
+                                                            egui::Label::new(
+                                                                RichText::new(&hit.title)
+                                                                    .size(12.0)
+                                                                    .color(pal.text),
+                                                            )
+                                                            .truncate(),
+                                                        );
+                                                    });
+                                                    if !hit.detail.is_empty() {
+                                                        ui.label(
+                                                            RichText::new(&hit.detail)
+                                                                .size(9.5)
+                                                                .color(pal.text_faint),
+                                                        );
+                                                    }
+                                                },
+                                            );
+                                            if widgets::ghost_button(ui, "Lier", &pal, Icon::Link)
+                                                .clicked()
+                                            {
+                                                link_hit = Some(hit.clone());
+                                            }
+                                        });
+                                    });
+                                ui.add_space(3.0);
+                            }
+                        });
+                }
+                if !link_warnings.is_empty() {
+                    ui.label(
+                        RichText::new(link_warnings.join(" · "))
+                            .size(10.0)
+                            .color(pal.text_faint),
+                    );
+                }
+                if game.steam_app_id.is_some() || game.sgdb_id.is_some() {
+                    if widgets::ghost_button(ui, "Délier cette fiche", &pal, Icon::Close)
+                        .clicked()
+                    {
+                        unlink = true;
+                    }
+                }
+
+
                 if !game.developer.is_empty() {
                     info_line(ui, "Développeur", &game.developer, &pal);
                 }
@@ -1902,7 +2040,6 @@ impl QuarkApp {
                 if !game.released.is_empty() {
                     info_line(ui, "Sortie", &game.released, &pal);
                 }
-
                 section(ui, "PROTON", &pal);
                 runtime_combo(
                     ui,
@@ -2048,7 +2185,6 @@ impl QuarkApp {
                     (None, None) => "aucune source (assets manuels)".to_string(),
                 };
                 ui.label(RichText::new(sources).size(12.0).color(pal.text_dim));
-
                 section(ui, "DONNÉES", &pal);
                 ui.label(
                     RichText::new(format!(
@@ -2106,6 +2242,26 @@ impl QuarkApp {
         if modal.should_close() {
             cancel = true;
         }
+        self.game_link_query = link_query;
+        if search_link {
+            let query = self.game_link_query.clone();
+            self.start_game_link_search(ctx, &game.id, &query);
+        }
+        if let Some(hit) = link_hit {
+            game.steam_app_id = hit.steam_app_id;
+            game.sgdb_id = hit.sgdb_id;
+            self.game_link_results.clear();
+            self.game_link_warnings.clear();
+            self.toast_info(
+                "Jeu lié : enregistre les paramètres pour récupérer les images",
+            );
+        }
+        if unlink {
+            game.steam_app_id = None;
+            game.sgdb_id = None;
+            self.game_link_results.clear();
+            self.game_link_warnings.clear();
+        }
 
         if refresh_meta {
             self.refresh_metadata(ctx, &game.id);
@@ -2128,11 +2284,34 @@ impl QuarkApp {
         }
         if save {
             let id = game.id.clone();
+            let ids_changed =
+                game.steam_app_id != original_app_id || game.sgdb_id != original_sgdb_id;
+            let hit = if ids_changed
+                && (game.steam_app_id.is_some() || game.sgdb_id.is_some())
+            {
+                Some(crate::artwork::SearchHit {
+                    source: if game.steam_app_id.is_some() {
+                        crate::artwork::Source::Steam
+                    } else {
+                        crate::artwork::Source::SteamGridDb
+                    },
+                    title: game.name.clone(),
+                    steam_app_id: game.steam_app_id,
+                    sgdb_id: game.sgdb_id,
+                    thumb: None,
+                    detail: String::new(),
+                })
+            } else {
+                None
+            };
             if let Some(slot) = self.lib.get_mut(&id) {
                 *slot = game;
             }
             self.touch();
             self.toast_info("Paramètres du jeu enregistrés");
+            if let Some(hit) = hit {
+                self.start_asset_job(ctx, &id, hit);
+            }
             return;
         }
         // Toujours ouvert : on remet le brouillon en place pour la frame suivante.
@@ -2336,7 +2515,10 @@ impl QuarkApp {
                                 } else {
                                     ui.horizontal_wrapped(|ui| {
                                         for (index, url) in urls.iter().enumerate() {
-                                            if artwork_choice(ui, &pal, url, false).clicked() {
+                                            let preview = plan
+                                                .preview(*asset, index)
+                                                .unwrap_or(url);
+                                            if artwork_choice(ui, &pal, preview, false).clicked() {
                                                 pick = Some((*asset, index));
                                             }
                                         }
@@ -3308,7 +3490,7 @@ impl QuarkApp {
 
         ui.add_space(12.0);
         ui.horizontal(|ui| {
-            if widgets::ghost_button(ui, "← Autre nom", pal, Icon::None).clicked() {
+            if widgets::ghost_button(ui, "Autre nom", pal, Icon::ArrowLeft).clicked() {
                 action.back = true;
             }
             ui.add_space(10.0);
@@ -3551,7 +3733,8 @@ impl QuarkApp {
                                                 ui.horizontal(|ui| {
                                                     ui.label(
                                                         RichText::new(&row.name)
-                                                            .size(12.0)
+                                                            .size(12.5)
+                                                            .strong()
                                                             .color(if row.unlocked {
                                                                 pal.text
                                                             } else {
@@ -3578,8 +3761,8 @@ impl QuarkApp {
                                                 if !row.description.is_empty() {
                                                     ui.label(
                                                         RichText::new(&row.description)
-                                                            .size(10.5)
-                                                            .color(pal.text_faint),
+                                                            .size(11.0)
+                                                            .color(pal.text_dim),
                                                     );
                                                 }
                                                 ui.horizontal(|ui| {

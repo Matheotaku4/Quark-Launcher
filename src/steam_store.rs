@@ -193,7 +193,7 @@ pub fn parse_most_played(json: &str) -> Result<Vec<(u32, u32)>, String> {
                 .unwrap_or(0);
             (app_id > 0).then_some((app_id, peak))
         })
-        .take(10)
+        .take(20)
         .collect())
 }
 
@@ -687,7 +687,7 @@ pub fn fetch_all(
         snapshot.sections.insert(
             insert_at,
             StoreSection {
-                title: "Populaires en ce moment".to_string(),
+                title: "Populaires sur Steam".to_string(),
                 items: popular,
             },
         );

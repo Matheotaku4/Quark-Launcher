@@ -313,6 +313,7 @@ pub fn parse_owned_csv(text: &str, fetched_at: i64) -> Result<Vec<ProviderGame>,
             title: title.to_string(),
             owned: true,
             install_path: None,
+            install_root: None,
             custom_save_paths: Vec::new(),
             cover_url: None,
             install_exe: None,
@@ -356,6 +357,7 @@ pub fn parse_owned_json(json: &str, fetched_at: i64) -> Result<Vec<ProviderGame>
             title: entry.app_title,
             owned: true,
             install_path: None,
+            install_root: None,
             custom_save_paths: Vec::new(),
             cover_url: None,
             install_exe: None,
@@ -409,6 +411,7 @@ pub fn parse_installed_json(json: &str, fetched_at: i64) -> Result<Vec<ProviderG
             },
             title: entry.title,
             owned: true,
+            install_root: entry.install_path.parent().map(std::path::Path::to_path_buf),
             install_path: Some(entry.install_path),
             custom_save_paths: Vec::new(),
             cover_url: None,
@@ -632,7 +635,12 @@ pub fn parse_achievements(text: &str) -> Result<AchievementInfo, String> {
         #[serde(default)]
         icon_url: Option<String>,
         #[serde(default)]
+        icon_link: Option<String>,
+        #[serde(default)]
         image: Option<String>,
+        /// Progression d'un succès à paliers (Legendary la publie en 0..1).
+        #[serde(default)]
+        progress: Option<f64>,
         /// Certaines versions de Legendary exposent le taux d'obtention ;
         /// les formes publiées varient, d'où la lecture tolérante.
         #[serde(default)]
@@ -643,25 +651,46 @@ pub fn parse_achievements(text: &str) -> Result<AchievementInfo, String> {
     #[derive(serde::Deserialize)]
     struct Raw {
         #[serde(default)]
-        total_achievements: u32,
+        total_achievements: Option<u32>,
         #[serde(default)]
-        user_unlocked: u32,
+        user_unlocked: Option<u32>,
         #[serde(default)]
-        completed: Vec<RawRow>,
+        completed: Option<Vec<RawRow>>,
         #[serde(default)]
-        in_progress: Vec<RawRow>,
+        in_progress: Option<Vec<RawRow>>,
         #[serde(default)]
-        uninitiated: Vec<RawRow>,
+        uninitiated: Option<Vec<RawRow>>,
         #[serde(default)]
-        hidden: Vec<RawRow>,
+        hidden: Option<Vec<RawRow>>,
     }
-    let start = text
-        .find('{')
-        .ok_or_else(|| "succès Epic illisibles".to_string())?;
-    let raw: Raw =
-        serde_json::from_str(&text[start..]).map_err(|_| "succès Epic illisibles".to_string())?;
+    // On repère une clé propre à la réponse avant de remonter à l'accolade :
+    // une ligne de journal peut contenir un autre objet JSON avant le résultat.
+    let marker = text
+        .find("\"total_achievements\"")
+        .or_else(|| text.find("\"completed\""))
+        .or_else(|| text.find("\"in_progress\""));
+    let start = marker
+        .and_then(|marker| text[..marker].rfind('{'))
+        .or_else(|| text.find('{'))
+        .ok_or_else(|| "réponse de Legendary illisible (aucun JSON)".to_string())?;
+    // Legendary peut ajouter une ligne de journal avant ou après le JSON ;
+    // `from_str` exigeait alors que l'objet occupe toute la fin de la sortie.
+    // On lit le premier objet complet et on ignore ce qui suit.
+    let mut stream = serde_json::Deserializer::from_str(&text[start..]).into_iter::<Raw>();
+    let raw = stream
+        .next()
+        .ok_or_else(|| "réponse de Legendary vide".to_string())?
+        .map_err(|_| "réponse de Legendary illisible (JSON invalide)".to_string())?;
     let mut rows = Vec::new();
-    for list in [raw.completed, raw.in_progress, raw.uninitiated, raw.hidden] {
+    for list in [
+        raw.completed,
+        raw.in_progress,
+        raw.uninitiated,
+        raw.hidden,
+    ]
+    .into_iter()
+    .flatten()
+    {
         for row in list {
             let key = row.name.trim().to_string();
             let name = row
@@ -675,9 +704,17 @@ pub fn parse_achievements(text: &str) -> Result<AchievementInfo, String> {
                 continue;
             }
             let icon_url = if row.unlocked {
-                row.icon.or(row.icon_url).or(row.image).or(row.icon_gray)
+                row.icon
+                    .or(row.icon_url)
+                    .or(row.icon_link)
+                    .or(row.image)
+                    .or(row.icon_gray)
             } else {
-                row.icon_gray.or(row.icon).or(row.icon_url).or(row.image)
+                row.icon_gray
+                    .or(row.icon)
+                    .or(row.icon_url)
+                    .or(row.icon_link)
+                    .or(row.image)
             }
             .map(|url| url.trim().to_string())
             .filter(|url| url.starts_with("https://") || url.starts_with("http://"));
@@ -687,7 +724,11 @@ pub fn parse_achievements(text: &str) -> Result<AchievementInfo, String> {
                 name,
                 description: row.description.unwrap_or_default().trim().to_string(),
                 unlocked: row.unlocked,
-                progress: if row.unlocked { 1.0 } else { 0.0 },
+                progress: if row.unlocked {
+                    1.0
+                } else {
+                    row.progress.unwrap_or(0.0).clamp(0.0, 1.0) as f32
+                },
                 session: false,
                 rarity: super::achievements::rarity_percent(
                     row.rarity.as_ref().or(row.percent.as_ref()),
@@ -697,12 +738,13 @@ pub fn parse_achievements(text: &str) -> Result<AchievementInfo, String> {
             });
         }
     }
-    if rows.is_empty() && raw.total_achievements == 0 {
+    let total = raw.total_achievements.unwrap_or(0);
+    if rows.is_empty() && total == 0 {
         return Err("ce jeu Epic ne publie pas de succès".to_string());
     }
     let mut info = AchievementInfo {
-        total: raw.total_achievements.max(rows.len() as u32),
-        unlocked: raw.user_unlocked,
+        total: total.max(rows.len() as u32),
+        unlocked: raw.user_unlocked.unwrap_or(0),
         rows,
     };
     if info.unlocked == 0 {
@@ -768,8 +810,7 @@ pub fn epic_playtime(artifact_id: &str) -> Result<u64, String> {
             response.status().as_u16()
         ));
     }
-    let body = response
-        .text()
+    let body = crate::net::text(response, crate::net::MAX_JSON, "temps de jeu Epic")
         .map_err(|_| "temps de jeu Epic illisible".to_string())?;
     parse_playtime(&body)
 }
@@ -840,6 +881,9 @@ pub fn merge_epic_with_verified_installs(
             }
             if game.install_exe.is_none() {
                 game.install_exe = previous.install_exe.clone();
+            }
+            if game.install_root.is_none() {
+                game.install_root = previous.install_root.clone();
             }
             if game.capabilities.achievements == CapabilityState::Unknown {
                 game.capabilities.achievements = previous.capabilities.achievements.clone();
@@ -1122,6 +1166,7 @@ Empty,,1.0,False\n";
             title: "Portal 2".into(),
             owned: true,
             install_path: None,
+            install_root: None,
             custom_save_paths: Vec::new(),
             cover_url: None,
             install_exe: None,
@@ -1138,6 +1183,7 @@ Empty,,1.0,False\n";
             title: "Old".into(),
             owned: true,
             install_path: None,
+            install_root: None,
             custom_save_paths: Vec::new(),
             cover_url: None,
             install_exe: None,
@@ -1167,6 +1213,7 @@ Empty,,1.0,False\n";
             title: "Example Game".into(),
             owned: true,
             install_path: Some(install_path.clone()),
+            install_root: None,
             custom_save_paths: Vec::new(),
             cover_url: None,
             install_exe: None,
@@ -1245,6 +1292,7 @@ Empty,,1.0,False\n";
             title: "Game".into(),
             owned: true,
             install_path: Some(old_path),
+            install_root: None,
             custom_save_paths: Vec::new(),
             cover_url: None,
             install_exe: None,
@@ -1319,6 +1367,23 @@ Empty,,1.0,False\n";
                 "--skip-dlcs"
             ]
         );
+    }
+
+    #[test]
+    fn les_succes_epic_tolerent_un_journal_apres_le_json_et_les_listes_nulles() {
+        let json = r#"[Core] INFO: using config directory
+        {"total_achievements": 1, "user_unlocked": 0, "completed": null,
+         "in_progress": null, "uninitiated": [
+            {"name": "ACH_ONE", "display_name": "Premier", "description": "Fini",
+             "icon_link": "https://cdn/ach.png", "progress": 0.5}
+         ], "hidden": null}
+        [Core] INFO: done"#;
+        let info = parse_achievements(json).unwrap();
+        assert_eq!(info.total, 1);
+        assert_eq!(info.rows[0].name, "Premier");
+        assert_eq!(info.rows[0].icon_url.as_deref(), Some("https://cdn/ach.png"));
+        assert_eq!(info.rows[0].progress, 0.5);
+        assert!(parse_achievements("pas de json").is_err());
     }
 
     #[test]

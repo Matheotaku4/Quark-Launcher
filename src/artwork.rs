@@ -349,6 +349,10 @@ fn sgdb_search(client: &Client, query: &str, s: &Settings) -> Result<Vec<SearchH
 struct SgdbAsset {
     #[serde(default)]
     url: String,
+    /// Vignette légère fournie par l'API : elle sert aux aperçus de l'interface,
+    /// tandis que `url` reste l'image pleine résolution téléchargée.
+    #[serde(default)]
+    thumb: String,
     #[serde(default)]
     upvotes: i64,
     #[serde(default)]
@@ -359,20 +363,38 @@ struct SgdbAsset {
 pub struct AssetPlan {
     /// Pour chaque type d'asset, les URL candidates par ordre de préférence.
     pub kinds: Vec<(AssetKind, Vec<String>)>,
+    /// Vignettes correspondantes, dans le même ordre que `kinds` (une par URL).
+    /// Elles évitent de décoder une bannière 1920×620 pour un aperçu de 132×76.
+    pub previews: Vec<(AssetKind, Vec<Option<String>>)>,
     pub warnings: Vec<String>,
 }
 
 impl AssetPlan {
     pub fn add(&mut self, kind: AssetKind, url: String) {
+        self.add_with_preview(kind, url, None);
+    }
+
+    pub fn add_with_preview(&mut self, kind: AssetKind, url: String, preview: Option<String>) {
         if url.trim().is_empty() {
             return;
         }
+        let preview = preview.filter(|thumb| {
+            thumb.starts_with("https://") || thumb.starts_with("http://")
+        });
         if let Some(entry) = self.kinds.iter_mut().find(|(k, _)| *k == kind) {
             if !entry.1.contains(&url) {
                 entry.1.push(url);
+                if let Some((_, previews)) = self.previews.iter_mut().find(|(k, _)| *k == kind) {
+                    previews.push(preview);
+                } else {
+                    let mut aligned = vec![None; entry.1.len() - 1];
+                    aligned.push(preview);
+                    self.previews.push((kind, aligned));
+                }
             }
         } else {
             self.kinds.push((kind, vec![url]));
+            self.previews.push((kind, vec![preview]));
         }
     }
 
@@ -384,12 +406,33 @@ impl AssetPlan {
             .unwrap_or(&[])
     }
 
+    /// Vignette de la proposition `index`, ou l'URL pleine taille en secours.
+    pub fn preview(&self, kind: AssetKind, index: usize) -> Option<&str> {
+        let url = self.candidates(kind).get(index)?;
+        self.previews
+            .iter()
+            .find(|(k, _)| *k == kind)
+            .and_then(|(_, previews)| previews.get(index))
+            .and_then(Option::as_deref)
+            .or(Some(url.as_str()))
+    }
+
+    fn preview_for(&self, kind: AssetKind, url: &str) -> Option<String> {
+        let index = self.candidates(kind).iter().position(|candidate| candidate == url)?;
+        self.previews
+            .iter()
+            .find(|(k, _)| *k == kind)
+            .and_then(|(_, previews)| previews.get(index))
+            .and_then(|preview| preview.clone())
+    }
+
     /// Même plan, mais avec l'artwork choisi à la main en premier pour chaque
     /// type : les autres propositions restent en secours si le téléchargement
     /// ou le format échoue.
     pub fn with_choices(&self, choices: &[(AssetKind, usize)]) -> AssetPlan {
         let mut out = AssetPlan {
             kinds: Vec::new(),
+            previews: Vec::new(),
             warnings: self.warnings.clone(),
         };
         for (kind, urls) in &self.kinds {
@@ -399,10 +442,10 @@ impl AssetPlan {
                 .map(|(_, index)| *index)
                 .unwrap_or(0);
             if let Some(url) = urls.get(index) {
-                out.add(*kind, url.clone());
+                out.add_with_preview(*kind, url.clone(), self.preview_for(*kind, url));
             }
             for url in urls {
-                out.add(*kind, url.clone());
+                out.add_with_preview(*kind, url.clone(), self.preview_for(*kind, url));
             }
         }
         out
@@ -414,6 +457,12 @@ impl AssetPlan {
         AssetPlan {
             kinds: self
                 .kinds
+                .iter()
+                .filter(|(asset, _)| *asset == kind)
+                .cloned()
+                .collect(),
+            previews: self
+                .previews
                 .iter()
                 .filter(|(asset, _)| *asset == kind)
                 .cloned()
@@ -443,8 +492,12 @@ pub fn build_plan(client: &Client, hit: &SearchHit, s: &Settings) -> AssetPlan {
             ] {
                 match sgdb_assets(client, key, route, id_kind, &id, kind == AssetKind::Cover) {
                     Ok(assets) if !assets.is_empty() => {
-                        for url in pick_sgdb(&assets) {
-                            plan.add(kind, url);
+                        for asset in pick_sgdb(&assets) {
+                            plan.add_with_preview(
+                                kind,
+                                asset.url.clone(),
+                                (!asset.thumb.trim().is_empty()).then(|| asset.thumb.clone()),
+                            );
                         }
                     }
                     Ok(_) => {}
@@ -632,10 +685,10 @@ fn steam_cdn(appid: u32, file: &str) -> Vec<String> {
 }
 
 /// Les artworks les mieux notés d'abord (SteamGridDB trie déjà par score).
-fn pick_sgdb(assets: &[SgdbAsset]) -> Vec<String> {
+fn pick_sgdb(assets: &[SgdbAsset]) -> Vec<SgdbAsset> {
     let mut list: Vec<&SgdbAsset> = assets.iter().filter(|a| !a.url.is_empty()).collect();
     list.sort_by_key(|a| -(a.upvotes - a.downvotes));
-    list.into_iter().map(|a| a.url.clone()).take(3).collect()
+    list.into_iter().take(3).cloned().collect()
 }
 
 fn sgdb_assets(
@@ -794,13 +847,13 @@ fn download_image(client: &Client, url: &str) -> Result<(Vec<u8>, &'static str),
         "jpg"
     };
 
-    let bytes = resp.bytes().map_err(|e| e.to_string())?;
+    let bytes = crate::net::bytes(resp, crate::net::MAX_IMAGE, "image")?;
     // Une icône 16×16 pèse quelques dizaines d'octets : un seuil plus haut la
     // ferait passer pour un fichier vide.
     if bytes.len() < 64 {
         return Err("fichier vide".to_string());
     }
-    Ok((bytes.to_vec(), ext))
+    Ok((bytes, ext))
 }
 
 /// Importe une image choisie sur le disque comme artwork du jeu : elle est
@@ -849,6 +902,34 @@ mod icon_tests {
         0x4C, 0x11, 0x00, 0x00, 0x00, 0x2F, 0x07, 0xC0, 0x01, 0x00, 0x07, 0x50, 0x94, 0x22, 0x17,
         0xA5, 0xFF, 0x81, 0x88, 0xE8, 0x7F, 0x00, 0x00,
     ];
+
+    #[test]
+    fn les_vignettes_suivent_leur_image_meme_apres_un_choix() {
+        let mut plan = AssetPlan::default();
+        plan.add_with_preview(
+            AssetKind::Cover,
+            "https://cdn/full-1.png".into(),
+            Some("https://cdn/thumb-1.png".into()),
+        );
+        plan.add_with_preview(
+            AssetKind::Cover,
+            "https://cdn/full-2.png".into(),
+            Some("https://cdn/thumb-2.png".into()),
+        );
+        assert_eq!(
+            plan.preview(AssetKind::Cover, 1),
+            Some("https://cdn/thumb-2.png")
+        );
+        let chosen = plan.with_choices(&[(AssetKind::Cover, 1)]);
+        assert_eq!(
+            chosen.candidates(AssetKind::Cover).first().map(String::as_str),
+            Some("https://cdn/full-2.png")
+        );
+        assert_eq!(
+            chosen.preview(AssetKind::Cover, 0),
+            Some("https://cdn/thumb-2.png")
+        );
+    }
 
     #[test]
     fn une_icone_webp_est_mesuree_par_decodage() {

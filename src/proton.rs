@@ -1,6 +1,7 @@
 //! Détection des runtimes Proton et construction de la commande de lancement.
 
 use crate::config::{AnticheatMode, Game, ProtonMode, Settings};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 /// Nature d'un runtime détecté.
@@ -250,7 +251,9 @@ fn numeric_weight(name: &str) -> u64 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LaunchSpec {
     pub program: PathBuf,
-    pub args: Vec<String>,
+    /// Arguments en `OsString` : un chemin Linux n'est pas forcément UTF-8 et
+    /// `display().to_string()` le remplacerait par U+FFFD.
+    pub args: Vec<OsString>,
     pub env: Vec<(String, String)>,
 }
 
@@ -258,7 +261,11 @@ impl LaunchSpec {
     /// Ligne de commande lisible : journal de session, bloc d'informations.
     pub fn command_line(&self) -> String {
         let mut words = vec![shell_quote(&self.program.display().to_string())];
-        words.extend(self.args.iter().map(|arg| shell_quote(arg)));
+        words.extend(
+            self.args
+                .iter()
+                .map(|arg| shell_quote(&arg.to_string_lossy())),
+        );
         words.join(" ")
     }
 }
@@ -362,14 +369,14 @@ fn shell_join(words: &[String]) -> String {
 /// obtient avec `gamescope -- gamemoderun %command%`.
 fn finalize(
     program: PathBuf,
-    args: Vec<String>,
+    args: Vec<OsString>,
     env: Vec<(String, String)>,
     opts: &crate::config::LaunchOptions,
     tools: Tools,
     extras: &mut Vec<String>,
     warnings: &mut Vec<String>,
 ) -> LaunchSpec {
-    let mut tokens: Vec<String> = std::iter::once(program.display().to_string())
+    let mut tokens: Vec<OsString> = std::iter::once(program.into_os_string())
         .chain(args)
         .collect();
     // Noms des enveloppes, de la plus interne à la plus externe.
@@ -377,7 +384,7 @@ fn finalize(
 
     if opts.gamemode {
         if tools.gamemoderun {
-            let mut wrapped = vec!["gamemoderun".to_string()];
+            let mut wrapped = vec![OsString::from("gamemoderun")];
             wrapped.extend(tokens);
             tokens = wrapped;
             wrappers.push("GameMode".to_string());
@@ -390,22 +397,22 @@ fn finalize(
         if tools.gamescope {
             let (width, height) = opts.gamescope_size();
             let mut wrapped = vec![
-                "gamescope".to_string(),
-                "-W".to_string(),
-                width.to_string(),
-                "-H".to_string(),
-                height.to_string(),
-                "-f".to_string(),
+                OsString::from("gamescope"),
+                OsString::from("-W"),
+                OsString::from(width.to_string()),
+                OsString::from("-H"),
+                OsString::from(height.to_string()),
+                OsString::from("-f"),
             ];
             if opts.gamescope_fsr {
-                wrapped.push("-F".to_string());
-                wrapped.push("fsr".to_string());
+                wrapped.push(OsString::from("-F"));
+                wrapped.push(OsString::from("fsr"));
             }
             if opts.gamescope_fps > 0 {
-                wrapped.push("--framerate-limit".to_string());
-                wrapped.push(opts.gamescope_fps.min(1000).to_string());
+                wrapped.push(OsString::from("--framerate-limit"));
+                wrapped.push(OsString::from(opts.gamescope_fps.min(1000).to_string()));
             }
-            wrapped.push("--".to_string());
+            wrapped.push(OsString::from("--"));
             wrapped.extend(tokens);
             tokens = wrapped;
             wrappers.push(if opts.gamescope_fsr {
@@ -425,9 +432,9 @@ fn finalize(
     let wrapper = opts.wrapper.trim();
     if wrapper.is_empty() {
         let mut iter = tokens.into_iter();
-        let program = iter.next().unwrap_or_default();
+        let program = iter.next().map(PathBuf::from).unwrap_or_default();
         return LaunchSpec {
-            program: PathBuf::from(program),
+            program,
             args: iter.collect(),
             env,
         };
@@ -435,7 +442,11 @@ fn finalize(
 
     // `%command%` remplacé par la commande complète, comme dans les options de
     // lancement Steam ; sans joker, la commande est préfixée.
-    let command = shell_join(&tokens);
+    let display_tokens: Vec<String> = tokens
+        .iter()
+        .map(|token| token.to_string_lossy().into_owned())
+        .collect();
+    let command = shell_join(&display_tokens);
     let line = if wrapper.contains("%command%") {
         wrapper.replace("%command%", &command)
     } else {
@@ -446,7 +457,7 @@ fn finalize(
     // les pipes ou les redirections.
     LaunchSpec {
         program: PathBuf::from("sh"),
-        args: vec!["-c".to_string(), line],
+        args: vec![OsString::from("-c"), OsString::from(line)],
         env,
     }
 }
@@ -587,15 +598,9 @@ pub fn resolve_with(
         if game.umu {
             warnings.push("umu-launcher ne sert qu'aux jeux Windows : lancement natif".to_string());
         }
-        let argv = std::iter::once(exe.display().to_string())
-            .chain(extra)
-            .collect::<Vec<String>>();
-        if argv.is_empty() {
-            return Err("Aucun exécutable défini pour ce jeu.".to_string());
-        }
         let spec = finalize(
-            PathBuf::from(&argv[0]),
-            argv[1..].to_vec(),
+            exe,
+            extra.into_iter().map(OsString::from).collect(),
             env,
             &game.launch,
             tools,
@@ -694,8 +699,8 @@ pub fn resolve_with(
                 runtime.dir().display().to_string(),
             ));
         }
-        let mut args = vec![exe.display().to_string()];
-        args.extend(extra);
+        let mut args = vec![exe.into_os_string()];
+        args.extend(extra.into_iter().map(OsString::from));
         let spec = finalize(
             PathBuf::from("umu-run"),
             args,
@@ -725,8 +730,8 @@ pub fn resolve_with(
         runtime.steam_root.display().to_string(),
     ));
 
-    let mut args = vec!["run".to_string(), exe.display().to_string()];
-    args.extend(extra);
+    let mut args = vec![OsString::from("run"), exe.into_os_string()];
+    args.extend(extra.into_iter().map(OsString::from));
     let spec = finalize(
         runtime.path.clone(),
         args,
@@ -827,24 +832,24 @@ mod tests {
             resolve_with(&game, &Settings::default(), &[], outils(true, true, false)).unwrap();
         // gamescope enveloppe gamemoderun, qui enveloppe le jeu.
         assert_eq!(resolu.spec.program, PathBuf::from("gamescope"));
-        let args: Vec<&str> = resolu.spec.args.iter().map(String::as_str).collect();
-        assert_eq!(
-            &args[..],
-            [
-                "-W",
-                "2560",
-                "-H",
-                "1440",
-                "-f",
-                "-F",
-                "fsr",
-                "--framerate-limit",
-                "60",
-                "--",
-                "gamemoderun",
-                game.exe.as_str()
-            ]
-        );
+        let expected: Vec<OsString> = [
+            "-W",
+            "2560",
+            "-H",
+            "1440",
+            "-f",
+            "-F",
+            "fsr",
+            "--framerate-limit",
+            "60",
+            "--",
+            "gamemoderun",
+            game.exe.as_str(),
+        ]
+        .into_iter()
+        .map(OsString::from)
+        .collect();
+        assert_eq!(resolu.spec.args, expected);
         assert_eq!(resolu.extras, ["gamescope 2560×1440 FSR", "GameMode"]);
         assert!(resolu.warnings.is_empty());
         assert_eq!(
@@ -863,13 +868,19 @@ mod tests {
         let resolu = resolve_with(&game, &Settings::default(), &[], Tools::default()).unwrap();
         // Une ligne de wrapper passe par sh, comme dans Steam.
         assert_eq!(resolu.spec.program, PathBuf::from("sh"));
-        assert_eq!(resolu.spec.args[0], "-c");
-        assert_eq!(resolu.spec.args[1], format!("env FOO=1 {}", game.exe));
+        assert_eq!(resolu.spec.args[0], OsString::from("-c"));
+        assert_eq!(
+            resolu.spec.args[1],
+            OsString::from(format!("env FOO=1 {}", game.exe))
+        );
 
         // Sans joker, la commande est préfixée par le wrapper.
         game.launch.wrapper = "prime-run".to_string();
         let resolu = resolve_with(&game, &Settings::default(), &[], Tools::default()).unwrap();
-        assert_eq!(resolu.spec.args[1], format!("prime-run {}", game.exe));
+        assert_eq!(
+            resolu.spec.args[1],
+            OsString::from(format!("prime-run {}", game.exe))
+        );
         assert!(resolu.extras.contains(&"wrapper".to_string()));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -954,7 +965,7 @@ mod tests {
         .unwrap();
         assert_eq!(resolu.kind, LaunchKind::Umu);
         assert_eq!(resolu.spec.program, PathBuf::from("umu-run"));
-        assert_eq!(resolu.spec.args, [game.exe.clone()]);
+        assert_eq!(resolu.spec.args, [OsString::from(game.exe.clone())]);
         // umu gère le préfixe et le GAMEID ; le Proton choisi lui est transmis.
         assert_eq!(
             valeur(&resolu.spec.env, "WINEPREFIX"),
@@ -1171,4 +1182,26 @@ mod tests {
             ["PROTON_LOG", "WINEDEBUG"]
         );
     }
+    #[cfg(unix)]
+    #[test]
+    fn un_chemin_non_utf8_reste_intact_sans_wrapper() {
+        use std::os::unix::ffi::OsStringExt as _;
+        let program = PathBuf::from(OsString::from_vec(
+            b"/tmp/jeu-\xff/bin/game".to_vec(),
+        ));
+        let mut extras = Vec::new();
+        let mut warnings = Vec::new();
+        let spec = finalize(
+            program.clone(),
+            Vec::new(),
+            Vec::new(),
+            &crate::config::LaunchOptions::default(),
+            Tools::default(),
+            &mut extras,
+            &mut warnings,
+        );
+        assert_eq!(spec.program, program);
+        assert!(spec.args.is_empty());
+    }
+
 }

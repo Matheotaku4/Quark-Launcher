@@ -18,7 +18,8 @@ use eframe::egui::{
 };
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, TryRecvError, channel as mpsc_channel};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel as mpsc_channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -47,6 +48,8 @@ pub struct Notice {
 
 pub struct Overlay {
     pub capture_rx: Option<Receiver<CaptureEvent>>,
+    hotkey_stop: Option<Sender<()>>,
+    hotkey_thread: Option<std::thread::JoinHandle<()>>,
     shared: Arc<Mutex<Option<Target>>>,
     pub target: Option<Target>,
     pub notices: VecDeque<Notice>,
@@ -58,6 +61,8 @@ impl Default for Overlay {
     fn default() -> Self {
         Self {
             capture_rx: None,
+            hotkey_stop: None,
+            hotkey_thread: None,
             shared: Arc::new(Mutex::new(None)),
             target: None,
             notices: VecDeque::new(),
@@ -67,12 +72,25 @@ impl Default for Overlay {
     }
 }
 
+impl Drop for Overlay {
+    fn drop(&mut self) {
+        self.stop_hotkey();
+    }
+}
+
 impl Overlay {
     /// Déclare le jeu en cours. Le thread du raccourci lit cette cible au
     /// moment de l'appui ; il est démarré une seule fois.
     pub fn set_game(&mut self, target: Target, screenshot_key: &str) {
-        if self.capture_rx.is_none() || self.hotkey_key != screenshot_key {
-            self.capture_rx = start_hotkey(screenshot_key, self.shared.clone());
+        if self.hotkey_key != screenshot_key {
+            self.stop_hotkey();
+            if let Some((rx, stop, thread)) =
+                start_hotkey(screenshot_key, self.shared.clone())
+            {
+                self.capture_rx = Some(rx);
+                self.hotkey_stop = Some(stop);
+                self.hotkey_thread = Some(thread);
+            }
             self.hotkey_key = screenshot_key.to_string();
         }
         if let Ok(mut shared) = self.shared.lock() {
@@ -82,10 +100,24 @@ impl Overlay {
     }
 
     pub fn clear_game(&mut self) {
+        // Sans cela, F12 (ou la touche choisie) restait prise globalement
+        // après la fin du jeu, et chaque changement de touche fuyait un thread.
+        self.stop_hotkey();
+        self.hotkey_key.clear();
         if let Ok(mut shared) = self.shared.lock() {
             *shared = None;
         }
         self.target = None;
+    }
+
+    fn stop_hotkey(&mut self) {
+        if let Some(stop) = self.hotkey_stop.take() {
+            let _ = stop.send(());
+        }
+        if let Some(thread) = self.hotkey_thread.take() {
+            let _ = thread.join();
+        }
+        self.capture_rx = None;
     }
 
     /// Récupère les captures terminées et les transforme en événements pour
@@ -345,26 +377,46 @@ fn screenshot_path(target: &Target) -> PathBuf {
 /// raccourci est repris à chaque appui, et la cible est relue dans la mémoire
 /// partagée. Sans serveur X (Wayland pur, session distante), il ne se passe
 /// rien et l'overlay reste utilisable pour les succès.
-fn start_hotkey(key: &str, shared: Arc<Mutex<Option<Target>>>) -> Option<Receiver<CaptureEvent>> {
+fn start_hotkey(
+    key: &str,
+    shared: Arc<Mutex<Option<Target>>>,
+) -> Option<(Receiver<CaptureEvent>, Sender<()>, std::thread::JoinHandle<()>)> {
     let (tx, rx) = mpsc_channel();
+    let (stop_tx, stop_rx) = mpsc_channel();
     let key = key.trim().to_string();
-    std::thread::Builder::new()
+    // Mémorise le thread principal : le gestionnaire d'erreur d'I/O X11 ne
+    // doit interrompre que le thread auxiliaire, pas toute l'application.
+    MAIN_THREAD.store(unsafe { libc::pthread_self() } as usize, Ordering::SeqCst);
+    let thread = std::thread::Builder::new()
         .name("quark-hotkey".into())
         .spawn(move || {
-            if let Err(error) = hotkey_loop(&key, shared, tx) {
+            if let Err(error) = hotkey_loop(&key, shared, tx, stop_rx) {
                 if std::env::var_os("QUARK_DEBUG_HOTKEY").is_some() {
                     eprintln!("[quark] overlay : {error}");
                 }
             }
         })
         .ok()?;
-    Some(rx)
+    Some((rx, stop_tx, thread))
+}
+
+static MAIN_THREAD: AtomicUsize = AtomicUsize::new(0);
+
+unsafe extern "C" fn x_io_error(_display: *mut x11_dl::xlib::Display) -> i32 {
+    // Xlib termine normalement tout le processus si le gestionnaire retourne.
+    // Depuis le thread du raccourci, on termine seulement ce thread : la
+    // fenêtre et l'autosauvegarde continuent.
+    if unsafe { libc::pthread_self() } as usize != MAIN_THREAD.load(Ordering::SeqCst) {
+        unsafe { libc::pthread_exit(std::ptr::null_mut()) };
+    }
+    0
 }
 
 fn hotkey_loop(
     key: &str,
     shared: Arc<Mutex<Option<Target>>>,
-    tx: std::sync::mpsc::Sender<CaptureEvent>,
+    tx: Sender<CaptureEvent>,
+    stop: Receiver<()>,
 ) -> Result<(), String> {
     use x11_dl::xlib;
     let xlib = xlib::Xlib::open().map_err(|_| "X11 indisponible".to_string())?;
@@ -372,7 +424,10 @@ fn hotkey_loop(
     if display.is_null() {
         return Err("connexion X11 impossible".to_string());
     }
-    unsafe { (xlib.XSetErrorHandler)(Some(ignore_x_error)) };
+    unsafe {
+        (xlib.XSetErrorHandler)(Some(ignore_x_error));
+        (xlib.XSetIOErrorHandler)(Some(x_io_error));
+    }
     let root = unsafe { (xlib.XDefaultRootWindow)(display) };
     let (keycode, keysym) = resolve_key(&xlib, display, key);
     if keycode == 0 {
@@ -404,34 +459,54 @@ fn hotkey_loop(
 
     let mut event: xlib::XEvent = unsafe { std::mem::zeroed() };
     let mut last_capture: Option<Instant> = None;
-    loop {
-        unsafe { (xlib.XNextEvent)(display, &mut event) };
-        let kind = unsafe { event.type_ };
-        let pressed = unsafe { event.key.keycode } as i32;
-        if kind == xlib::KeyPress && pressed == keycode as i32 {
-            // La répétition automatique du clavier envoie une rafale de
-            // KeyPress : une capture par seconde suffit.
-            if last_capture.is_some_and(|last| last.elapsed() < Duration::from_millis(700)) {
-                continue;
-            }
-            last_capture = Some(Instant::now());
-            let target = shared.lock().ok().and_then(|guard| guard.clone());
-            let Some(target) = target else {
-                continue;
-            };
-            let sender = tx.clone();
-            std::thread::spawn(move || {
-                let path = screenshot_path(&target);
-                if capture_screen(&path).is_ok() {
-                    let _ = sender.send(CaptureEvent {
-                        path,
-                        game_name: target.name.clone(),
-                        provider: target.provider,
-                    });
+    // Boucle non bloquante : `XNextEvent` ne permettait ni arrêt ni fermeture
+    // propre du Display.
+    while stop.try_recv().is_err() {
+        while unsafe { (xlib.XPending)(display) } > 0 {
+            unsafe { (xlib.XNextEvent)(display, &mut event) };
+            let kind = unsafe { event.type_ };
+            let pressed = unsafe { event.key.keycode } as i32;
+            if kind == xlib::KeyPress && pressed == keycode as i32 {
+                // La répétition automatique du clavier envoie une rafale de
+                // KeyPress : une capture par seconde suffit.
+                if last_capture.is_some_and(|last| last.elapsed() < Duration::from_millis(700)) {
+                    continue;
                 }
-            });
+                last_capture = Some(Instant::now());
+                let target = shared.lock().ok().and_then(|guard| guard.clone());
+                let Some(target) = target else {
+                    continue;
+                };
+                let sender = tx.clone();
+                std::thread::spawn(move || {
+                    let path = screenshot_path(&target);
+                    if capture_screen(&path).is_ok() {
+                        let _ = sender.send(CaptureEvent {
+                            path,
+                            game_name: target.name.clone(),
+                            provider: target.provider,
+                        });
+                    }
+                });
+            }
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    for modifiers in [
+        0,
+        xlib::LockMask,
+        xlib::Mod2Mask,
+        xlib::LockMask | xlib::Mod2Mask,
+    ] {
+        unsafe {
+            (xlib.XUngrabKey)(display, keycode as i32, modifiers, root);
         }
     }
+    unsafe {
+        (xlib.XSync)(display, 0);
+        (xlib.XCloseDisplay)(display);
+    }
+    Ok(())
 }
 
 fn resolve_key(
@@ -596,12 +671,13 @@ pub fn play_chime() {
             vec!["-f".to_string(), path.display().to_string()],
         ),
     ] {
-        let spawned = std::process::Command::new(program)
+        let mut command = std::process::Command::new(program);
+        command
             .args(&args)
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn();
-        if spawned.is_ok() {
+            .stderr(std::process::Stdio::null());
+        if crate::process::spawn_and_reap(&mut command).is_ok() {
             return;
         }
     }
@@ -660,11 +736,13 @@ fn chime_samples() -> Vec<i16> {
 
 /// Notification système discrète, en complément de l'overlay.
 pub fn desktop_notification(summary: &str, body: &str) {
-    let _ = std::process::Command::new("notify-send")
+    let mut command = std::process::Command::new("notify-send");
+    command
         .args(["-a", "Quark", summary, body])
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
+        .stderr(std::process::Stdio::null());
+    let _ = crate::process::spawn_and_reap(&mut command);
 }
 
 #[cfg(test)]

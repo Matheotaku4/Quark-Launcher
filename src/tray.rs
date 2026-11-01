@@ -162,31 +162,81 @@ pub fn lock_gui() -> Option<std::fs::File> {
     lock("gui.lock")
 }
 
-fn alive_pid(path: &Path) -> Option<u32> {
+/// Démarrage du processus depuis le boot, lu dans `/proc/<pid>/stat`.
+fn process_start_time(pid: u32) -> Option<u64> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // Le nom (`comm`) peut contenir des espaces et des parenthèses : on repart
+    // après la dernière `)`.
+    let rest = stat.rsplit_once(')')?.1;
+    rest.split_whitespace().nth(19)?.parse().ok()
+}
+
+fn pid_file_contents() -> String {
+    let pid = std::process::id();
+    match process_start_time(pid) {
+        Some(start) => format!("{pid} {start}"),
+        None => pid.to_string(),
+    }
+}
+
+fn pid_belongs_to_quark(pid: u32, helper: bool) -> bool {
+    let Ok(exe) = std::fs::read_link(format!("/proc/{pid}/exe")) else {
+        return false;
+    };
+    let ours = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.canonicalize().ok());
+    if ours.as_deref() != Some(exe.as_path()) {
+        return false;
+    }
+    // La fenêtre et l'icône utilisent le même binaire : la ligne de commande
+    // distingue les deux.
+    let cmdline = std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+    let is_helper = cmdline
+        .split(|byte| *byte == 0)
+        .any(|arg| arg == crate::tray::HELPER_ARG.as_bytes());
+    is_helper == helper
+}
+
+fn alive_pid(path: &Path, helper: bool) -> Option<u32> {
     let text = std::fs::read_to_string(path).ok()?;
-    let pid: i32 = text.trim().parse().ok()?;
+    let mut parts = text.split_whitespace();
+    let pid: i32 = parts.next()?.parse().ok()?;
+    let recorded_start: Option<u64> = parts.next().and_then(|value| value.parse().ok());
     if pid <= 0 {
+        let _ = std::fs::remove_file(path);
         return None;
     }
+    let pid = pid as u32;
     // `kill(pid, 0)` n'envoie aucun signal : il demande seulement si le
     // processus existe encore.
-    (unsafe { libc::kill(pid, 0) } == 0).then_some(pid as u32)
+    let alive = unsafe { libc::kill(pid as i32, 0) } == 0
+        && pid_belongs_to_quark(pid, helper)
+        && recorded_start
+            .map(|start| process_start_time(pid) == Some(start))
+            .unwrap_or(true);
+    if !alive {
+        // PID réutilisé, binaire remplacé ou fichier périmé : on le retire.
+        let _ = std::fs::remove_file(path);
+        return None;
+    }
+    Some(pid)
 }
 
 /// PID du processus « icône seule », s'il tourne encore.
 pub fn helper_pid() -> Option<u32> {
-    alive_pid(&tray_pid_path())
+    alive_pid(&tray_pid_path(), true)
 }
 
 /// PID de la fenêtre Quark ouverte, s'il y en a une.
 pub fn gui_pid() -> Option<u32> {
-    alive_pid(&gui_pid_path())
+    alive_pid(&gui_pid_path(), false)
 }
 
 /// Inscrit la fenêtre courante : l'icône saura qu'elle n'a rien à relancer.
 pub fn write_gui_pid() {
     let _ = std::fs::create_dir_all(config::data_dir());
-    let _ = std::fs::write(gui_pid_path(), std::process::id().to_string());
+    let _ = std::fs::write(gui_pid_path(), pid_file_contents());
 }
 
 pub fn clear_gui_pid() {
@@ -204,12 +254,13 @@ pub fn ensure_helper() -> Result<u32, String> {
     let _ = std::fs::create_dir_all(config::data_dir());
     // Un pidfile périmé ferait croire à une icône vivante.
     let _ = std::fs::remove_file(tray_pid_path());
-    std::process::Command::new(exe)
+    let mut command = std::process::Command::new(exe);
+    command
         .arg(HELPER_ARG)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
+        .stderr(std::process::Stdio::null());
+    crate::process::spawn_and_reap(&mut command)
         .map_err(|err| format!("démarrage de l'icône : {err}"))?;
     // Le processus doit s'enregistrer sur D-Bus avant que l'on ferme la
     // fenêtre : sans cela, une icône qui échoue laisserait Quark fermé sans
@@ -242,11 +293,12 @@ fn spawn_gui() {
     let Ok(exe) = std::env::current_exe() else {
         return;
     };
-    let _ = std::process::Command::new(exe)
+    let mut command = std::process::Command::new(exe);
+    command
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
+        .stderr(std::process::Stdio::null());
+    let _ = crate::process::spawn_and_reap(&mut command);
 }
 
 // ---------------------------------------------------------------------------
@@ -267,7 +319,7 @@ pub fn run_helper() -> i32 {
         }
     };
     let pid_path = tray_pid_path();
-    let _ = std::fs::write(&pid_path, std::process::id().to_string());
+    let _ = std::fs::write(&pid_path, pid_file_contents());
 
     loop {
         if tray.take_show() && gui_pid().is_none() {

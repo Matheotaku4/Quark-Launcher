@@ -101,6 +101,24 @@ pub const HELP: &str = "\
 
 /// Construit l'interface, la fait vivre quelques images, puis écrit le PNG.
 pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
+    // `--demo` ne doit ni lire les identifiants réels ni écrire dans la
+    // configuration de l'utilisateur : tout le rendu vit dans un dossier
+    // temporaire, supprimé à la fin.
+    let demo_root = opts.demo.then(|| {
+        std::env::temp_dir().join(format!(
+            "quark-demo-{}-{}",
+            std::process::id(),
+            crate::config::now_ts()
+        ))
+    });
+    if let Some(root) = &demo_root {
+        let _ = std::fs::create_dir_all(root);
+        // Ces variables sont lues par `config_dir()` / `data_dir()`.
+        unsafe {
+            std::env::set_var("QUARK_CONFIG_DIR", root.join("config"));
+            std::env::set_var("QUARK_DATA_DIR", root.join("data"));
+        }
+    }
     let size = Vec2::new(opts.size.x.max(320.0), opts.size.y.max(240.0));
     let scale = opts.scale.clamp(0.5, 4.0);
     let ctx = egui::Context::default();
@@ -112,6 +130,7 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
 
     let mut app = QuarkApp::new(&ctx);
     if opts.demo {
+        app.snapshot_mode = true;
         app.lib = demo_library()?;
         if let Some(count) = opts.demo_count {
             let source = app
@@ -145,6 +164,9 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
                     install_path: Some(std::path::PathBuf::from(
                         "/home/demo/.steam/steamapps/common/Portal 2",
                     )),
+                    install_root: Some(std::path::PathBuf::from(
+                        "/home/demo/.steam/steamapps/common",
+                    )),
                     custom_save_paths: Vec::new(),
                     cover_url: Some(crate::providers::steam::cover_url(620)),
                     install_exe: None,
@@ -161,6 +183,7 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
                     title: "Portal".into(),
                     owned: true,
                     install_path: None,
+                    install_root: None,
                     custom_save_paths: Vec::new(),
                     cover_url: Some(crate::providers::steam::cover_url(400)),
                     install_exe: None,
@@ -183,6 +206,7 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
                     title: app.lib.games[0].name.clone(),
                     owned: true,
                     install_path: None,
+                    install_root: None,
                     custom_save_paths: Vec::new(),
                     cover_url: None,
                     install_exe: None,
@@ -286,6 +310,7 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
                             title: source.0.clone(),
                             owned: true,
                             install_path: None,
+                            install_root: None,
                             custom_save_paths: Vec::new(),
                             cover_url: None,
                             install_exe: None,
@@ -480,6 +505,9 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
     }
 
     save_png(&opts.out, width, height, &framebuffer)?;
+    if let Some(root) = demo_root {
+        let _ = std::fs::remove_dir_all(root);
+    }
     println!(
         "Rendu {}×{} ({} image(s)) -> {}",
         width,
@@ -768,6 +796,26 @@ fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
             game.launch.prime = true;
             game.launch.wrapper = "env DXVK_HUD=0 %command%".to_string();
             game.proton_log = true;
+            app.game_link_for = Some(game.id.clone());
+            app.game_link_query = game.name.clone();
+            app.game_link_results = vec![
+                SearchHit {
+                    source: Source::Steam,
+                    title: "The Witcher 3: Wild Hunt".to_string(),
+                    steam_app_id: Some(292030),
+                    sgdb_id: None,
+                    thumb: None,
+                    detail: "AppID 292030 · Windows".to_string(),
+                },
+                SearchHit {
+                    source: Source::SteamGridDb,
+                    title: "The Witcher 3: Wild Hunt - Complete Edition".to_string(),
+                    steam_app_id: None,
+                    sgdb_id: Some(4242),
+                    thumb: None,
+                    detail: "SteamGridDB #4242 · vérifié".to_string(),
+                },
+            ];
             app.editing = Some(game);
         }
         "logs" => {
@@ -898,6 +946,7 @@ MangoHud: initialised (vulkan layer)\n\
             }
             app.add.artwork.plan = Some(AssetPlan {
                 kinds,
+                previews: Vec::new(),
                 warnings: Vec::new(),
             });
         }
@@ -1030,6 +1079,7 @@ fn mark_running(app: &mut QuarkApp) {
                 prefix: None,
                 wineserver: None,
                 stopping: None,
+                kill_sent: false,
                 save_identity: None,
             },
         );
@@ -1356,6 +1406,7 @@ fn demo_library() -> Result<Library, String> {
         games,
         settings,
         provider_library: crate::providers::ProviderLibrary::default(),
+        load_error: None,
     })
 }
 

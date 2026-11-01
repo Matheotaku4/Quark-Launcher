@@ -1,3 +1,78 @@
+## Quark 1.0.9 — icônes Lucide, fiches Steam liées et robustesse
+
+- **Icônes Lucide** : les symboles dessinés à la main sont remplacés par la police d'icônes
+  Lucide embarquée (`assets/fonts/lucide.ttf`, licence ISC). Plus, grille, liste, dossier,
+  téléchargement, réglages, recherche, lien et flèches gardent la même taille et restent nets
+  avec Archivo.
+- **Défilement plus rapide** : la molette et le pavé tactile défilent environ un tiers plus
+  vite qu'avec les réglages par défaut d'egui, sans modifier les autres gestes.
+- **Installation GOG retrouvée** : gogdl peut créer un dossier dont le nom diffère du
+  `folder_name` annoncé. Quark cherche désormais le manifeste `goggame-<id>.info` dans le
+  dossier choisi et ses sous-dossiers, au lieu de déclarer l'installation non confirmée.
+  L'erreur « installation terminée sans dossier de jeu » ne doit plus apparaître quand le jeu
+  est bien présent.
+- **Doublons GOG « Amazon Prime »** : les éditions dont le titre se termine par
+  « Amazon Prime », « + Amazon Prime » ou « Prime Gaming » sont nettoyées et fusionnées avec
+  la fiche normale, en gardant l'identifiant GOG de base et l'état d'installation suivi.
+- **Succès Epic lisibles** : `legendary achievements --json` peut ajouter des lignes de
+  journal autour du JSON et renvoyer des listes `null`. Le parseur lit le premier objet
+  complet, tolère ces formes, lit les icônes (`icon_link`) et la progression à paliers
+  (`progress`) des succès Epic, et affiche des noms et descriptions un peu plus grands et
+  plus contrastés dans la fiche et dans « Mes jeux ».
+- **Aperçus SteamGridDB** : les propositions utilisent maintenant la vignette `thumb` de
+  l'API v2 au lieu de décoder la bannière pleine résolution pour une tuile de 132×76. Les
+  aperçus s'affichent plus vite et échouent beaucoup moins souvent ; l'image finale reste la
+  version pleine taille.
+- **Jeux populaires** : la section « Populaires sur Steam » passe à 20 jeux. SteamDB ne
+  fournit pas d'API publique et bloque les requêtes automatisées ; Quark utilise donc le
+  classement officiel `ISteamChartsService/GetMostPlayedGames` de Steam, avec les pics de
+  joueurs.
+- **Lier une fiche depuis les paramètres** : pour un jeu sans source Steam/SteamGridDB, la
+  section **Fiche Steam** propose une recherche. Un résultat lié puis enregistré récupère la
+  jaquette, la bannière, le logo et l'icône ; un bouton permet aussi de délier la fiche.
+- **Bibliothèque protégée** (issues #1, #2, #18) : une configuration illisible ou inaccessible
+  n'est plus remplacée par une bibliothèque vide. Quark crée une copie horodatée unique, passe
+  en lecture seule et affiche un bandeau persistant ; une sauvegarde échouée garde les
+  modifications en attente et réessaie avec un délai croissant. Les écritures sont atomiques
+  (`fsync` + renommage), y compris pour `session-achievements.json`, qui n'est plus écrasé
+  quand il est corrompu.
+- **Processus et sessions** (issues #6, #7, #8, #9, #12) : l'arrêt d'un jeu est idempotent,
+  continue l'escalade vers `SIGKILL` même si le processus chef est déjà mort, et vérifie le
+  groupe avant d'envoyer un signal. Un PID n'est reconnu comme le jeu que si l'exécutable, la
+  ligne de commande et l'heure de démarrage correspondent, ce qui évite de tuer un processus
+  qui a réutilisé son numéro. Les commandes Epic/GOG ont leur propre groupe de processus, et
+  tous les processus auxiliaires (notifications, son, ouverture de dossier, navigateur) sont
+  récoltés pour éviter les zombies.
+- **Pont des succès** (issues #3, #21) : chaque connexion est traitée dans son thread avec une
+  limite de 32 connexions et des timeouts courts ; une connexion locale lente ne bloque plus
+  les rapports. Un envoi GOG ne marque désormais que le succès réellement confirmé, pas tous
+  ceux de la session.
+- **Chemins et suppression** (issues #13, #14, #20) : l'exécutable Steam est choisi par
+  correspondance avec le titre et `installdir`, pas par sa taille ; `installdir` ne peut plus
+  sortir de `steamapps/common`. La désinstallation exige une racine d'installation connue et
+  refuse les liens symboliques ou les chemins hors racine. Les chemins non UTF-8 sont conservés
+  jusqu'à `Command` au lieu de passer par `display().to_string()`.
+- **Sauvegardes Ludusavi** (issues #15, #16) : les destinations de restauration sont limitées
+  aux dossiers du jeu, les liens symboliques (même cassés) sont refusés et `$HOME` n'est plus
+  une racine autorisée. Retirer le dernier dossier personnalisé le supprime aussi de la
+  configuration Ludusavi ; deux installations du même titre ne partagent plus la même entrée.
+- **Réseau et mise à jour** (issues #10, #11) : les corps HTTP (images, succès, actualités,
+  recherche, GitHub) sont lus avec une limite pendant le streaming. Les archives de mise à
+  jour sont plafonnées, comparées à leur taille annoncée et vérifiées par la somme SHA-256
+  publiée ; une archive invalide est supprimée.
+- **X11 et démo** (issues #5, #17, #19) : le raccourci de capture est relâché et son thread X11
+  arrêté quand le jeu s'arrête ou quand la touche change. Une perte de connexion X11 depuis ce
+  thread ne termine plus tout le launcher. `--ui --demo` utilise désormais une configuration et
+  des données temporaires, sans lire ni écrire la bibliothèque réelle.
+- **Journaux de session** (issue #4) : les journaux sont créés en `0600`, ne contiennent plus
+  les valeurs des variables d'environnement ni la ligne de commande complète, et sont plafonnés
+  à 4 Mio par session.
+- **Vérifications** : `cargo test --offline` (235 tests) et
+  `cargo build --release --locked --offline` passent. Les écrans avec icônes Lucide, la
+  recherche de liaison et le rendu `--demo` isolé ont été contrôlés hors écran. Les comptes
+  Epic/GOG réels et l'API SteamGridDB avec une clé personnelle ne sont pas disponibles dans
+  cet environnement.
+
 ## Quark 1.0.8 — Mes jeux fluide, téléchargements simultanés et Archivo
 
 - **Cartes de « Mes jeux » réparées** : le pied de carte utilisait un `scope_builder`

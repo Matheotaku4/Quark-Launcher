@@ -61,12 +61,16 @@ with save snapshots through Ludusavi, an in-game overlay and F12 screenshots.
 - **Checked artwork**: every downloaded image is verified (real dimensions) so a wrongly
   shaped thumbnail is rejected, with a fallback to Steam's `appdetails` page;
   `library_600x900_2x` cover, `library_hero` banner, transparent logo and small capsule.
+  SteamGridDB previews use the API's lightweight `thumb` URL, so the 132×76 tiles no longer
+  decode a full 1920×620 banner and fail far less often; the full-size image is still what
+  gets saved.
 - **Steam-like layout**: list on the left (thumbnail + title, the selected row has a blue
   marker), game pane on the right; a taller banner on top, **ProtonDB** and *Linux native*
   badges in its top-left corner, **Play** button with **playtime and last session** right
   next to it, then the **Journal**, **ⓘ**, **Customize** and **settings** buttons in the top
   right. `Play` becomes `Stop` while the game is running. Thumbnails, covers and the
-  carousel use rounded corners.
+  carousel use rounded corners. All interface icons are the embedded **Lucide** set
+  (`assets/fonts/lucide.ttf`, ISC licence), not image files or hand-drawn shapes.
 - **Thumbnails that never move**: the list shows the game icon (1:1), as Steam does. When a
   game has no icon, the tile is filled with the first letter of its title — leading
   articles ignored, so `The Witcher 3` → `W` and `Les Chevaliers de Baphomet` → `C`, while
@@ -165,8 +169,10 @@ with save snapshots through Ludusavi, an in-game overlay and F12 screenshots.
   repaint while a value is actually moving, so an idle window stays idle and the launcher
   keeps its responsiveness.
 - **AMOLED theme** (`#000000`) by default, plus a "Graphite" variant (softer black) in the
-  settings. The interface uses the embedded **Archivo** typeface (`assets/fonts/`, SIL Open
-  Font License), so it looks the same on every distribution without installing a system font.
+  settings. The interface uses the embedded **Archivo** typeface and the **Lucide** icon font
+  (`assets/fonts/`, SIL Open Font License and ISC licence), so it looks the same on every
+  distribution without installing a system font. Scrolling is about one third faster than
+  egui's default on both wheels and touchpads.
 - **Proton**: automatic runtime detection (`steamapps/common/Proton*` and
   `compatibilitytools.d/*`, including Flatpak/Snap), runtime chosen **per game** or as a
   default, a **default Proton prefix** in the settings and a **per-game override**.
@@ -188,8 +194,9 @@ with save snapshots through Ludusavi, an in-game overlay and F12 screenshots.
   `--update` and `--ui` (no screen required, `--home` renders the home page). `--tray` runs
   the notification-icon process and is started by Quark itself.
 - **Steam store page**: a vertical, Steam-like discovery page — a featured deal, then
-  *Recommandé pour vous*, *Populaires en ce moment* (with each game's peak concurrent
-  players), *Meilleures ventes*, *Offres spéciales*, *Nouveautés* and *Prochainement* — in
+  *Recommandé pour vous*, *Populaires sur Steam* (the 20 most played games, with each
+  game's peak concurrent players), *Meilleures ventes*, *Offres spéciales*, *Nouveautés* and
+  *Prochainement* — in
   card grids that scroll down, never sideways. Prices are regional and the store page opens
   in your browser: Quark never buys anything. The catalogue is cached in
   `~/.local/share/quark/store-cache.json` and shown again, marked as potentially stale, when
@@ -209,8 +216,11 @@ with save snapshots through Ludusavi, an in-game overlay and F12 screenshots.
   or returns nothing, a button opens its own search page.
 - **Mes jeux**: Steam (read from local `appmanifest_*.acf`), Epic (through Legendary) and
   GOG (through the GOG API) games in one grid — owned, installed, or both — with one tab per
-  store and a counter, the detected install path, and what the store can actually do. The
-  same game on two stores can be **merged** into one row and **split** again. Every tab is
+  store and a counter, the detected install path, and what the store can actually do.
+  Duplicate GOG editions suffixed with **Amazon Prime** are merged under the base title, and
+  a GOG install is located by its `goggame-<id>.info` manifest when gogdl chose a slightly
+  different folder name. The same game on two stores can be **merged** into one row and
+  **split** again. Every tab is
   **sorted by name**, a **search field** filters owned titles as you type (accents and case
   ignored), and each card shows the store's **vertical cover** — Steam from its CDN, GOG from
   the API v2 `boxArtImage` (`_glx_vertical_cover`), Epic from Legendary's metadata cache
@@ -254,7 +264,8 @@ with save snapshots through Ludusavi, an in-game overlay and F12 screenshots.
 - **Save folders and snapshots from the same page**: custom save folders per installation,
   Ludusavi preview, backup, backup inventory and restore — see *Save files* below.
 - **Achievements in the game page**: next to **Actualités**, the **Succès** tab reads Epic
-  achievements from `legendary achievements <app> --json` and GOG achievements from
+  achievements from `legendary achievements <app> --json` (log lines around the JSON and
+  null lists are tolerated) and GOG achievements from
   `gameplay.gog.com` with the gogdl session (`client_id` = product id, `user_id` from the
   session), then shows unlocked/total, a progress bar and the full list with each store's
   achievement icon (downloaded once into `artwork/achievement-icons/`, hidden achievements
@@ -354,6 +365,9 @@ Note: `egui` 0.37 reshuffles its API (panels / `App::ui`); Quark intentionally t
    rating. The gear in the top right of the pane opens the **game settings**
    (executable, arguments, Proton runtime, per-game prefix, anti-cheat, launch options,
    per-game variables, removal); the page icon left of it opens the session log.
+   For a game with no Steam / SteamGridDB source, **Fiche Steam** contains a search field:
+   pick a result, press **Lier**, then **Enregistrer** to fetch its cover, banner, logo and
+   icon.
 
 ### SteamGridDB API key (optional but recommended)
 
@@ -618,13 +632,15 @@ src/stats.rs        session history: hours per week, heat-map calendar, streak, 
 src/disk.rs         disk usage of prefixes, artwork, logs, updates and game folders
 src/steamlib.rs     installed Steam library import (appmanifest_*.acf)
 src/icon.rs         embedded Quark icon (window and executable)
-src/fonts.rs        embedded Archivo typeface for the whole interface
+src/fonts.rs        embedded Archivo and Lucide fonts for the interface
 src/tray.rs         notification-area icon (StatusNotifierItem via ksni) + `quark --tray`
 src/images.rs       texture cache, rounded/cropped drawing, accent and luminance analysis
 src/proton.rs       Proton runtime detection + launch command (options, umu, anti-cheat)
-src/update.rs       latest GitHub release, version comparison, archive download
+src/update.rs       latest GitHub release, version comparison, archive download + SHA-256
+src/net.rs          bounded HTTP body reads (JSON, images, logs)
+src/process.rs      spawned helper reaping
 src/theme.rs        AMOLED/Graphite palette, gradients, monogram colours
-src/widgets.rs      hand-drawn vector icons and buttons (no icon font)
+src/widgets.rs      Lucide icon glyphs, buttons and reusable chrome
 src/snapshot.rs     off-screen software renderer (--ui), for visual checks
 ```
 

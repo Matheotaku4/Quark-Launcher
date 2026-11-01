@@ -15,10 +15,14 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Taille conservée du journal (le reste, plus ancien, est ignoré à l'affichage).
 const TAIL_BYTES: u64 = 128 * 1024;
+/// Plafond du journal d'une session : au-delà, la sortie continue d'être lue
+/// (pour ne pas bloquer le jeu) mais n'est plus écrite.
+const MAX_LOG_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Délai avant d'abandonner la politesse et de tuer le groupe de processus.
 const KILL_AFTER: Duration = Duration::from_secs(4);
@@ -39,6 +43,8 @@ pub struct Session {
     pub wineserver: Option<PathBuf>,
     /// Arrêt demandé : au-delà de [`KILL_AFTER`], le groupe est tué.
     pub stopping: Option<Instant>,
+    /// `SIGKILL` déjà envoyé au groupe.
+    pub kill_sent: bool,
     /// Sauvegarde locale détectée à partir d'une installation fournisseur liée.
     pub save_identity: Option<crate::saves::SaveIdentity>,
 }
@@ -46,13 +52,40 @@ pub struct Session {
 impl Session {
     /// Vrai s'il faut envoyer un `SIGKILL` : le jeu a ignoré `SIGTERM`.
     pub fn should_escalate(&self) -> bool {
-        self.stopping
-            .is_some_and(|since| since.elapsed() >= KILL_AFTER)
+        !self.kill_sent
+            && self
+                .stopping
+                .is_some_and(|since| since.elapsed() >= KILL_AFTER)
     }
 
     /// Marque l'escalade comme faite (pour ne pas la répéter à chaque image).
     pub fn escalated(&mut self) {
-        self.stopping = None;
+        self.kill_sent = true;
+    }
+
+    /// Après un `SIGKILL`, laisse un court délai au noyau pour récolter le
+    /// groupe ; au-delà, on cesse d'attendre.
+    pub fn should_abandon(&self) -> bool {
+        self.kill_sent
+            && self
+                .stopping
+                .is_some_and(|since| since.elapsed() >= KILL_AFTER + Duration::from_secs(3))
+    }
+
+    /// Le groupe de processus existe-t-il encore ? Le chef peut être mort
+    /// alors que ses enfants (wrapper, Wine, gamescope) tournent toujours.
+    pub fn group_alive(&self) -> bool {
+        #[cfg(unix)]
+        {
+            // `kill(-pgid, 0)` ne signale rien : il teste le groupe. EPERM
+            // signifie qu'il existe mais appartient à un autre utilisateur.
+            let result = unsafe { libc::kill(-self.pid, 0) };
+            result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+        }
+        #[cfg(not(unix))]
+        {
+            false
+        }
     }
 }
 
@@ -63,29 +96,40 @@ pub fn start(game: &Game, resolved: &Resolved) -> Result<Session, String> {
         std::fs::create_dir_all(dir)
             .map_err(|err| format!("dossier de journaux {} : {err}", dir.display()))?;
     }
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).write(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
     let mut file =
-        File::create(&log).map_err(|err| format!("journal {} : {err}", log.display()))?;
+        options.open(&log).map_err(|err| format!("journal {} : {err}", log.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        // Corrige aussi un journal créé par une version précédente.
+        let _ = file.set_permissions(std::fs::Permissions::from_mode(0o600));
+    }
 
     // En-tête : sans lui, un journal ne dit pas quel Proton ni quelles
-    // variables ont été utilisées.
+    // variables ont été utilisées. La ligne de commande complète est omise :
+    // un wrapper peut y placer un mot de passe ou un jeton.
     let _ = writeln!(file, "[quark] session du {}", timestamp(config::now_ts()));
     let _ = writeln!(file, "[quark] {}", resolved.label());
-    let _ = writeln!(file, "[quark] {}", resolved.spec.command_line());
+    let _ = writeln!(
+        file,
+        "[quark] programme {} ({} argument(s))",
+        resolved.spec.program.display(),
+        resolved.spec.args.len()
+    );
     if let Some(prefix) = &resolved.prefix {
         let _ = writeln!(file, "[quark] préfixe {}", prefix.display());
     }
-    for (name, value) in &resolved.spec.env {
-        // Le jeton du pont des succès est propre au lancement : il ne doit pas
-        // se retrouver dans un journal lisible.
-        let upper = name.to_ascii_uppercase();
-        let sensitive = ["TOKEN", "SECRET", "PASSWORD"]
-            .iter()
-            .any(|needle| upper.contains(needle));
-        if sensitive {
-            let _ = writeln!(file, "[quark] env {name}=[masqué]");
-        } else {
-            let _ = writeln!(file, "[quark] env {name}={value}");
-        }
+    for (name, _value) in &resolved.spec.env {
+        // Les valeurs peuvent contenir des identifiants (API_KEY, AUTH,
+        // CREDENTIALS…) : seuls les noms sont utiles au diagnostic.
+        let _ = writeln!(file, "[quark] env {name}");
     }
     for warning in &resolved.warnings {
         let _ = writeln!(file, "[quark] ! {warning}");
@@ -110,11 +154,9 @@ pub fn start(game: &Game, resolved: &Resolved) -> Result<Session, String> {
     if let Some(dir) = workdir {
         cmd.current_dir(dir);
     }
-    let stdout = file.try_clone().map_err(|err| err.to_string())?;
-    let stderr = file.try_clone().map_err(|err| err.to_string())?;
     cmd.stdin(Stdio::null())
-        .stdout(Stdio::from(stdout))
-        .stderr(Stdio::from(stderr));
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     // Groupe de processus dédié : l'arrêt peut viser le jeu et ses enfants
     // sans toucher au reste de la session.
     #[cfg(unix)]
@@ -123,7 +165,7 @@ pub fn start(game: &Game, resolved: &Resolved) -> Result<Session, String> {
         cmd.process_group(0);
     }
 
-    let child = cmd.spawn().map_err(|err| match err.kind() {
+    let mut child = cmd.spawn().map_err(|err| match err.kind() {
         std::io::ErrorKind::NotFound => format!(
             "« {} » introuvable : le programme n'est pas installé ou pas dans le PATH",
             resolved.spec.program.display()
@@ -131,6 +173,18 @@ pub fn start(game: &Game, resolved: &Resolved) -> Result<Session, String> {
         _ => err.to_string(),
     })?;
     let pid = child.id() as i32;
+    // La sortie est recopiée par deux threads avec un plafond global : un jeu
+    // bavard ne peut plus remplir le disque pendant une longue session.
+    let sink = Arc::new(Mutex::new(LogSink {
+        file,
+        remaining: MAX_LOG_BYTES,
+    }));
+    if let Some(stdout) = child.stdout.take() {
+        let _ = copy_log(stdout, sink.clone());
+    }
+    if let Some(stderr) = child.stderr.take() {
+        let _ = copy_log(stderr, sink);
+    }
     Ok(Session {
         child,
         pid,
@@ -141,7 +195,62 @@ pub fn start(game: &Game, resolved: &Resolved) -> Result<Session, String> {
         prefix: resolved.prefix.clone(),
         wineserver: wineserver_for(resolved),
         stopping: None,
+        kill_sent: false,
         save_identity: None,
+    })
+}
+
+struct LogSink {
+    file: File,
+    remaining: u64,
+}
+
+/// Recopie un flux vers le journal sans jamais dépasser [`MAX_LOG_BYTES`]. Le
+/// flux est toujours vidé, même après la limite, pour que le jeu ne se bloque
+/// pas sur un pipe plein.
+fn copy_log(
+    mut source: impl Read + Send + 'static,
+    sink: Arc<Mutex<LogSink>>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut buffer = [0u8; 8192];
+        let mut truncated = false;
+        loop {
+            let Ok(read) = source.read(&mut buffer) else {
+                break;
+            };
+            if read == 0 {
+                break;
+            }
+            let Ok(mut sink) = sink.lock() else {
+                break;
+            };
+            if sink.remaining == 0 {
+                if !truncated {
+                    let _ = writeln!(
+                        sink.file,
+                        "[quark] journal tronqué à {} octets",
+                        MAX_LOG_BYTES
+                    );
+                    let _ = sink.file.flush();
+                    truncated = true;
+                }
+                continue;
+            }
+            let writable = (read as u64).min(sink.remaining) as usize;
+            let _ = sink.file.write_all(&buffer[..writable]);
+            let _ = sink.file.flush();
+            sink.remaining -= writable as u64;
+            if sink.remaining == 0 && !truncated {
+                let _ = writeln!(
+                    sink.file,
+                    "[quark] journal tronqué à {} octets",
+                    MAX_LOG_BYTES
+                );
+                let _ = sink.file.flush();
+                truncated = true;
+            }
+        }
     })
 }
 
@@ -160,6 +269,11 @@ fn wineserver_for(resolved: &Resolved) -> Option<PathBuf> {
 /// Arrête le jeu : `wineserver -k` pour les processus Windows du préfixe, puis
 /// `SIGTERM` au groupe. L'escalade en `SIGKILL` a lieu au tick suivant.
 pub fn stop(session: &mut Session) {
+    // Idempotent : recliquer sur « Arrêter » ne doit pas repousser l'échéance
+    // du SIGKILL.
+    if session.stopping.is_some() {
+        return;
+    }
     session.stopping = Some(Instant::now());
 
     if let Some(prefix) = session.prefix.clone() {
@@ -188,16 +302,20 @@ pub fn stop(session: &mut Session) {
     }
 
     #[cfg(unix)]
-    unsafe {
-        libc::kill(-session.pid, libc::SIGTERM);
+    if session.group_alive() {
+        unsafe {
+            libc::kill(-session.pid, libc::SIGTERM);
+        }
     }
 }
 
 /// Tue le groupe de processus sans ménagement (le jeu ignore SIGTERM).
 pub fn force_kill(session: &Session) {
     #[cfg(unix)]
-    unsafe {
-        libc::kill(-session.pid, libc::SIGKILL);
+    if session.group_alive() {
+        unsafe {
+            libc::kill(-session.pid, libc::SIGKILL);
+        }
     }
     #[cfg(not(unix))]
     {
@@ -241,8 +359,8 @@ pub fn open_folder(path: &Path) -> Result<(), String> {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        match cmd.spawn() {
-            Ok(_) => return Ok(()),
+        match crate::process::spawn_and_reap(&mut cmd) {
+            Ok(()) => return Ok(()),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
             Err(err) => return Err(format!("{program} : {err}")),
         }
@@ -312,6 +430,63 @@ mod tests {
         assert!(!truncated);
         assert_eq!(lines, ["début", "fin"]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn arreter_deux_fois_ne_repousse_pas_le_sigkill() {
+        use std::os::unix::process::CommandExt as _;
+        let mut command = Command::new("sleep");
+        command.arg("30").stdin(Stdio::null());
+        command.process_group(0);
+        let child = command.spawn().unwrap();
+        let pid = child.id() as i32;
+        let mut session = Session {
+            child,
+            pid,
+            started: Instant::now(),
+            started_ts: 0,
+            session: 0,
+            log: PathBuf::new(),
+            prefix: None,
+            wineserver: None,
+            stopping: None,
+            kill_sent: false,
+            save_identity: None,
+        };
+        stop(&mut session);
+        let deadline = session.stopping.expect("premier arrêt");
+        std::thread::sleep(Duration::from_millis(20));
+        stop(&mut session);
+        assert_eq!(session.stopping, Some(deadline));
+        session.stopping = Some(Instant::now() - KILL_AFTER);
+        assert!(session.should_escalate());
+        session.escalated();
+        assert!(!session.should_escalate());
+        force_kill(&session);
+        let _ = session.child.wait();
+    }
+
+    #[test]
+    fn le_journal_est_plafonne_et_signale_la_troncature() {
+        let path = std::env::temp_dir().join(format!(
+            "quark-log-cap-{}-{}",
+            std::process::id(),
+            config::now_ts()
+        ));
+        let file = File::create(&path).unwrap();
+        let sink = Arc::new(Mutex::new(LogSink {
+            file,
+            remaining: 10,
+        }));
+        copy_log(std::io::Cursor::new(vec![b'a'; 100]), sink)
+            .join()
+            .unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("aaaaaaaaaa"));
+        assert!(text.contains("journal tronqué"));
+        assert!(text.len() < 200);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

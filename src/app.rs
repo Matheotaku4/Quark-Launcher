@@ -522,6 +522,14 @@ pub struct QuarkApp {
     pub settings_open: bool,
     pub settings_tab: SettingsTab,
     pub editing: Option<Game>,
+    /// Recherche de liaison Steam / SteamGridDB ouverte dans les paramètres
+    /// d'un jeu qui n'a pas encore de source d'images.
+    pub game_link_query: String,
+    pub game_link_for: Option<String>,
+    pub game_link_loading: bool,
+    pub game_link_results: Vec<SearchHit>,
+    pub game_link_warnings: Vec<String>,
+    pub game_link_rx: Option<Receiver<SearchOutcome>>,
     /// Fenêtre « Personnaliser » du jeu en cours (artworks).
     pub customize: Option<Customize>,
     pub picker: Option<NativePicker>,
@@ -537,6 +545,15 @@ pub struct QuarkApp {
     pub toasts: Vec<Toast>,
     pub dirty: bool,
     pub last_change: Instant,
+    /// Prochaine tentative après un échec d'écriture (backoff).
+    save_retry_at: Instant,
+    save_backoff: Duration,
+    /// Erreur de configuration persistante, affichée sous la barre du haut.
+    pub config_error: Option<String>,
+    /// Fichier de succès de session illisible : sauvegarde refusée.
+    pub session_error: Option<String>,
+    /// Rendu hors écran : aucune sauvegarde réelle n'est effectuée.
+    pub snapshot_mode: bool,
     pub applied_theme: Option<ThemeMode>,
     /// Panneau d'informations du jeu (masqué par défaut, bouton ⓘ).
     pub show_info: bool,
@@ -694,6 +711,7 @@ pub struct QuarkApp {
     pub gog_unlock_job: Option<
         Receiver<(
             crate::providers::ProviderGameKey,
+            String,
             Result<Option<String>, String>,
         )>,
     >,
@@ -783,6 +801,9 @@ impl QuarkApp {
         let pal = theme::palette(lib.settings.theme);
         let (store_recommendations, store_recommendation_source) =
             crate::steam_store::recommendations_for(store_snapshot.as_ref(), &lib.games, None);
+        let (session_unlocks, session_unlocks_error) =
+            crate::session_sync::load_session_unlocks();
+        let config_error = lib.load_error.clone();
         Self {
             applied_theme: Some(lib.settings.theme),
             selected,
@@ -816,6 +837,12 @@ impl QuarkApp {
             settings_open: false,
             settings_tab: SettingsTab::Appearance,
             editing: None,
+            game_link_query: String::new(),
+            game_link_for: None,
+            game_link_loading: false,
+            game_link_results: Vec::new(),
+            game_link_warnings: Vec::new(),
+            game_link_rx: None,
             customize: None,
             picker: None,
             confirm_remove: Vec::new(),
@@ -825,6 +852,11 @@ impl QuarkApp {
             toasts: Vec::new(),
             dirty: false,
             last_change: Instant::now(),
+            save_retry_at: Instant::now(),
+            save_backoff: Duration::from_secs(2),
+            config_error,
+            session_error: session_unlocks_error,
+            snapshot_mode: false,
             show_info: false,
             job_queue: VecDeque::new(),
             textures: crate::images::TextureCache::default(),
@@ -887,7 +919,7 @@ impl QuarkApp {
             provider_art_scan_at: None,
             bridge: None,
             bridge_rx: None,
-            session_unlocks: crate::session_sync::load_session_unlocks(),
+            session_unlocks,
             gog_unlock_job: None,
             install_request: None,
             provider_install_jobs: Vec::new(),
@@ -1040,12 +1072,25 @@ impl QuarkApp {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
 
-        if self.dirty && self.last_change.elapsed() > Duration::from_millis(800) {
+        if self.dirty
+            && !self.snapshot_mode
+            && self.last_change.elapsed() > Duration::from_millis(800)
+            && Instant::now() >= self.save_retry_at
+        {
             match self.lib.save() {
-                Ok(()) => self.dirty = false,
-                Err(err) => {
+                Ok(()) => {
                     self.dirty = false;
-                    self.toast_error(format!("Sauvegarde impossible : {err}"));
+                    self.config_error = None;
+                    self.save_backoff = Duration::from_secs(2);
+                }
+                Err(err) => {
+                    // Ne jamais perdre les modifications : on garde `dirty` et
+                    // on réessaie avec un délai croissant.
+                    let message = format!("Sauvegarde impossible : {err}");
+                    self.config_error = Some(message.clone());
+                    self.toast_error(message);
+                    self.save_retry_at = Instant::now() + self.save_backoff;
+                    self.save_backoff = (self.save_backoff * 2).min(Duration::from_secs(60));
                 }
             }
             self.last_change = Instant::now();
@@ -1055,16 +1100,33 @@ impl QuarkApp {
         self.toasts.retain(|t| t.until > now);
 
         if ctx.input(|i| i.viewport().close_requested()) {
-            let _ = self.lib.save();
-            // Icône de notification : la croix ferme vraiment Quark, donc la
-            // fenêtre disparaît aussi de la barre des tâches, et l'icône reste,
-            // tenue par le processus dédié (`quark --tray`), prête à relancer le
-            // launcher. Cacher la fenêtre n'était pas une option : `set_visible`
-            // n'existe pas sur Wayland, où la fenêtre restait ouverte.
-            // Ctrl+Q, lui, arrête tout (voir `quit`).
-            if self.lib.settings.tray_icon && !self.quitting {
-                if let Err(err) = tray::ensure_helper() {
-                    eprintln!("[quark] {err}");
+            let mut blocked = false;
+            if !self.snapshot_mode && self.dirty {
+                if let Err(err) = self.lib.save() {
+                    let message = format!(
+                        "Fermeture annulée : la bibliothèque n'a pas pu être enregistrée ({err})."
+                    );
+                    self.config_error = Some(message.clone());
+                    self.toast_error(message);
+                    // La fenêtre reste ouverte : fermer ici perdrait les
+                    // dernières modifications.
+                    ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                    blocked = true;
+                } else {
+                    self.dirty = false;
+                }
+            }
+            if !blocked {
+                // Icône de notification : la croix ferme vraiment Quark, donc la
+                // fenêtre disparaît aussi de la barre des tâches, et l'icône reste,
+                // tenue par le processus dédié (`quark --tray`), prête à relancer le
+                // launcher. Cacher la fenêtre n'était pas une option : `set_visible`
+                // n'existe pas sur Wayland, où la fenêtre restait ouverte.
+                // Ctrl+Q, lui, arrête tout (voir `quit`).
+                if self.lib.settings.tray_icon && !self.quitting {
+                    if let Err(err) = tray::ensure_helper() {
+                        eprintln!("[quark] {err}");
+                    }
                 }
             }
         }
@@ -1107,12 +1169,27 @@ impl QuarkApp {
                         game.escalated();
                     }
                 }
-                Ok(Some(_)) => finished.push((
-                    id.clone(),
-                    game.started.elapsed().as_secs(),
-                    game.started_ts,
-                    game.save_identity.clone(),
-                )),
+                Ok(Some(_)) => {
+                    // Le chef est mort, mais un wrapper ou Wine peut encore
+                    // tourner dans le groupe : on continue l'escalade avant de
+                    // retirer la session.
+                    if game.stopping.is_some() && game.group_alive() {
+                        if game.should_escalate() {
+                            crate::session::force_kill(game);
+                            game.escalated();
+                        }
+                        if !game.should_abandon() {
+                            game.session = game.started.elapsed().as_secs();
+                            continue;
+                        }
+                    }
+                    finished.push((
+                        id.clone(),
+                        game.started.elapsed().as_secs(),
+                        game.started_ts,
+                        game.save_identity.clone(),
+                    ));
+                }
                 Err(_) => finished.push((
                     id.clone(),
                     game.started.elapsed().as_secs(),
@@ -1774,6 +1851,51 @@ impl QuarkApp {
     // Personnalisation (artworks d'un jeu)
     // -----------------------------------------------------------------------
 
+    /// Recherche un jeu à lier à une fiche Steam / SteamGridDB, pour récupérer
+    /// ses images. Les résultats restent dans l'état tant que le même jeu est
+    /// affiché dans les paramètres.
+    pub fn start_game_link_search(&mut self, ctx: &egui::Context, game_id: &str, query: &str) {
+        let query = query.trim();
+        if query.len() < 2 {
+            self.game_link_warnings = vec!["Saisis au moins deux caractères.".to_string()];
+            return;
+        }
+        self.game_link_for = Some(game_id.to_string());
+        self.game_link_loading = true;
+        self.game_link_results.clear();
+        self.game_link_warnings.clear();
+        let (tx, rx) = channel();
+        let settings = self.lib.settings.clone();
+        let query = query.to_string();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let client = artwork::http();
+            let outcome = artwork::search(&client, &query, &settings);
+            let _ = tx.send(outcome);
+            repaint.request_repaint();
+        });
+        self.game_link_rx = Some(rx);
+        ctx.request_repaint_after(Duration::from_millis(120));
+    }
+
+    fn poll_game_link_search(&mut self) {
+        let received = self.game_link_rx.as_ref().map(Receiver::try_recv);
+        match received {
+            Some(Ok(outcome)) => {
+                self.game_link_rx = None;
+                self.game_link_loading = false;
+                self.game_link_results = outcome.hits;
+                self.game_link_warnings = outcome.warnings;
+            }
+            Some(Err(TryRecvError::Disconnected)) => {
+                self.game_link_rx = None;
+                self.game_link_loading = false;
+                self.game_link_warnings = vec!["Recherche interrompue.".to_string()];
+            }
+            Some(Err(TryRecvError::Empty)) | None => {}
+        }
+    }
+
     pub fn open_customize(&mut self, id: &str) {
         self.customize = Some(Customize::for_game(id));
     }
@@ -2242,6 +2364,40 @@ impl QuarkApp {
     // Barre supérieure & éléments communs
     // -----------------------------------------------------------------------
 
+    /// Bandeau persistant quand la configuration n'a pas pu être lue ou
+    /// écrite : un toast fugace laisserait croire que tout est enregistré.
+    fn config_error_banner(&mut self, ctx: &egui::Context) {
+        let errors: Vec<String> = [self.config_error.clone(), self.session_error.clone()]
+            .into_iter()
+            .flatten()
+            .collect();
+        if errors.is_empty() {
+            return;
+        }
+        let pal = self.pal;
+        egui::TopBottomPanel::top("quark_config_error")
+            .frame(
+                egui::Frame::new()
+                    .fill(pal.panel)
+                    .inner_margin(egui::Margin::symmetric(14, 6))
+                    .stroke(Stroke::new(1.0_f32, pal.danger)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(errors.join(" · "))
+                            .size(11.5)
+                            .color(pal.danger),
+                    );
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if widgets::ghost_button(ui, "Dossier", &pal, Icon::Folder).clicked() {
+                            let _ = crate::session::open_folder(&crate::config::config_dir());
+                        }
+                    });
+                });
+            });
+    }
+
     fn top_bar(&mut self, ctx: &egui::Context) {
         let pal = self.pal;
         egui::TopBottomPanel::top("quark_topbar")
@@ -2543,6 +2699,14 @@ impl QuarkApp {
     /// Une image de l'interface. Le rendu est le même à l'écran et hors écran
     /// (`quark --ui`), qui n'a pas de `eframe::Frame`.
     pub fn ui(&mut self, ctx: &egui::Context) {
+        // Défilement un peu plus rapide, à la souris comme au pavé tactile.
+        // egui applique son propre lissage : on accélère le delta déjà lissé,
+        // et la vitesse des molettes à crans. Aucun autre geste n'est touché.
+        ctx.options_mut(|options| options.input_options.line_scroll_speed = 46.0);
+        let scroll = ctx.input(|input| input.smooth_scroll_delta);
+        if scroll != egui::Vec2::ZERO {
+            ctx.input_mut(|input| input.smooth_scroll_delta = scroll * 1.2);
+        }
         self.tick(ctx);
         self.keyboard(ctx);
 
@@ -2562,12 +2726,14 @@ impl QuarkApp {
         }
         self.startup_sync(ctx);
         self.top_bar(ctx);
+        self.config_error_banner(ctx);
         match self.tab {
             Tab::Store => self.store_tab(ctx),
             Tab::Library => self.library_tab(ctx),
             Tab::MyGames => self.my_games_tab(ctx),
         }
 
+        self.poll_game_link_search();
         self.downloads_panel(ctx);
         self.add_dialog(ctx);
         self.settings_dialog(ctx);
@@ -3032,12 +3198,19 @@ impl QuarkApp {
             self.toast_error("Dossier d'installation inconnu");
             return;
         };
+        let Some(root) = record.install_root.clone() else {
+            self.toast_error(
+                "Désinstallation refusée : la racine d'installation n'est pas connue pour ce jeu.",
+            );
+            return;
+        };
         let title = record.title.clone();
         let sent = key.clone();
         let (tx, rx) = channel();
         let repaint = ctx.clone();
         std::thread::spawn(move || {
-            let result = crate::providers::operations::remove_install_directory(&path);
+            let result =
+                crate::providers::operations::remove_install_directory(&path, &root);
             let _ = tx.send((sent, result));
             repaint.request_repaint();
         });
@@ -3141,13 +3314,14 @@ impl QuarkApp {
             return;
         };
         let tag = release.tag_name.clone();
+        let download_release = release.clone();
         self.update = UpdateState::Downloading(release);
         let (tx, rx) = channel();
         let ctx = ctx.clone();
         let dir = crate::config::data_dir().join("updates");
         std::thread::spawn(move || {
             let client = artwork::http();
-            let result = update::download(&client, &asset, &dir);
+            let result = update::download(&client, &download_release, &asset, &dir);
             let _ = tx.send(UpdateMessage::Downloaded(tag, result));
             ctx.request_repaint();
         });
@@ -3212,8 +3386,18 @@ impl QuarkApp {
     /// Ctrl+Q : termine Quark **et** l'icône de notification. La croix, elle,
     /// respecte le réglage de la zone de notification.
     pub fn quit(&mut self, ctx: &egui::Context) {
+        if !self.snapshot_mode && self.dirty {
+            if let Err(err) = self.lib.save() {
+                let message =
+                    format!("Quitter annulé : la bibliothèque n'a pas pu être enregistrée ({err}).");
+                self.config_error = Some(message.clone());
+                self.toast_error(message);
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                return;
+            }
+            self.dirty = false;
+        }
         self.quitting = true;
-        let _ = self.lib.save();
         tray::stop_helper();
         tray::clear_gui_pid();
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -3461,9 +3645,43 @@ impl QuarkApp {
         Ok(crate::saves::SaveIdentity {
             provider_key: game.key.clone(),
             install_path: Some(install_path),
-            ludusavi_title: title.to_string(),
+            ludusavi_title: self.ludusavi_title(&game.key, title),
             custom_paths: game.custom_save_paths.clone(),
         })
+    }
+
+    /// Deux installations du même titre (Steam + Epic, ou deux copies) ne
+    /// doivent pas partager l'entrée `customGames` de Ludusavi. La première
+    /// garde le titre historique ; les suivantes reçoivent un suffixe stable.
+    fn ludusavi_title(
+        &self,
+        key: &crate::providers::ProviderGameKey,
+        title: &str,
+    ) -> String {
+        let normalized = crate::providers::operations::normalize_title(title);
+        let mut matching = self
+            .lib
+            .provider_library
+            .games
+            .iter()
+            .filter(|game| {
+                game.install_state == crate::providers::InstallState::Installed
+                    && crate::providers::operations::normalize_title(&game.title) == normalized
+            });
+        let Some(first) = matching.next() else {
+            return title.to_string();
+        };
+        if matching.next().is_none() || first.key == *key {
+            // La première installation garde le titre historique, donc les
+            // sauvegardes existantes restent accessibles.
+            return title.to_string();
+        }
+        let provider = match key.provider {
+            crate::providers::Provider::Steam => "steam",
+            crate::providers::Provider::Epic => "epic",
+            crate::providers::Provider::Gog => "gog",
+        };
+        format!("{title} [{provider}:{}]", key.product_id)
     }
 
     pub fn choose_save_folder(
@@ -3684,7 +3902,7 @@ impl QuarkApp {
         Some(crate::saves::SaveIdentity {
             provider_key: provider.key.clone(),
             install_path: provider.install_path.clone(),
-            ludusavi_title: provider.title.clone(),
+            ludusavi_title: self.ludusavi_title(&provider.key, &provider.title),
             custom_paths: provider.custom_save_paths.clone(),
         })
     }
@@ -4817,16 +5035,24 @@ impl QuarkApp {
                         crate::providers::runner::failure_hint(&output)
                     ));
                 }
-                let install_path = destination.join(&folder);
-                if !install_path.is_dir() {
-                    return Err("installation terminée sans dossier de jeu".to_string());
-                }
+                let install_path = crate::providers::gog::resolve_install_path(
+                    &destination,
+                    &folder,
+                    &key.product_id,
+                )
+                .ok_or_else(|| {
+                    format!(
+                        "gogdl a terminé mais aucun dossier de jeu n'a été trouvé dans {}",
+                        destination.display()
+                    )
+                })?;
                 operation.complete_verified(install_path.clone())?;
                 let executable = crate::providers::gog::find_executable(&install_path, &title);
                 let installed = crate::providers::ProviderGame {
                     key: key.clone(),
                     title,
                     owned: true,
+                    install_root: Some(destination.clone()),
                     install_path: Some(install_path),
                     custom_save_paths: Vec::new(),
                     cover_url: None,
