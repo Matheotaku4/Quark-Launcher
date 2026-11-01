@@ -409,6 +409,13 @@ pub struct SaveBackgroundJob {
     pub rx: Receiver<Result<crate::saves::BackupRecord, String>>,
 }
 
+/// Onglets de la fiche d'un jeu, sous la bannière.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum DetailTab {
+    News,
+    Achievements,
+}
+
 /// Succès d'un jeu de boutique, lus à la demande.
 #[derive(Clone, Debug)]
 pub enum AchievementsState {
@@ -648,6 +655,33 @@ pub struct QuarkApp {
     >,
     /// Fenêtre des succès ouverte, s'il y en a une.
     pub achievements_open: Option<crate::providers::ProviderGameKey>,
+    /// Onglet de la fiche jeu : actualités ou succès.
+    pub detail_tab: DetailTab,
+    /// Temps de jeu publié par la boutique, lu seulement pour la fiche
+    /// affichée. Le temps local ne remplace jamais celui d'Epic ou GOG.
+    pub provider_playtime:
+        HashMap<crate::providers::ProviderGameKey, crate::providers::PlaytimeState>,
+    pub playtime_job: Option<Receiver<(crate::providers::ProviderGameKey, Result<u64, String>)>>,
+    /// Overlay en jeu (panneau au-dessus du jeu, captures F12, notifications).
+    pub game_overlay: crate::overlay::Overlay,
+    /// Vérification périodique des dossiers installés : un jeu supprimé hors de
+    /// Quark doit repasser en « non installé ».
+    pub install_probe_at: Option<Instant>,
+    pub install_probe_rx: Option<Receiver<Vec<crate::providers::ProviderGameKey>>>,
+    /// Désinstallation d'un jeu de boutique, après confirmation.
+    pub confirm_uninstall: Option<crate::providers::ProviderGameKey>,
+    pub uninstall_rx: Option<Receiver<(crate::providers::ProviderGameKey, Result<(), String>)>>,
+    /// Nombre de cartes de « Mes jeux » rendues : une bibliothèque de 450 jeux
+    /// ne construit plus 450 cartes à chaque image.
+    pub my_games_visible: usize,
+    pub(crate) my_games_last_filter: Option<(Option<crate::providers::Provider>, String)>,
+    /// Panneau des téléchargements ouvert depuis l'icône de la barre du haut.
+    pub downloads_open: bool,
+    /// Choix de la confirmation « retirer de la bibliothèque » : supprimer
+    /// aussi les fichiers de l'installation Epic/GOG liée.
+    pub remove_with_files: bool,
+    /// Désinstallations en attente, une seule à la fois.
+    pub uninstall_queue: VecDeque<crate::providers::ProviderGameKey>,
     /// Synchronisation automatique lancée une seule fois, après l'affichage.
     pub startup_sync_done: bool,
     pub frames_alive: u32,
@@ -810,6 +844,19 @@ impl QuarkApp {
             achievements: HashMap::new(),
             achievements_job: None,
             achievements_open: None,
+            detail_tab: DetailTab::News,
+            provider_playtime: HashMap::new(),
+            playtime_job: None,
+            game_overlay: crate::overlay::Overlay::default(),
+            install_probe_at: None,
+            install_probe_rx: None,
+            confirm_uninstall: None,
+            uninstall_rx: None,
+            my_games_visible: 72,
+            my_games_last_filter: None,
+            downloads_open: false,
+            remove_with_files: false,
+            uninstall_queue: VecDeque::new(),
             startup_sync_done: false,
             frames_alive: 0,
             epic_owned_fallback: None,
@@ -908,6 +955,11 @@ impl QuarkApp {
         self.poll_provider_covers(ctx);
         self.poll_achievements(ctx);
         self.poll_session_sync(ctx);
+        self.poll_overlay(ctx);
+        self.poll_provider_playtime();
+        self.poll_install_probe(ctx);
+        self.poll_uninstall(ctx);
+        self.ensure_provider_playtime(ctx);
         self.poll_save_jobs(ctx);
         self.poll_save_background_jobs(ctx);
         self.poll_store(ctx);
@@ -923,6 +975,9 @@ impl QuarkApp {
             || self.adopt_cover_job.is_some()
             || self.epic_install_progress.is_some()
             || self.gog_install_progress.is_some()
+            || self.playtime_job.is_some()
+            || self.install_probe_rx.is_some()
+            || self.uninstall_rx.is_some()
         {
             ctx.request_repaint_after(Duration::from_millis(120));
         }
@@ -1028,6 +1083,14 @@ impl QuarkApp {
                     "{name} : session de {}",
                     human_playtime(secs.max(1))
                 ));
+            }
+            // Le temps de jeu de la boutique vient de bouger : la prochaine
+            // ouverture de la fiche le relit au lieu de garder l'ancien.
+            if let Some(key) = self
+                .provider_record_for_game(&id)
+                .map(|record| record.key.clone())
+            {
+                self.provider_playtime.remove(&key);
             }
             self.touch();
         }
@@ -1788,9 +1851,59 @@ impl QuarkApp {
         if self.running.contains_key(id) {
             return;
         }
-        let Some(game) = self.lib.get(id).cloned() else {
+        let Some(mut game) = self.lib.get(id).cloned() else {
             return;
         };
+        // Un jeu adopté depuis Epic ou GOG ne reçoit pas les variables
+        // « par défaut » : elles ont été pensées pour les jeux ajoutés à la
+        // main, et les injecter dans un jeu de boutique casse ses lanceurs.
+        // Les variables propres au jeu restent, elles.
+        let provider_record = self.provider_record_for_game(id).cloned();
+        if provider_record.is_some() {
+            let defaults = self.lib.settings.default_env.clone();
+            game.env.retain(|variable| {
+                !defaults
+                    .iter()
+                    .any(|default| default.name == variable.name && default.value == variable.value)
+            });
+        }
+        // Jeu de boutique ajouté sans chemin d'exécutable (gogdl ne le publie
+        // pas) : le chercher dans le dossier installé évite de refuser le
+        // lancement alors que le jeu est bien là.
+        if game.exe.trim().is_empty()
+            && let Some(record) = provider_record.as_ref()
+            && let Some(directory) = record
+                .install_path
+                .as_deref()
+                .filter(|directory| directory.is_dir())
+            && let Some(exe) = crate::steamlib::find_exe(
+                directory,
+                &record.title,
+                &directory
+                    .file_name()
+                    .map(|name| name.to_string_lossy())
+                    .unwrap_or_default(),
+            )
+        {
+            game.exe = exe.display().to_string();
+            if let Some(stored) = self.lib.get_mut(id) {
+                stored.exe = game.exe.clone();
+            }
+            if let Some(stored) = self
+                .lib
+                .provider_library
+                .games
+                .iter_mut()
+                .find(|candidate| candidate.key == record.key)
+            {
+                stored.install_exe = Some(exe);
+            }
+            self.touch();
+            self.toast_info(format!(
+                "{} : exécutable détecté automatiquement",
+                game.name
+            ));
+        }
         // Exécutable disparu (jeu déplacé, disque démonté) : le lancement est
         // refusé et le jeu passe en rouge dans la liste.
         if game.exe_missing() {
@@ -1833,7 +1946,22 @@ impl QuarkApp {
                 match crate::session::start(&game, &resolved) {
                     Ok(mut session) => {
                         session.save_identity = save_identity;
+                        let started = session.started;
                         self.running.insert(id.to_string(), session);
+                        let provider = provider_record.as_ref().map(|record| record.key.provider);
+                        if self.lib.settings.overlay {
+                            let key = self.lib.settings.screenshot_key.clone();
+                            self.game_overlay.set_game(
+                                crate::overlay::Target {
+                                    name: game.name.clone(),
+                                    provider,
+                                    started,
+                                },
+                                &key,
+                            );
+                            self.game_overlay
+                                .notice("Partie lancée", format!("{} · overlay prêt", game.name));
+                        }
                         self.toast_info(format!("{} lancé · {}", game.name, resolved.label()));
                         // Nouvelle session : le journal ouvert repart de zéro.
                         if self.logs.as_ref().is_some_and(|logs| logs.game_id == id) {
@@ -2059,6 +2187,30 @@ impl QuarkApp {
                             self.settings_open = true;
                         }
                         ui.add_space(6.0);
+                        // Téléchargements : le même panneau, accessible depuis
+                        // tous les onglets, avec le nombre de transferts actifs.
+                        let response =
+                            widgets::icon_button(ui, 32.0, Icon::Download, &pal, "Téléchargements");
+                        if response.clicked() {
+                            self.downloads_open = !self.downloads_open;
+                        }
+                        let active = self.active_install_count();
+                        if active > 0 {
+                            let badge = egui::Pos2::new(
+                                response.rect.right() - 3.0,
+                                response.rect.top() + 5.0,
+                            );
+                            ui.painter().circle_filled(badge, 7.0, pal.accent);
+                            ui.painter().text(
+                                badge,
+                                Align2::CENTER_CENTER,
+                                active.to_string(),
+                                FontId::proportional(9.0),
+                                pal.bg,
+                            );
+                        }
+
+                        ui.add_space(6.0);
                         // Seul endroit où l'on bascule de vue : la colonne de
                         // gauche et la page grille ne les dupliquent plus.
                         if self.tab == Tab::Library {
@@ -2244,6 +2396,10 @@ impl QuarkApp {
             return;
         }
         self.confirm_remove = self.marked.clone();
+        self.remove_with_files = self
+            .confirm_remove
+            .iter()
+            .any(|id| self.linked_provider_install(id).is_some());
     }
 
     /// Demande le retrait depuis le clic droit : tout le lot si le jeu visé
@@ -2254,6 +2410,10 @@ impl QuarkApp {
             self.select(id);
         }
         self.confirm_remove = targets;
+        self.remove_with_files = self
+            .confirm_remove
+            .iter()
+            .any(|id| self.linked_provider_install(id).is_some());
     }
 }
 
@@ -2296,16 +2456,24 @@ impl QuarkApp {
             Tab::MyGames => self.my_games_tab(ctx),
         }
 
+        self.downloads_panel(ctx);
         self.add_dialog(ctx);
         self.settings_dialog(ctx);
         self.steam_import_dialog(ctx);
         self.customize_dialog(ctx);
         self.game_settings_dialog(ctx);
         self.confirm_remove_dialog(ctx);
+        self.confirm_uninstall_dialog(ctx);
         self.logs_dialog(ctx);
         self.achievements_dialog(ctx);
         self.save_backup_dialog(ctx);
         self.toasts_ui(ctx);
+        // Dernière étape : une fenêtre séparée, au-dessus du jeu. Elle n'existe
+        // que si un jeu tourne et si le réglage est actif.
+        if self.lib.settings.overlay && !self.running.is_empty() {
+            let key = self.lib.settings.screenshot_key.clone();
+            self.game_overlay.ui(ctx, &self.pal, &key);
+        }
     }
 
     /// Navigation au clavier, sans souris : flèches pour changer de jeu, Entrée
@@ -2441,6 +2609,386 @@ impl eframe::App for QuarkApp {
 impl QuarkApp {
     pub fn is_running(&self, id: &str) -> bool {
         self.running.contains_key(id)
+    }
+
+    /// Fiche de boutique liée à un jeu de la bibliothèque Quark, s'il y en a
+    /// une. C'est le seul lien fiable : un titre identique ne suffit pas.
+    pub fn provider_record_for_game(&self, id: &str) -> Option<&crate::providers::ProviderGame> {
+        self.lib
+            .provider_library
+            .games
+            .iter()
+            .find(|game| game.quark_game_id.as_deref() == Some(id))
+    }
+
+    /// Installation de boutique liée à une fiche Quark, seulement si elle est
+    /// réellement installée et que son dossier est connu.
+    pub(crate) fn linked_provider_install(
+        &self,
+        id: &str,
+    ) -> Option<crate::providers::ProviderGameKey> {
+        self.provider_record_for_game(id)
+            .filter(|record| {
+                record.install_state == crate::providers::InstallState::Installed
+                    && record
+                        .install_path
+                        .as_ref()
+                        .is_some_and(|path| path.is_absolute())
+            })
+            .map(|record| record.key.clone())
+    }
+
+    /// Temps de jeu de la boutique pour le jeu affiché. Aucun repli sur le
+    /// temps local : la fiche d'un jeu Epic/GOG montre la valeur de la
+    /// boutique, ou dit qu'elle est indisponible.
+    pub(crate) fn ensure_provider_playtime(&mut self, ctx: &egui::Context) {
+        if self.playtime_job.is_some() {
+            return;
+        }
+        let Some(id) = self.selected.clone() else {
+            return;
+        };
+        let Some(record) = self.provider_record_for_game(&id).cloned() else {
+            return;
+        };
+        if record.key.provider == crate::providers::Provider::Steam {
+            return;
+        }
+        if self.provider_playtime.contains_key(&record.key) {
+            return;
+        }
+        self.provider_playtime
+            .insert(record.key.clone(), crate::providers::PlaytimeState::Loading);
+        let key = record.key.clone();
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let result = crate::providers::playtime::fetch(&key);
+            let _ = tx.send((key, result));
+            repaint.request_repaint();
+        });
+        self.playtime_job = Some(rx);
+        ctx.request_repaint_after(Duration::from_millis(200));
+    }
+
+    fn poll_provider_playtime(&mut self) {
+        let Some(result) = self.playtime_job.as_ref().map(Receiver::try_recv) else {
+            return;
+        };
+        match result {
+            Ok((key, Ok(seconds))) => {
+                self.provider_playtime
+                    .insert(key, crate::providers::PlaytimeState::Ready(seconds));
+                self.playtime_job = None;
+            }
+            Ok((key, Err(error))) => {
+                self.provider_playtime
+                    .insert(key, crate::providers::PlaytimeState::Failed(error));
+                self.playtime_job = None;
+            }
+            Err(TryRecvError::Disconnected) => {
+                self.playtime_job = None;
+                // Le fil a disparu sans répondre : l'état ne doit pas rester
+                // bloqué sur « chargement » indéfiniment.
+                for state in self.provider_playtime.values_mut() {
+                    if matches!(state, crate::providers::PlaytimeState::Loading) {
+                        *state = crate::providers::PlaytimeState::Failed(
+                            "lecture du temps de jeu interrompue".to_string(),
+                        );
+                    }
+                }
+            }
+            Err(TryRecvError::Empty) => {}
+        }
+    }
+
+    /// Panneau flottant des téléchargements, sous l'icône de la barre du haut.
+    fn downloads_panel(&mut self, ctx: &egui::Context) {
+        if !self.downloads_open {
+            return;
+        }
+        if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            self.downloads_open = false;
+            return;
+        }
+        let pal = self.pal;
+        let screen = ctx.screen_rect();
+        egui::Area::new(egui::Id::new("quark_downloads_panel"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(egui::Pos2::new((screen.right() - 400.0).max(12.0), 58.0))
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(pal.header)
+                    .stroke(egui::Stroke::new(1.0_f32, pal.border))
+                    .corner_radius(10.0)
+                    .inner_margin(12.0)
+                    .show(ui, |ui| {
+                        ui.set_min_width(360.0);
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new("TÉLÉCHARGEMENTS")
+                                    .size(10.0)
+                                    .strong()
+                                    .color(pal.accent),
+                            );
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if widgets::icon_button(ui, 22.0, Icon::Close, &pal, "Fermer")
+                                    .clicked()
+                                {
+                                    self.downloads_open = false;
+                                }
+                            });
+                        });
+                        ui.add_space(4.0);
+                        self.downloads_popup(ui, &pal);
+                    });
+            });
+    }
+
+    /// Captures F12 et événements de l'overlay. Le son et la notification ne
+    /// sont joués que pour Epic/GOG, comme demandé ; Steam garde l'overlay
+    /// silencieux.
+    fn poll_overlay(&mut self, ctx: &egui::Context) {
+        // Overlay désactivé : relâcher la touche globale F12, sinon elle
+        // resterait prise au détriment du jeu.
+        if !self.lib.settings.overlay && self.game_overlay.target.is_some() {
+            self.game_overlay.clear_game();
+        }
+        // Une capture peut arriver juste après la fermeture du jeu : elle est
+        // traitée avant de masquer l'overlay, sinon elle serait perdue.
+        for capture in self.game_overlay.poll_captures() {
+            let file = capture
+                .path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("capture.png")
+                .to_string();
+            let provider = capture.provider;
+            if matches!(
+                provider,
+                Some(crate::providers::Provider::Epic) | Some(crate::providers::Provider::Gog)
+            ) {
+                crate::overlay::play_chime();
+                crate::overlay::desktop_notification(
+                    "Capture enregistrée",
+                    &format!("{} · {file}", capture.game_name),
+                );
+            }
+            self.toast_info(format!("Capture enregistrée · {}", capture.path.display()));
+            ctx.request_repaint();
+        }
+        if self.running.is_empty() && self.game_overlay.target.is_some() {
+            self.game_overlay.clear_game();
+        }
+    }
+
+    /// Annonce un succès dans l'overlay et, pour Epic/GOG, avec le son et la
+    /// notification du client de la boutique.
+    pub(crate) fn announce_achievement(
+        &mut self,
+        key: &crate::providers::ProviderGameKey,
+        title: &str,
+    ) {
+        let provider = key.provider;
+        let label = match provider {
+            crate::providers::Provider::Steam => "Steam",
+            crate::providers::Provider::Epic => "Epic Games",
+            crate::providers::Provider::Gog => "GOG",
+        };
+        self.game_overlay
+            .notice(format!("Succès {label}"), format!("{title} · débloqué"));
+        if provider != crate::providers::Provider::Steam {
+            crate::overlay::play_chime();
+            crate::overlay::desktop_notification(&format!("Succès {label}"), title);
+        }
+    }
+
+    /// Vérifie régulièrement les dossiers installés sans interroger les
+    /// boutiques : un jeu supprimé à la main repasse aussitôt en « non
+    /// installé » au lieu d'afficher un bouton Jouer mort.
+    fn poll_install_probe(&mut self, ctx: &egui::Context) {
+        if let Some(result) = self.install_probe_rx.as_ref().map(Receiver::try_recv) {
+            match result {
+                Ok(missing) => {
+                    self.install_probe_rx = None;
+                    for key in missing {
+                        let title = if let Some(record) = self
+                            .lib
+                            .provider_library
+                            .games
+                            .iter_mut()
+                            .find(|game| game.key == key)
+                        {
+                            let title = record.title.clone();
+                            record.install_state = crate::providers::InstallState::NotInstalled;
+                            record.install_path = None;
+                            title
+                        } else {
+                            continue;
+                        };
+                        self.toast_info(format!(
+                            "{title} n'est plus installé : marqué comme désinstallé"
+                        ));
+                        self.touch();
+                    }
+                }
+                Err(TryRecvError::Disconnected) => self.install_probe_rx = None,
+                Err(TryRecvError::Empty) => {}
+            }
+        }
+        if self.install_probe_rx.is_some()
+            || self
+                .install_probe_at
+                .is_some_and(|probe| probe.elapsed() < Duration::from_secs(5))
+        {
+            return;
+        }
+        self.install_probe_at = Some(Instant::now());
+        let busy = self
+            .epic_installing
+            .clone()
+            .into_iter()
+            .chain(self.gog_installing.clone())
+            .collect::<Vec<_>>();
+        let installed: Vec<(crate::providers::ProviderGameKey, PathBuf)> = self
+            .lib
+            .provider_library
+            .games
+            .iter()
+            .filter(|game| game.install_state == crate::providers::InstallState::Installed)
+            .filter(|game| !busy.contains(&game.key))
+            .filter_map(|game| {
+                game.install_path
+                    .clone()
+                    .filter(|path| path.is_absolute())
+                    .map(|path| (game.key.clone(), path))
+            })
+            .collect();
+        if installed.is_empty() {
+            return;
+        }
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let missing = installed
+                .into_iter()
+                .filter(|(_, path)| !path.is_dir())
+                .map(|(key, _)| key)
+                .collect::<Vec<_>>();
+            let _ = tx.send(missing);
+            repaint.request_repaint();
+        });
+        self.install_probe_rx = Some(rx);
+    }
+
+    /// Demande la désinstallation d'un jeu de boutique installé : la
+    /// confirmation est affichée par `ui_dialogs`, puis le dossier est supprimé.
+    pub(crate) fn request_uninstall(&mut self, key: &crate::providers::ProviderGameKey) {
+        let installed = self.lib.provider_library.games.iter().any(|game| {
+            &game.key == key && game.install_state == crate::providers::InstallState::Installed
+        });
+        if installed {
+            self.confirm_uninstall = Some(key.clone());
+        } else {
+            self.toast_info("Ce jeu n'est pas installé");
+        }
+    }
+
+    pub(crate) fn start_uninstall(
+        &mut self,
+        ctx: &egui::Context,
+        key: &crate::providers::ProviderGameKey,
+    ) {
+        if self.uninstall_rx.is_some() {
+            if !self.uninstall_queue.contains(key) {
+                self.uninstall_queue.push_back(key.clone());
+            }
+            self.toast_info("Désinstallation ajoutée à la file");
+            return;
+        }
+        let Some(record) = self
+            .lib
+            .provider_library
+            .games
+            .iter()
+            .find(|game| &game.key == key)
+            .cloned()
+        else {
+            return;
+        };
+        let Some(path) = record.install_path.clone() else {
+            self.toast_error("Dossier d'installation inconnu");
+            return;
+        };
+        let title = record.title.clone();
+        let sent = key.clone();
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let result = crate::providers::operations::remove_install_directory(&path);
+            let _ = tx.send((sent, result));
+            repaint.request_repaint();
+        });
+        self.uninstall_rx = Some(rx);
+        self.toast_info(format!("Désinstallation de {title}…"));
+        ctx.request_repaint_after(Duration::from_millis(150));
+    }
+
+    fn start_next_uninstall(&mut self, ctx: &egui::Context) {
+        if let Some(next) = self.uninstall_queue.pop_front() {
+            self.start_uninstall(ctx, &next);
+        }
+    }
+
+    fn poll_uninstall(&mut self, ctx: &egui::Context) {
+        let Some(result) = self.uninstall_rx.as_ref().map(Receiver::try_recv) else {
+            return;
+        };
+        match result {
+            Ok((key, Ok(()))) => {
+                self.uninstall_rx = None;
+                let title = self
+                    .lib
+                    .provider_library
+                    .games
+                    .iter()
+                    .find(|game| game.key == key)
+                    .map(|game| game.title.clone())
+                    .unwrap_or_else(|| key.product_id.clone());
+                if let Some(record) = self
+                    .lib
+                    .provider_library
+                    .games
+                    .iter_mut()
+                    .find(|game| game.key == key)
+                {
+                    record.install_state = crate::providers::InstallState::NotInstalled;
+                    record.install_path = None;
+                }
+                self.game_overlay
+                    .notice("Désinstallation", format!("{title} supprimé du disque"));
+                self.toast_info(format!("{title} désinstallé"));
+                self.touch();
+                self.start_next_uninstall(ctx);
+            }
+            Ok((key, Err(error))) => {
+                self.uninstall_rx = None;
+                let title = self
+                    .lib
+                    .provider_library
+                    .games
+                    .iter()
+                    .find(|game| game.key == key)
+                    .map(|game| game.title.clone())
+                    .unwrap_or_else(|| key.product_id.clone());
+                self.toast_error(format!("Désinstallation de {title} impossible : {error}"));
+            }
+            Err(TryRecvError::Disconnected) => {
+                self.uninstall_rx = None;
+                self.start_next_uninstall(ctx);
+            }
+            Err(TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(150)),
+        }
     }
 
     pub fn running_since(&self, id: &str) -> u64 {
@@ -3985,6 +4533,58 @@ impl QuarkApp {
             self.touch();
             return;
         }
+        // Le jeu peut déjà avoir été ajouté à la main : dans ce cas il est
+        // relié au lieu de créer un doublon « installé » et un doublon pointé
+        // par l'utilisateur, qui finissaient avec deux fiches différentes.
+        let existing = self
+            .lib
+            .games
+            .iter()
+            .find(|candidate| {
+                candidate
+                    .name
+                    .trim()
+                    .eq_ignore_ascii_case(record.title.trim())
+                    && (candidate.exe.trim().is_empty()
+                        || record
+                            .install_path
+                            .as_ref()
+                            .is_some_and(|path| candidate.exe_path().starts_with(path)))
+            })
+            .map(|candidate| candidate.id.clone());
+        if let Some(id) = existing {
+            if let Some(game) = self.lib.get_mut(&id) {
+                if game.exe.trim().is_empty() {
+                    if let Some(exe) = &record.install_exe {
+                        game.exe = exe.display().to_string();
+                    }
+                }
+                if let Some(cover) = crate::providers::covers::cached(key) {
+                    game.artwork.set(AssetKind::Cover, cover);
+                }
+            }
+            if let Some(provider) = self
+                .lib
+                .provider_library
+                .games
+                .iter_mut()
+                .find(|game| &game.key == key)
+            {
+                provider.quark_game_id = Some(id.clone());
+            }
+            self.selected = Some(id);
+            self.toast_info(format!(
+                "{} était déjà dans la bibliothèque : la fiche a été reliée à {}",
+                record.title,
+                match record.key.provider {
+                    crate::providers::Provider::Steam => "Steam",
+                    crate::providers::Provider::Epic => "Epic Games",
+                    crate::providers::Provider::Gog => "GOG",
+                }
+            ));
+            self.touch();
+            return;
+        }
         let settings = self.lib.settings.clone();
         let mut game = Game::new(
             record.title.clone(),
@@ -4003,7 +4603,9 @@ impl QuarkApp {
         game.launch = settings.default_launch.clone();
         game.proton_log = settings.default_proton_log;
         game.umu = settings.default_umu;
-        game.env = settings.default_env.clone();
+        // Les variables « par défaut » ne s'appliquent qu'aux jeux ajoutés à la
+        // main : un jeu Epic/GOG garde son environnement de boutique.
+        game.env = Vec::new();
         if let Some(cover) = crate::providers::covers::cached(key) {
             game.artwork.set(AssetKind::Cover, cover);
         }
@@ -4170,7 +4772,6 @@ impl QuarkApp {
         ctx: &egui::Context,
         key: &crate::providers::ProviderGameKey,
     ) {
-        self.achievements_open = Some(key.clone());
         if matches!(
             self.achievements.get(key),
             Some(AchievementsState::Ready(_)) | Some(AchievementsState::Loading)

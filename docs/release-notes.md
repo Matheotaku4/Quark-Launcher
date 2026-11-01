@@ -1,3 +1,49 @@
+## Quark 1.0.5 — overlay en jeu, téléchargements sous la main et temps de jeu des boutiques
+
+- **Overlay en jeu, actif par défaut** : dès qu'un jeu lancé par Quark démarre, une petite
+  fenêtre transparente, toujours au-dessus et qui laisse passer la souris affiche le jeu, sa
+  boutique et le chrono de la session. Elle se ferme avec le jeu ; le réglage **Paramètres →
+  En jeu** permet de la désactiver et de changer la touche de capture.
+- **Captures F12** : un raccourci X11 global (donc aussi pour les jeux Proton sous XWayland)
+  écrit une capture dans `~/.local/share/quark/screenshots/<jeu>/<horodatage>.png`. Les jeux
+  Epic et GOG déclenchent en plus un carillon et une notification système, comme le client
+  Steam ; Steam reste silencieux. Sans serveur X, Quark essaie `grim` puis les outils du
+  bureau, et l'overlay reste disponible pour les succès.
+- **Téléchargements visibles partout** : une icône dans la barre du haut (badge = transferts
+  actifs) ouvre un panneau avec, pour chaque installation Epic/GOG, l'étape, la barre de
+  progression, la taille téléchargée et totale, le débit, l'ETA et **Annuler**.
+- **Désinstallation proposée** : les cartes Epic/GOG ont une action **Désinstaller…** avec
+  confirmation ; le dossier d'installation est supprimé, les sauvegardes et le préfixe Proton
+  sont conservés. Retirer de la bibliothèque un jeu lié propose aussi de supprimer ses
+  fichiers, et plusieurs désinstallations sont mises en file.
+- **Installations vérifiées en direct** : toutes les 5 secondes, Quark recontrôle les dossiers
+  des jeux installés. Un jeu supprimé hors de Quark repasse en **Non installé**, son chemin
+  mort est effacé et un message l'explique.
+- **Succès dans la fiche** : sous la bannière, les onglets **Actualités / Succès** affichent
+  débloqués/total, la progression, les succès masqués et une pastille **session** pour ceux
+  rapportés pendant la partie, avec **Actualiser**.
+- **Temps de jeu de la boutique** : la fiche d'un jeu lié à Epic ou GOG affiche le temps publié
+  par la boutique (service de bibliothèque Epic, sessions GOG), jamais le compteur local. Steam
+  garde le temps local, faute de publication.
+- **Environnement des jeux de boutique** : un jeu adopté depuis Epic/GOG ne reçoit plus les
+  variables « par défaut » ; celles déjà copiées sont filtrées au lancement. Ses propres
+  variables restent appliquées.
+- **Jeux installés reliés aux fiches existantes** : si un jeu ajouté à la main porte le même
+  titre (exécutable vide ou dans le dossier installé), l'installation est reliée à sa fiche au
+  lieu de créer un doublon. Un exécutable absent mais présent dans le dossier GOG/Epic est
+  détecté au lancement.
+- **Couvertures** : Epic et GOG d'abord, puis repli sur la jaquette verticale Steam du même
+  titre, et seulement ensuite le monogramme.
+- **Grosses bibliothèques** : la grille de **Mes jeux** rend 72 cartes puis un bouton
+  **Afficher … de plus**, au lieu de construire 450 cartes à chaque image.
+
+Limites assumées : l'overlay, le raccourci X11, la capture, le son et les notifications n'ont
+pas pu être essayés dans une vraie session graphique (aucun serveur X/audio dans
+l'environnement de développement) ; sous Wayland natif, la capture globale dépend des outils
+du bureau. Les succès et temps de jeu Epic/GOG n'ont pas été validés avec de vrais comptes —
+les parseurs et les états d'erreur sont couverts par des tests. Le repli Steam ne s'applique
+qu'après l'échec de la source de la boutique.
+
 ## Quark 1.0.4 — téléchargements suivis, jaquettes justes, succès Epic et GOG
 
 - **Progression des installations** : Legendary et gogdl écrivent leur avancement ligne par

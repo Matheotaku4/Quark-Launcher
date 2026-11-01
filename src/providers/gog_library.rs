@@ -658,6 +658,93 @@ pub fn fetch_achievements(
     parse_achievements(&body)
 }
 
+/// Temps de jeu GOG, reconstruit à partir des sessions Galaxy du compte.
+/// Chaque session publie `time` en minutes ; les formes `seconds` et
+/// `duration` sont acceptées au cas où GOG change d'unité.
+pub fn gog_playtime(auth_path: &Path, product_id: &str, now: i64) -> Result<u64, String> {
+    if product_id.trim().is_empty() {
+        return Err("identifiant GOG vide".to_string());
+    }
+    let tokens = usable_tokens(auth_path, now)?;
+    if tokens.user_id.trim().is_empty() {
+        return Err(
+            "session GOG sans identifiant de compte : reconnecte la boutique dans \
+             Paramètres → Boutiques & outils"
+                .to_string(),
+        );
+    }
+    let urls = [
+        format!(
+            "{GAMEPLAY_URL}/clients/{product_id}/users/{}/sessions",
+            tokens.user_id
+        ),
+        format!(
+            "{GAMEPLAY_URL}/games/{product_id}/users/{}/sessions",
+            tokens.user_id
+        ),
+    ];
+    let mut last_error = "GOG ne publie pas de temps de jeu pour ce jeu".to_string();
+    for url in urls {
+        let response = gameplay_get(&url, &tokens.access_token)?;
+        if !response.status().is_success() {
+            last_error = match response.status().as_u16() {
+                401 | 403 => {
+                    "GOG a refusé la session pour le temps de jeu : reconnecte la boutique \
+                             dans Paramètres → Boutiques & outils"
+                        .to_string()
+                }
+                status => format!("GOG a répondu {status} pour le temps de jeu"),
+            };
+            continue;
+        }
+        let body = response
+            .text()
+            .map_err(|_| "temps de jeu GOG illisible".to_string())?;
+        match parse_sessions_seconds(&body) {
+            Ok(seconds) => return Ok(seconds),
+            Err(error) => last_error = error,
+        }
+    }
+    Err(last_error)
+}
+
+/// Somme les sessions publiées par GOG. `time` est en minutes ; `seconds` et
+/// `duration` restent acceptés tels quels.
+pub fn parse_sessions_seconds(body: &str) -> Result<u64, String> {
+    let root: Value =
+        serde_json::from_str(body).map_err(|_| "temps de jeu GOG illisible".to_string())?;
+    for pointer in ["/total_time", "/totalTime", "/playtime", "/total_playtime"] {
+        if let Some(value) = root.pointer(pointer).and_then(Value::as_u64) {
+            return Ok(value);
+        }
+    }
+    let entries = root
+        .get("items")
+        .or_else(|| root.get("sessions"))
+        .and_then(Value::as_array)
+        .or_else(|| root.as_array())
+        .ok_or_else(|| "temps de jeu GOG introuvable".to_string())?;
+    let mut seconds: u64 = 0;
+    for entry in entries {
+        if let Some(value) = entry.get("seconds").and_then(Value::as_u64) {
+            seconds = seconds.saturating_add(value);
+            continue;
+        }
+        if let Some(value) = entry.get("duration").and_then(Value::as_u64) {
+            seconds = seconds.saturating_add(value);
+            continue;
+        }
+        if let Some(minutes) = entry
+            .get("time")
+            .or_else(|| entry.get("time_minutes"))
+            .and_then(Value::as_u64)
+        {
+            seconds = seconds.saturating_add(minutes.saturating_mul(60));
+        }
+    }
+    Ok(seconds)
+}
+
 fn iso8601(epoch: i64) -> String {
     let days = epoch.div_euclid(86_400);
     let seconds = epoch.rem_euclid(86_400);
@@ -780,6 +867,29 @@ mod tests {
         "loginTime": 1700000000.5
       }
     }"#;
+
+    #[test]
+    fn le_temps_de_jeu_gog_somme_les_sessions_et_accepte_plusieurs_formes() {
+        let body = r#"{"items":[
+            {"session_date":1700000000,"time":90},
+            {"session_date":1700003600,"time":30},
+            {"seconds":45}
+        ]}"#;
+        assert_eq!(
+            parse_sessions_seconds(body).unwrap(),
+            90 * 60 + 30 * 60 + 45
+        );
+        assert_eq!(
+            parse_sessions_seconds(r#"{"sessions":[{"duration":120}]}"#).unwrap(),
+            120
+        );
+        assert_eq!(
+            parse_sessions_seconds(r#"{"total_time":7200}"#).unwrap(),
+            7200
+        );
+        assert!(parse_sessions_seconds(r#"{"items":[]}"#).unwrap() == 0);
+        assert!(parse_sessions_seconds(r#"{"autre":1}"#).is_err());
+    }
 
     #[test]
     fn session_du_fichier_gogdl_est_lue_par_client() {

@@ -646,6 +646,69 @@ pub fn epic_achievements(app_name: &str) -> Result<AchievementInfo, String> {
     parse_achievements(&output.stdout)
 }
 
+/// Temps de jeu Epic. Legendary ne le publie pas dans ses listes, mais son
+/// `user.json` contient la session que le client Epic accepte : la lecture est
+/// faite ici, sans afficher ni journaliser le jeton.
+pub fn epic_playtime(artifact_id: &str) -> Result<u64, String> {
+    let text = std::fs::read_to_string(LegendaryAdapter::user_config_path()).map_err(|_| {
+        "session Epic absente : connecte la boutique dans Paramètres → Boutiques & outils"
+            .to_string()
+    })?;
+    let (account, token) = parse_user_session(&text)?;
+    let response = crate::artwork::http()
+        .get(format!(
+            "https://library-service.live.use1a.on.epicgames.com/library/api/public/playtime/account/{account}/artifact/{artifact_id}"
+        ))
+        .bearer_auth(token)
+        .timeout(Duration::from_secs(20))
+        .send()
+        .map_err(|_| "temps de jeu Epic injoignable".to_string())?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Epic a refusé le temps de jeu (HTTP {})",
+            response.status().as_u16()
+        ));
+    }
+    let body = response
+        .text()
+        .map_err(|_| "temps de jeu Epic illisible".to_string())?;
+    parse_playtime(&body)
+}
+
+/// Champs utiles de `user.json` : identifiant de compte et jeton d'accès.
+pub fn parse_user_session(text: &str) -> Result<(String, String), String> {
+    let root: serde_json::Value =
+        serde_json::from_str(text).map_err(|_| "session Epic illisible".to_string())?;
+    let account = root
+        .get("account_id")
+        .or_else(|| root.get("accountId"))
+        .or_else(|| root.get("account"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "session Epic sans identifiant de compte".to_string())?;
+    let token = root
+        .get("access_token")
+        .or_else(|| root.get("accessToken"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "session Epic sans jeton d'accès".to_string())?;
+    Ok((account.to_string(), token.to_string()))
+}
+
+/// `totalTime` est publié en secondes par le service de bibliothèque Epic.
+pub fn parse_playtime(body: &str) -> Result<u64, String> {
+    let root: serde_json::Value =
+        serde_json::from_str(body).map_err(|_| "temps de jeu Epic illisible".to_string())?;
+    let artifact = root.get("artifact").unwrap_or(&root);
+    let seconds = artifact
+        .get("totalTime")
+        .or_else(|| artifact.get("total_time"))
+        .or_else(|| root.get("totalTime"))
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| "Epic ne publie pas de temps de jeu pour ce jeu".to_string())?;
+    Ok(seconds)
+}
+
 pub fn merge_epic(existing: &[ProviderGame], refreshed_epic: &[ProviderGame]) -> Vec<ProviderGame> {
     merge_epic_with_verified_installs(existing, refreshed_epic, &[])
 }
@@ -788,6 +851,26 @@ mod tests {
             }
         }
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn le_temps_de_jeu_epic_est_lu_dans_la_session_et_la_reponse_de_bibliotheque() {
+        let session = r#"{"account_id":"abc123","displayName":"joueur","access_token":"jeton"}"#;
+        assert_eq!(
+            parse_user_session(session).unwrap(),
+            ("abc123".to_string(), "jeton".to_string())
+        );
+        assert!(parse_user_session(r#"{"displayName":"joueur"}"#).is_err());
+        assert!(parse_user_session("pas du json").is_err());
+        assert_eq!(
+            parse_playtime(r#"{"artifactId":"Anemone","totalTime":2440}"#).unwrap(),
+            2440
+        );
+        assert_eq!(
+            parse_playtime(r#"{"artifact":{"artifactId":"Anemone","totalTime":90}}"#).unwrap(),
+            90
+        );
+        assert!(parse_playtime(r#"{"artifactId":"Anemone"}"#).is_err());
     }
 
     #[test]

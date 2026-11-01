@@ -25,6 +25,7 @@ use eframe::egui::{
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Arc, Mutex};
 
 /// Paramètres du rendu, remplis depuis la ligne de commande (`quark --ui`).
 pub struct SnapshotOptions {
@@ -155,6 +156,82 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
                     last_synced: Some(crate::config::now_ts()),
                 },
             ];
+            // Fiche GOG liée au jeu sélectionné : montre le temps de jeu de la
+            // boutique et l'onglet Succès sans compte réel.
+            let gog_key = crate::providers::ProviderGameKey {
+                provider: crate::providers::Provider::Gog,
+                product_id: "1207658924".into(),
+            };
+            app.lib.provider_library.games.insert(
+                0,
+                crate::providers::ProviderGame {
+                    key: gog_key.clone(),
+                    title: app.lib.games[0].name.clone(),
+                    owned: true,
+                    install_path: None,
+                    custom_save_paths: Vec::new(),
+                    cover_url: None,
+                    install_exe: None,
+                    install_state: crate::providers::InstallState::NotInstalled,
+                    quark_game_id: Some(app.lib.games[0].id.clone()),
+                    capabilities: Default::default(),
+                    last_synced: Some(crate::config::now_ts()),
+                },
+            );
+            let rows = vec![
+                crate::providers::AchievementRow {
+                    key: "ACH_FIRST".into(),
+                    id: "1".into(),
+                    name: "Premier pas".into(),
+                    description: "Terminer le prologue.".into(),
+                    unlocked: true,
+                    progress: 1.0,
+                    session: false,
+                },
+                crate::providers::AchievementRow {
+                    key: "ACH_BOSS".into(),
+                    id: "2".into(),
+                    name: "Sans une égratignure".into(),
+                    description: "Vaincre le premier gardien sans être touché.".into(),
+                    unlocked: true,
+                    progress: 1.0,
+                    session: true,
+                },
+                crate::providers::AchievementRow {
+                    key: "ACH_ALL".into(),
+                    id: "3".into(),
+                    name: "Explorateur".into(),
+                    description: "Découvrir toutes les régions.".into(),
+                    unlocked: false,
+                    progress: 0.42,
+                    session: false,
+                },
+            ];
+            app.achievements.insert(
+                gog_key.clone(),
+                crate::app::AchievementsState::Ready(crate::providers::AchievementInfo {
+                    total: rows.len() as u32,
+                    unlocked: 2,
+                    rows,
+                }),
+            );
+            app.provider_playtime.insert(
+                gog_key.clone(),
+                crate::providers::PlaytimeState::Ready(45_230),
+            );
+            // Téléchargement factice : rend visible le panneau (débit, ETA,
+            // taille) sans lancer Legendary ni gogdl.
+            app.epic_installing = Some(gog_key);
+            app.epic_install_progress = Some(Arc::new(Mutex::new(
+                crate::providers::runner::InstallProgress {
+                    percent: Some(42.4),
+                    stage: "Téléchargement".into(),
+                    speed: Some("18,2 Mo/s".into()),
+                    eta: Some("6 min 12 s".into()),
+                    written: Some(4_500_000_000),
+                    total: Some(10_600_000_000),
+                },
+            )));
             app.credentials.steam_web_api_key = Some("[stored secret]".into());
             app.credentials.steam_id = Some("76561198000000000".into());
             if opts.providers_error {

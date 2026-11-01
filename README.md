@@ -5,7 +5,7 @@ alternative to Steam: deep black (AMOLED), list or grid view, a game banner with
 **Play** button, playtime, ProtonDB rating and official artwork, with Windows games launched
 through **Proton** — or through **umu-launcher**. Three tabs: a Steam store page, your
 library, and **Mes jeux** — the Steam, Epic and GOG titles you own or have installed, in one list,
-with save snapshots through Ludusavi.
+with save snapshots through Ludusavi, an in-game overlay and F12 screenshots.
 
 ## Features
 
@@ -202,10 +202,11 @@ with save snapshots through Ludusavi.
   **sorted by name**, a **search field** filters owned titles as you type (accents and case
   ignored), and each card shows the store's **vertical cover** — Steam from its CDN, GOG from
   the API v2 `boxArtImage` (`_glx_vertical_cover`), Epic from Legendary's metadata cache
-  (`keyImages`) — cached on disk and fetched one at a time when the page is open. A missing
-  cover falls back to a monogram instead of a blank tile. Wrong GOG covers from 1.0.3 are
-  ignored: the cache is versioned, and Epic covers are no longer parsed from the `legendary
-  info` summary (which never contained `keyImages`).
+  (`keyImages`) — cached on disk and fetched one at a time when the page is open. Epic and GOG
+  are tried first, then the Steam vertical cover for the same title, and only then a monogram;
+  wrong GOG covers from 1.0.3 are ignored because the cache is versioned. A **download** icon
+  in the top bar (badge = active transfers) opens a panel with each install's step, progress,
+  total size, speed, ETA and **Cancel**.
 - **Store sync starts on its own**: once the interface is up, every connected store is
   refreshed in the background. **Settings → Stores & tools** opens on a *Sync* section with a
   button per store, *Sync all*, the number of games, the last sync time and any error;
@@ -226,10 +227,11 @@ with save snapshots through Ludusavi.
   imported as soon as the game is adopted, in the background, without blocking the page.
 - **Save folders and snapshots from the same page**: custom save folders per installation,
   Ludusavi preview, backup, backup inventory and restore — see *Save files* below.
-- **Achievements**: **Succès…** reads Epic achievements from `legendary achievements
-  <app> --json` and GOG achievements from `gameplay.gog.com` with the gogdl session
-  (`client_id` = product id, `user_id` from the session), then shows unlocked/total, a
-  progress bar and the full list (hidden achievements stay hidden until unlocked).
+- **Achievements in the game page**: next to **Actualités**, the **Succès** tab reads Epic
+  achievements from `legendary achievements <app> --json` and GOG achievements from
+  `gameplay.gog.com` with the gogdl session (`client_id` = product id, `user_id` from the
+  session), then shows unlocked/total, a progress bar and the full list (hidden achievements
+  stay hidden until unlocked), with a **session** badge for unlocks reported during play.
   **Cloud saves are deliberately absent** — no verified source is wired, so Quark shows
   nothing rather than invented capabilities.
 - **Achievements from the running game**: every launch exports
@@ -244,6 +246,23 @@ with save snapshots through Ludusavi.
        -H "Authorization: Bearer $QUARK_ACHIEVEMENTS_TOKEN" \
        -d '{"game":"'"$QUARK_GAME_ID"'","achievement":"ACH_FIRST","name":"Premier pas"}'
   ```
+- **In-game overlay, on by default**: a game launched by Quark gets a transparent,
+  always-on-top, click-through HUD with its name, store and session clock. **F12**
+  (configurable in **Settings → In game**) saves a screenshot under
+  `~/.local/share/quark/screenshots/<game>/`; Epic and GOG captures also play a short chime
+  and raise a desktop notification, while Steam stays silent. The X11 shortcut covers Proton
+  games through XWayland; native Wayland capture uses `grim` or the desktop tools when
+  available.
+- **Store playtime**: a game linked to Epic or GOG shows the store's own playtime
+  (Epic library service, GOG Galaxy sessions) instead of Quark's local counter. Steam games
+  keep local playtime because Steam does not publish it.
+- **Uninstall from the card**: Epic and GOG cards offer **Uninstall…** with an explicit
+  confirmation; the install folder is removed, saves and the Proton prefix are kept, and
+  several uninstalls are queued. Removing a linked game from the library offers to delete its
+  files too.
+- **Installed folders checked live**: every five seconds Quark re-checks provider install
+  folders, so a game deleted outside Quark becomes **Not installed**, its dead path is
+  cleared and a toast explains why.
 - **Cleaner settings**: game and global settings use full-width rows — label and explanation
   on the left, an animated switch on the right — instead of mixed checkboxes. GameMode,
   MangoHud, PRIME, gamescope (with its resolution/FSR/fps block), Proton logging, umu,
@@ -409,6 +428,7 @@ criteria — is in [`docs/verification/ludusavi-config.md`](docs/verification/lu
 | `~/.local/share/quark/artwork/<id>/` | downloaded artwork (no network request while displaying) |
 | `~/.local/share/quark/prefixes/<id>/` | automatically created Proton prefixes |
 | `~/.local/share/quark/logs/<id>/session.log` | last session: command, environment, game and Wine output |
+| `~/.local/share/quark/screenshots/<game>/` | F12 screenshots (PNG, one folder per game) |
 | `~/.local/share/quark/tools/<name>` | managed tools (Legendary, gogdl, Ludusavi), digest-checked |
 | `~/.local/share/quark/ludusavi/config.yaml` | isolated Ludusavi config, custom save folders merged in |
 | `~/.local/share/quark/save-backups/<hash>/` | one save vault per provider installation |
@@ -548,10 +568,11 @@ src/main.rs         entry point + CLI (--doctor/--search/--fetch/--news/--scan/-
 src/app.rs          application state, egui loop, launching, playtime, toasts, ProtonDB
 src/ui_home.rs      Home page: recent-games carousel, Continue, sorted library grid
 src/ui_library.rs   Library tab: list/grid column + game pane (banner, Play, news, ProtonDB)
-src/ui_my_games.rs  Mes jeux: per-store tabs and grid, duplicate merge, install handoff, save folders
+src/ui_my_games.rs  Mes jeux: per-store tabs and grid, downloads panel, uninstall, duplicate merge, save folders
+src/overlay.rs      in-game HUD, X11 F12 shortcut, screenshots, chime and desktop notifications
 src/ui_store.rs     Store tab: specials, search, local recommendations, price display
 src/steam_store.rs  Steam Store catalogue, regional prices, local cache, recommendation ranking
-src/providers/      provider model, Steam/Epic/GOG adapters, managed tools, credentials, installs
+src/providers/      provider model, Steam/Epic/GOG adapters, playtime, achievements, managed tools, installs
 src/saves/          Ludusavi: isolated config merge, preview, backup, inventory, restore
 src/ui_dialogs.rs   adding a game, global settings, game settings, session log, pickers
 src/config.rs       data model, persistence (JSON), labels (playtime, dates, monogram)
@@ -575,7 +596,7 @@ src/snapshot.rs     off-screen software renderer (--ui), for visual checks
 
 ## Possible next steps
 
-- Achievements and cloud saves, but only once a per-store source can be verified.
+- Cloud saves, but only once a per-store source can be verified.
 - Steam achievements (no local API without owning the client session).
 - Favourites on the home page.
 - A time-range selector on the statistics page (7 days, 30 days, this year).

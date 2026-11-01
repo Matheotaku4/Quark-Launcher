@@ -11,6 +11,7 @@ pub mod gog_library;
 pub mod legendary;
 pub mod model;
 pub mod operations;
+pub mod playtime;
 pub mod runner;
 pub mod steam;
 pub mod tools;
@@ -20,6 +21,7 @@ pub use model::{
     CapabilityState, GameCapabilities, InstallState, Provider, ProviderGame, ProviderGameKey,
     ProviderLibrary,
 };
+pub use playtime::PlaytimeState;
 /// Vrai quand un fichier de session a été créé ou réécrit entre deux relevés.
 ///
 /// Legendary et gogdl sortent parfois avec le code 0 en cas de refus : c'est

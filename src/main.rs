@@ -11,6 +11,7 @@ mod disk;
 mod icon;
 mod images;
 mod news;
+mod overlay;
 mod proton;
 mod protondb;
 mod providers;

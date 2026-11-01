@@ -88,7 +88,10 @@ impl Default for InstallProgress {
 impl InstallProgress {
     pub fn label(&self) -> String {
         match self.percent {
-            Some(percent) => format!("{} · {percent:.1} %", self.stage),
+            Some(percent) => {
+                let percent = format!("{percent:.1}").replace('.', ",");
+                format!("{} · {percent} %", self.stage)
+            }
             None => self.stage.clone(),
         }
     }
@@ -99,12 +102,16 @@ impl InstallProgress {
         if total == 0 {
             return None;
         }
-        Some(format!("{}/{} Go", gigabytes(written), gigabytes(total)))
+        Some(format!(
+            "{} Go / {} Go au total",
+            gigabytes(written),
+            gigabytes(total)
+        ))
     }
 }
 
 fn gigabytes(bytes: u64) -> String {
-    format!("{:.1}", bytes as f64 / 1_073_741_824.0)
+    format!("{:.1}", bytes as f64 / 1_073_741_824.0).replace('.', ",")
 }
 
 /// Lit un pourcentage et des octets dans une ligne de progression. Legendary

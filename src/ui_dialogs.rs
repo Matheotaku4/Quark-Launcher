@@ -644,6 +644,59 @@ impl QuarkApp {
                             );
                         });
 
+                        section(ui, "EN JEU", &pal);
+                        if widgets::setting_toggle(
+                            ui,
+                            &pal,
+                            "Overlay et captures",
+                            Some(
+                                "Affiche un panneau au-dessus du jeu, prend une capture avec la \
+                                 touche choisie et notifie les succès Epic/GOG avec un son.",
+                            ),
+                            &mut self.lib.settings.overlay,
+                            "overlay_enabled",
+                        )
+                        .changed()
+                        {
+                            self.touch();
+                        }
+                        if self.lib.settings.overlay {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new("Touche de capture")
+                                        .size(12.0)
+                                        .color(pal.text_dim),
+                                );
+                                let changed = ui
+                                    .add_sized(
+                                        Vec2::new(80.0, 26.0),
+                                        egui::TextEdit::singleline(
+                                            &mut self.lib.settings.screenshot_key,
+                                        )
+                                        .hint_text("F12")
+                                        .font(egui::FontId::monospace(12.0)),
+                                    )
+                                    .changed();
+                                if changed {
+                                    let key = self.lib.settings.screenshot_key.trim().to_string();
+                                    self.lib.settings.screenshot_key = if key.is_empty() {
+                                        "F12".to_string()
+                                    } else {
+                                        key
+                                    };
+                                    self.touch();
+                                }
+                                ui.label(
+                                    RichText::new(
+                                        "F1–F12, Print… · appliquée au prochain lancement",
+                                    )
+                                    .size(10.5)
+                                    .color(pal.text_faint),
+                                );
+                            });
+                        }
+                        ui.add_space(6.0);
+
                         section(ui, "ACCUEIL", &pal);
                         if widgets::setting_toggle(
                             ui,
@@ -2295,6 +2348,11 @@ impl QuarkApp {
         };
         let mut cancel = false;
         let mut confirm = false;
+        // Installations de boutique réellement présentes pour ces fiches.
+        let linked: Vec<crate::providers::ProviderGameKey> = ids
+            .iter()
+            .filter_map(|id| self.linked_provider_install(id))
+            .collect();
 
         let modal = egui::Modal::new(egui::Id::new("quark_confirm_remove")).show(ctx, |ui| {
                 ui.set_min_width(520.0);
@@ -2308,14 +2366,30 @@ impl QuarkApp {
                     );
                 }
                 ui.add_space(6.0);
-                ui.label(
-                    RichText::new(
-                        "Le temps de jeu et les réglages du jeu seront perdus. Les fichiers du jeu \
-                         et le préfixe Proton ne sont pas touchés ; les artworks mis en cache sont supprimés.",
-                    )
-                    .size(11.5)
-                    .color(pal.text_faint),
-                );
+                if linked.is_empty() {
+                    ui.label(
+                        RichText::new(
+                            "Le temps de jeu et les réglages du jeu seront perdus. Les fichiers du jeu \
+                             et le préfixe Proton ne sont pas touchés ; les artworks mis en cache sont supprimés.",
+                        )
+                        .size(11.5)
+                        .color(pal.text_faint),
+                    );
+                } else {
+                    ui.label(
+                        RichText::new(
+                            "Le temps de jeu et les réglages du jeu seront perdus. Le jeu est \
+                             installé depuis une boutique : tu peux aussi supprimer ses fichiers.",
+                        )
+                        .size(11.5)
+                        .color(pal.text_dim),
+                    );
+                    ui.add_space(8.0);
+                    ui.checkbox(
+                        &mut self.remove_with_files,
+                        "Désinstaller aussi les fichiers du jeu (Epic/GOG)",
+                    );
+                }
                 ui.add_space(14.0);
                 ui.horizontal(|ui| {
                     if widgets::danger_button(ui, Vec2::new(150.0, 34.0), "Supprimer", &pal, true, Icon::Trash)
@@ -2334,6 +2408,7 @@ impl QuarkApp {
         }
 
         if confirm {
+            let uninstall_files = self.remove_with_files && !linked.is_empty();
             for id in &ids {
                 self.lib.remove(id);
                 self.news.remove(id);
@@ -2352,6 +2427,12 @@ impl QuarkApp {
             }
             let count = ids.len();
             self.confirm_remove.clear();
+            self.remove_with_files = false;
+            if uninstall_files {
+                for key in linked {
+                    self.start_uninstall(ctx, &key);
+                }
+            }
             self.touch();
             self.toast_info(if count > 1 {
                 format!("{count} jeux retirés de la bibliothèque")
@@ -2360,6 +2441,87 @@ impl QuarkApp {
             });
         } else if cancel {
             self.confirm_remove.clear();
+            self.remove_with_files = false;
+        }
+    }
+
+    /// Confirmation de désinstallation d'un jeu de boutique, ouverte depuis
+    /// « Mes jeux ». Le dossier seul est supprimé : sauvegardes et préfixe
+    /// restent en place.
+    pub(crate) fn confirm_uninstall_dialog(&mut self, ctx: &egui::Context) {
+        let Some(key) = self.confirm_uninstall.clone() else {
+            return;
+        };
+        let pal = self.pal;
+        let record = self
+            .lib
+            .provider_library
+            .games
+            .iter()
+            .find(|game| game.key == key)
+            .cloned();
+        let title = record
+            .as_ref()
+            .map(|game| game.title.clone())
+            .unwrap_or_else(|| key.product_id.clone());
+        let path = record
+            .as_ref()
+            .and_then(|game| game.install_path.clone())
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "dossier inconnu".to_string());
+        let provider = match key.provider {
+            crate::providers::Provider::Steam => "Steam",
+            crate::providers::Provider::Epic => "Epic Games",
+            crate::providers::Provider::Gog => "GOG",
+        };
+        let mut cancel = false;
+        let mut confirm = false;
+        let modal = egui::Modal::new(egui::Id::new("quark_confirm_uninstall")).show(ctx, |ui| {
+            ui.set_min_width(520.0);
+            ui.label(
+                RichText::new(format!("Désinstaller « {title} » ?"))
+                    .size(14.0)
+                    .color(pal.text),
+            );
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(format!(
+                    "Le dossier de {provider} sera supprimé du disque. Tes sauvegardes, ton \
+                     préfixe Proton et la fiche Quark restent en place."
+                ))
+                .size(11.5)
+                .color(pal.text_faint),
+            );
+            ui.add_space(4.0);
+            ui.label(RichText::new(path).size(10.5).color(pal.text_dim));
+            ui.add_space(14.0);
+            ui.horizontal(|ui| {
+                if widgets::danger_button(
+                    ui,
+                    Vec2::new(150.0, 34.0),
+                    "Désinstaller",
+                    &pal,
+                    true,
+                    Icon::Trash,
+                )
+                .clicked()
+                {
+                    confirm = true;
+                }
+                ui.add_space(8.0);
+                if widgets::ghost_button(ui, "Annuler", &pal, Icon::None).clicked() {
+                    cancel = true;
+                }
+            });
+        });
+        if modal.should_close() {
+            cancel = true;
+        }
+        if confirm {
+            self.confirm_uninstall = None;
+            self.start_uninstall(ctx, &key);
+        } else if cancel {
+            self.confirm_uninstall = None;
         }
     }
 }

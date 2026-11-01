@@ -29,6 +29,7 @@ impl QuarkApp {
         let mut open_game: Option<crate::providers::ProviderGameKey> = None;
         let mut adopt: Option<crate::providers::ProviderGameKey> = None;
         let mut show_achievements: Option<crate::providers::ProviderGameKey> = None;
+        let mut uninstall: Option<crate::providers::ProviderGameKey> = None;
         let mut sync_after_handoff = false;
 
         let busy = self.steam_sync_loading || self.epic_sync_loading || self.gog_sync_loading;
@@ -188,6 +189,11 @@ impl QuarkApp {
                                 self.provider_install_panel(ui, &pal);
                                 let needle = self.my_games_query.trim().to_string();
                                 let games = visible_games(&all_games, selected, &needle);
+                                let filter = (selected, needle.clone());
+                                if self.my_games_last_filter.as_ref() != Some(&filter) {
+                                    self.my_games_last_filter = Some(filter);
+                                    self.my_games_visible = 72;
+                                }
                                 if games.is_empty() {
                                     ui.add_space(20.0);
                                     ui.label(
@@ -214,22 +220,51 @@ impl QuarkApp {
                                         .color(pal.text_dim),
                                     );
                                 } else {
-                                    self.queue_provider_covers(ui.ctx(), &games);
+                                    // Une bibliothèque de 450 jeux ne construit
+                                    // plus 450 cartes à chaque image : les
+                                    // premières sont rendues, le reste arrive
+                                    // par paliers explicites.
+                                    let total = games.len();
+                                    let shown = self.my_games_visible.min(total);
+                                    self.queue_provider_covers(ui.ctx(), &games[..shown]);
                                     self.provider_grid(
                                         ui,
                                         &pal,
-                                        &games,
+                                        &games[..shown],
                                         &mut install,
                                         &mut install_epic,
                                         &mut install_gog,
                                         &mut adopt,
                                         &mut show_achievements,
+                                        &mut uninstall,
                                         &mut open_game,
                                         &mut preview_save,
                                         &mut inventory_save,
                                         &mut choose_save_folder,
                                         &mut remove_save_folder,
                                     );
+                                    if shown < total {
+                                        ui.add_space(10.0);
+                                        ui.horizontal(|ui| {
+                                            if widgets_button(
+                                                ui,
+                                                &format!(
+                                                    "Afficher {} jeux de plus",
+                                                    (total - shown).min(72)
+                                                ),
+                                                &pal,
+                                            ) {
+                                                self.my_games_visible = (shown + 72).min(total);
+                                            }
+                                            ui.label(
+                                                RichText::new(format!(
+                                                    "{shown} / {total} affichés"
+                                                ))
+                                                .size(10.5)
+                                                .color(pal.text_faint),
+                                            );
+                                        });
+                                    }
                                 }
                                 ui.add_space(16.0);
                                 for candidate in
@@ -350,7 +385,11 @@ impl QuarkApp {
             self.request_gog_install(ctx, &key);
         }
         if let Some(key) = show_achievements {
+            self.achievements_open = Some(key.clone());
             self.request_achievements(ctx, &key);
+        }
+        if let Some(key) = uninstall {
+            self.request_uninstall(&key);
         }
         if let Some(key) = adopt {
             self.adopt_provider_install(ctx, &key);
@@ -407,6 +446,7 @@ impl QuarkApp {
         install_gog: &mut Option<crate::providers::ProviderGameKey>,
         adopt: &mut Option<crate::providers::ProviderGameKey>,
         achievements: &mut Option<crate::providers::ProviderGameKey>,
+        uninstall: &mut Option<crate::providers::ProviderGameKey>,
         open: &mut Option<crate::providers::ProviderGameKey>,
         preview_save: &mut Option<crate::providers::ProviderGameKey>,
         inventory_save: &mut Option<crate::providers::ProviderGameKey>,
@@ -454,6 +494,7 @@ impl QuarkApp {
                         &mut *install_gog,
                         &mut *adopt,
                         &mut *achievements,
+                        &mut *uninstall,
                         &mut *open,
                         &mut *preview_save,
                         &mut *inventory_save,
@@ -592,6 +633,110 @@ impl QuarkApp {
         }
     }
 
+    /// Nombre de téléchargements visibles dans l'icône de la barre du haut.
+    pub(crate) fn active_install_count(&self) -> usize {
+        [
+            self.epic_installing.is_some(),
+            self.gog_installing.is_some(),
+        ]
+        .into_iter()
+        .filter(|active| *active)
+        .count()
+    }
+
+    /// Panneau de l'icône « Téléchargements » : pourcentage, étape, taille
+    /// totale, débit, ETA et annulation, pour Epic comme pour GOG.
+    pub(crate) fn downloads_popup(&mut self, ui: &mut egui::Ui, pal: &crate::theme::Palette) {
+        ui.set_min_width(330.0);
+        let mut active = Vec::new();
+        if let Some(key) = self.epic_installing.clone() {
+            active.push((Provider::Epic, key, self.epic_install_progress.clone()));
+        }
+        if let Some(key) = self.gog_installing.clone() {
+            active.push((Provider::Gog, key, self.gog_install_progress.clone()));
+        }
+        if active.is_empty() {
+            ui.label(
+                RichText::new("Aucun téléchargement en cours.")
+                    .size(11.5)
+                    .color(pal.text_dim),
+            );
+            ui.label(
+                RichText::new("Lance une installation depuis Mes jeux.")
+                    .size(10.5)
+                    .color(pal.text_faint),
+            );
+            return;
+        }
+        for (provider, key, progress) in active {
+            let title = self
+                .lib
+                .provider_library
+                .games
+                .iter()
+                .find(|game| game.key == key)
+                .map(|game| game.title.clone())
+                .unwrap_or_else(|| key.product_id.clone());
+            let snapshot = progress
+                .as_ref()
+                .and_then(|progress| progress.lock().ok().map(|state| state.clone()))
+                .unwrap_or_default();
+            egui::Frame::new()
+                .fill(pal.surface)
+                .stroke(egui::Stroke::new(1.0_f32, pal.border))
+                .corner_radius(6.0)
+                .inner_margin(8.0)
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(format!("{} · {title}", provider_name(provider)))
+                                .size(11.5)
+                                .strong()
+                                .color(pal.text),
+                        );
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui.small_button("Annuler").clicked() {
+                                self.cancel_provider_install(provider);
+                            }
+                        });
+                    });
+                    let mut detail = vec![snapshot.label()];
+                    if let Some(sizes) = snapshot.sizes() {
+                        detail.push(sizes);
+                    }
+                    if let Some(speed) = &snapshot.speed {
+                        detail.push(speed.clone());
+                    }
+                    if let Some(eta) = &snapshot.eta {
+                        detail.push(format!("reste {eta}"));
+                    }
+                    ui.label(
+                        RichText::new(detail.join(" · "))
+                            .size(10.5)
+                            .color(pal.text_dim),
+                    );
+                    let (bar, _) = ui
+                        .allocate_exact_size(Vec2::new(ui.available_width(), 4.0), Sense::hover());
+                    ui.painter().rect_filled(bar, 2.0, pal.border);
+                    if let Some(percent) = snapshot.percent {
+                        let fill = (percent / 100.0).clamp(0.0, 1.0);
+                        ui.painter().rect_filled(
+                            Rect::from_min_size(
+                                bar.min,
+                                Vec2::new(bar.width() * fill, bar.height()),
+                            ),
+                            2.0,
+                            pal.accent,
+                        );
+                    }
+                    ui.ctx()
+                        .request_repaint_after(std::time::Duration::from_millis(180));
+                });
+            ui.add_space(4.0);
+        }
+    }
+
     /// Couverture d'un jeu de boutique : d'abord celle téléchargée depuis la
     /// boutique (Steam, GOG, Epic), sinon celle du jeu Quark de même identifiant
     /// Steam ou de même titre. Aucun téléchargement n'est déclenché ici.
@@ -701,6 +846,7 @@ fn provider_card(
     install_gog: &mut Option<crate::providers::ProviderGameKey>,
     adopt: &mut Option<crate::providers::ProviderGameKey>,
     achievements: &mut Option<crate::providers::ProviderGameKey>,
+    uninstall: &mut Option<crate::providers::ProviderGameKey>,
     open: &mut Option<crate::providers::ProviderGameKey>,
     preview_save: &mut Option<crate::providers::ProviderGameKey>,
     inventory_save: &mut Option<crate::providers::ProviderGameKey>,
@@ -806,6 +952,7 @@ fn provider_card(
                         install_gog,
                         adopt,
                         achievements,
+                        uninstall,
                         preview_save,
                         inventory_save,
                         choose_save_folder,
@@ -923,6 +1070,7 @@ fn actions_menu(
     install_gog: &mut Option<crate::providers::ProviderGameKey>,
     adopt: &mut Option<crate::providers::ProviderGameKey>,
     achievements: &mut Option<crate::providers::ProviderGameKey>,
+    uninstall: &mut Option<crate::providers::ProviderGameKey>,
     preview_save: &mut Option<crate::providers::ProviderGameKey>,
     inventory_save: &mut Option<crate::providers::ProviderGameKey>,
     choose_save_folder: &mut Option<crate::providers::ProviderGameKey>,
@@ -970,6 +1118,13 @@ fn actions_menu(
                 && ui.button("Ajouter à la bibliothèque").clicked()
             {
                 *adopt = Some(game.key.clone());
+                ui.close();
+            }
+            if installed
+                && matches!(game.key.provider, Provider::Epic | Provider::Gog)
+                && ui.button("Désinstaller…").clicked()
+            {
+                *uninstall = Some(game.key.clone());
                 ui.close();
             }
             if installed && ludusavi_ready {

@@ -775,6 +775,42 @@ impl QuarkApp {
             Some(crate::app::ProtonDbState::Failed(err)) => err.clone(),
             None => "—".to_string(),
         };
+        // Fiche de boutique liée : son temps de jeu remplace le temps local
+        // dans l'en-tête et dans les informations.
+        let store_record = self.provider_record_for_game(&id).cloned();
+        // Steam ne publie pas ce temps : ces fiches gardent le temps local,
+        // tandis qu'Epic et GOG affichent la valeur de la boutique.
+        let store_playtime_record = store_record
+            .as_ref()
+            .filter(|record| record.key.provider != crate::providers::Provider::Steam);
+        let store_label = store_playtime_record.and_then(|record| {
+            Some(match record.key.provider {
+                crate::providers::Provider::Epic => "Epic Games",
+                crate::providers::Provider::Gog => "GOG",
+                crate::providers::Provider::Steam => "Steam",
+            })
+        });
+        let store_playtime = store_playtime_record
+            .and_then(|record| self.provider_playtime.get(&record.key))
+            .cloned();
+        let playtime_hover = match &store_playtime {
+            Some(crate::providers::PlaytimeState::Failed(message)) => Some(message.clone()),
+            _ => None,
+        };
+        let playtime_text = match (&store_playtime_record, store_playtime) {
+            (Some(_), Some(crate::providers::PlaytimeState::Ready(seconds))) => {
+                format!(
+                    "{} de jeu · {}",
+                    crate::config::human_playtime(seconds),
+                    store_label.unwrap_or("boutique")
+                )
+            }
+            (Some(_), Some(crate::providers::PlaytimeState::Failed(_))) => {
+                format!("Temps {} indisponible", store_label.unwrap_or("boutique"))
+            }
+            (Some(_), _) => format!("Temps {}…", store_label.unwrap_or("boutique")),
+            (None, _) => format!("{} de jeu", game.playtime_label()),
+        };
 
         // Fond de la fiche : la bannière du jeu, floutée et assombrie, au lieu
         // d'un noir complet. Peinte avant la zone défilante, donc derrière.
@@ -989,14 +1025,18 @@ impl QuarkApp {
                                         config::human_playtime(running_secs.max(1))
                                     )
                                 } else {
-                                    format!("{} de jeu", game.playtime_label())
+                                    playtime_text.clone()
                                 };
-                                ui.label(RichText::new(text).size(13.0).color(pal.text_dim));
+                                let playtime =
+                                    ui.label(RichText::new(text).size(13.0).color(pal.text_dim));
+                                if let Some(message) = &playtime_hover {
+                                    playtime.on_hover_text(message);
+                                }
                                 if game.last_played.is_some() {
                                     ui.add_space(16.0);
                                     ui.label(
                                         RichText::new(format!(
-                                            "\u{b7}  jou\u{e9} {}",
+                                            "·  jou\u{e9} {}",
                                             game.last_played_label()
                                         ))
                                         .size(12.5)
@@ -1113,9 +1153,39 @@ impl QuarkApp {
                 }
 
                 // -----------------------------------------------------------------
-                // Actualités du jeu, juste sous la bannière (comme la fiche Steam)
+                // Onglets de la fiche : actualités et succès, juste sous la bannière.
                 // -----------------------------------------------------------------
-                self.news_section(ui, &game, &pal, width);
+                ui.add_space(18.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(23.0);
+                    if widgets::tab(
+                        ui,
+                        "Actualités",
+                        self.detail_tab == crate::app::DetailTab::News,
+                        &pal,
+                    )
+                    .clicked()
+                    {
+                        self.detail_tab = crate::app::DetailTab::News;
+                    }
+                    ui.add_space(2.0);
+                    if widgets::tab(
+                        ui,
+                        "Succès",
+                        self.detail_tab == crate::app::DetailTab::Achievements,
+                        &pal,
+                    )
+                    .clicked()
+                    {
+                        self.detail_tab = crate::app::DetailTab::Achievements;
+                    }
+                });
+                match self.detail_tab {
+                    crate::app::DetailTab::News => self.news_section(ui, &game, &pal, width),
+                    crate::app::DetailTab::Achievements => {
+                        self.achievements_section(ui, store_record.as_ref(), &pal, width);
+                    }
+                }
 
                 // -----------------------------------------------------------------
                 // Bloc d'informations (masqué par défaut, bouton \u{24d8})
@@ -1134,7 +1204,7 @@ impl QuarkApp {
 
                     let artworks_label = match (game.steam_app_id, game.sgdb_id) {
                         (Some(appid), Some(sgdb)) => {
-                            format!("Steam AppID {appid} \u{b7} SteamGridDB #{sgdb}")
+                            format!("Steam AppID {appid} · SteamGridDB #{sgdb}")
                         }
                         (Some(appid), None) => format!("Steam AppID {appid}"),
                         (None, Some(sgdb)) => format!("SteamGridDB #{sgdb}"),
@@ -1193,7 +1263,7 @@ impl QuarkApp {
                         ),
                         ("Artworks", artworks_label),
                         ("ProtonDB", protondb_label),
-                        ("Temps de jeu", game.playtime_label()),
+                        ("Temps de jeu", playtime_text.clone()),
                         ("Dernière session", game.last_played_label()),
                     ];
 
@@ -1352,6 +1422,216 @@ impl QuarkApp {
         });
     }
 
+    /// Succès du jeu, dans la fiche et non dans une fenêtre : même source que
+    /// la fenêtre de « Mes jeux », fusionnée avec les déblocages de session.
+    fn achievements_section(
+        &mut self,
+        ui: &mut egui::Ui,
+        record: Option<&crate::providers::ProviderGame>,
+        pal: &Palette,
+        width: f32,
+    ) {
+        ui.add_space(27.0);
+        let Some(record) = record else {
+            ui.horizontal(|ui| {
+                ui.add_space(32.0);
+                ui.vertical(|ui| {
+                    ui.set_max_width((width - 64.0).max(200.0));
+                    ui.label(
+                        RichText::new(
+                            "Ce jeu n'est lié à aucune boutique : ses succès ne peuvent pas \
+                             être lus. Ajoute-le depuis Mes jeux pour relier sa fiche.",
+                        )
+                        .size(11.5)
+                        .color(pal.text_dim),
+                    );
+                });
+            });
+            return;
+        };
+        let key = record.key.clone();
+        let provider = key.provider;
+        let provider_label = match provider {
+            crate::providers::Provider::Steam => "Steam",
+            crate::providers::Provider::Epic => "Epic Games",
+            crate::providers::Provider::Gog => "GOG",
+        };
+        if provider == crate::providers::Provider::Steam {
+            ui.horizontal(|ui| {
+                ui.add_space(32.0);
+                ui.label(
+                    RichText::new(
+                        "Steam n'expose pas ses succès sans sa propre session : \
+                         ils ne sont pas lisibles depuis Quark.",
+                    )
+                    .size(11.5)
+                    .color(pal.text_dim),
+                );
+            });
+            return;
+        }
+        let mut state = self.achievements.get(&key).cloned();
+        if state.is_none() {
+            self.request_achievements(ui.ctx(), &key);
+            state = self.achievements.get(&key).cloned();
+        }
+        let state = match state {
+            Some(crate::app::AchievementsState::Ready(mut info)) => {
+                if let Some(unlocks) = self.session_unlocks.get(&key) {
+                    crate::providers::achievements::merge_session(&mut info, unlocks);
+                }
+                Some(crate::app::AchievementsState::Ready(info))
+            }
+            other => other,
+        };
+
+        ui.horizontal(|ui| {
+            ui.add_space(32.0);
+            ui.vertical(|ui| {
+                ui.set_max_width((width - 64.0).max(200.0));
+                ui.label(
+                    RichText::new(format!("SUCCÈS {provider_label}"))
+                        .size(11.0)
+                        .color(pal.text_faint),
+                );
+                match &state {
+                    Some(crate::app::AchievementsState::Ready(info)) if info.total > 0 => {
+                        let ratio = info.unlocked as f32 / info.total as f32;
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new(format!("{} / {} débloqués", info.unlocked, info.total))
+                                .size(15.0)
+                                .strong()
+                                .color(pal.text),
+                        );
+                        ui.add_space(6.0);
+                        let (bar, _) = ui.allocate_exact_size(
+                            Vec2::new((width - 190.0).max(200.0), 5.0),
+                            Sense::hover(),
+                        );
+                        ui.painter().rect_filled(bar, 2.5, pal.border);
+                        ui.painter().rect_filled(
+                            Rect::from_min_size(
+                                bar.min,
+                                Vec2::new(bar.width() * ratio.clamp(0.0, 1.0), bar.height()),
+                            ),
+                            2.5,
+                            pal.accent,
+                        );
+                    }
+                    _ => {}
+                }
+            });
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.add_space(32.0);
+                if widgets::ghost_button(ui, "Actualiser", pal, Icon::Refresh).clicked() {
+                    self.achievements.remove(&key);
+                }
+            });
+        });
+        ui.add_space(12.0);
+        match state {
+            None | Some(crate::app::AchievementsState::Loading) => {
+                ui.horizontal(|ui| {
+                    ui.add_space(32.0);
+                    ui.add(egui::Spinner::new().size(14.0));
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new(format!("Lecture des succès {provider_label}…"))
+                            .size(11.5)
+                            .color(pal.text_dim),
+                    );
+                });
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(200));
+            }
+            Some(crate::app::AchievementsState::Failed(message)) => {
+                ui.horizontal(|ui| {
+                    ui.add_space(32.0);
+                    ui.vertical(|ui| {
+                        ui.set_max_width((width - 64.0).max(200.0));
+                        ui.label(RichText::new(message).size(11.5).color(pal.danger));
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new(
+                                "Les succès demandent une session connectée (Paramètres → \
+                                 Boutiques & outils) et un jeu qui en publie.",
+                            )
+                            .size(10.5)
+                            .color(pal.text_faint),
+                        );
+                    });
+                });
+            }
+            Some(crate::app::AchievementsState::Ready(info)) if info.total == 0 => {
+                ui.horizontal(|ui| {
+                    ui.add_space(32.0);
+                    ui.label(
+                        RichText::new("Ce jeu ne publie aucun succès.")
+                            .size(11.5)
+                            .color(pal.text_dim),
+                    );
+                });
+            }
+            Some(crate::app::AchievementsState::Ready(info)) => {
+                let mut rows: Vec<&crate::providers::AchievementRow> = info.rows.iter().collect();
+                rows.sort_by(|left, right| {
+                    right
+                        .unlocked
+                        .cmp(&left.unlocked)
+                        .then_with(|| left.name.cmp(&right.name))
+                });
+                for row in rows {
+                    ui.horizontal(|ui| {
+                        ui.add_space(32.0);
+                        let (dot, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+                        ui.painter().circle_filled(
+                            dot.center(),
+                            4.0,
+                            if row.unlocked { pal.accent } else { pal.border },
+                        );
+                        ui.vertical(|ui| {
+                            ui.set_max_width((width - 80.0).max(200.0));
+                            ui.spacing_mut().item_spacing.y = 1.0;
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new(&row.name).size(12.0).color(if row.unlocked {
+                                        pal.text
+                                    } else {
+                                        pal.text_dim
+                                    }),
+                                );
+                                if row.session {
+                                    ui.label(
+                                        RichText::new("session")
+                                            .size(9.0)
+                                            .strong()
+                                            .color(pal.accent),
+                                    );
+                                }
+                                if !row.unlocked && row.progress > 0.0 {
+                                    ui.label(
+                                        RichText::new(format!("{:.0} %", row.progress * 100.0))
+                                            .size(9.5)
+                                            .color(pal.text_faint),
+                                    );
+                                }
+                            });
+                            if !row.description.is_empty() {
+                                ui.label(
+                                    RichText::new(&row.description)
+                                        .size(10.5)
+                                        .color(pal.text_faint),
+                                );
+                            }
+                        });
+                    });
+                    ui.add_space(6.0);
+                }
+            }
+        }
+    }
+
     /// Actualités du jeu (flux public Steam), affichées sous la bannière.
     ///
     /// Un clic déplie le billet sur place : le texte et son image sont déjà
@@ -1421,7 +1701,7 @@ impl QuarkApp {
             ui.horizontal(|ui| {
                 ui.add_space(32.0);
                 ui.label(
-                    RichText::new(format!("Actualités indisponibles \u{b7} {message}"))
+                    RichText::new(format!("Actualités indisponibles · {message}"))
                         .size(12.0)
                         .color(pal.danger),
                 );
@@ -1478,7 +1758,7 @@ impl QuarkApp {
                                 }
                                 meta.push(config::human_ago(item.date));
                                 ui.label(
-                                    RichText::new(meta.join("  \u{b7}  "))
+                                    RichText::new(meta.join("  ·  "))
                                         .size(11.0)
                                         .color(pal.text_faint),
                                 );

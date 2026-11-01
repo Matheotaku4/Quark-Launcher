@@ -142,34 +142,98 @@ pub fn ensure(game: &ProviderGame) -> Result<(PathBuf, Option<String>), String> 
     if let Some(path) = cached(&game.key) {
         return Ok((path, None));
     }
-    let resolve = || -> Result<String, String> {
-        match game.key.provider {
-            Provider::Gog => super::gog_library::cover_url(&game.key.product_id),
-            _ => super::legendary::epic_cover_url(&game.key.product_id),
-        }
-    };
-    let url = match game.key.provider {
-        // Même si une URL est enregistrée, l'API est la seule source fiable.
-        Provider::Gog => resolve()?,
-        _ => match game.cover_url.clone() {
-            Some(url) => url,
-            None => resolve()?,
+    let mut errors: Vec<String> = Vec::new();
+    let candidate = match game.key.provider {
+        Provider::Steam => steam_cover_url(&game.key.product_id).or_else(|| game.cover_url.clone()),
+        Provider::Gog => match super::gog_library::cover_url(&game.key.product_id) {
+            Ok(url) => Some(url),
+            Err(error) => {
+                errors.push(error);
+                None
+            }
+        },
+        Provider::Epic => match game.cover_url.clone() {
+            Some(url) => Some(url),
+            None => match super::legendary::epic_cover_url(&game.key.product_id) {
+                Ok(url) => Some(url),
+                Err(error) => {
+                    errors.push(error);
+                    None
+                }
+            },
         },
     };
-    match download(&url, &game.key) {
-        Ok(path) => Ok((path, Some(url))),
-        // Une URL mémorisée peut expirer : on redemande une adresse fraîche.
-        Err(error) => {
-            if game.cover_url.is_some() {
-                let fresh = resolve()?;
-                if fresh != url {
-                    let path = download(&fresh, &game.key)?;
-                    return Ok((path, Some(fresh)));
-                }
-            }
-            Err(error)
+    if let Some(url) = candidate {
+        match download(&url, &game.key) {
+            Ok(path) => return Ok((path, Some(url))),
+            Err(error) => errors.push(error),
         }
     }
+    // Repli Steam : la jaquette verticale de la fiche du même titre. Elle est
+    // préférée à un monogramme, sans jamais remplacer une image de la boutique
+    // quand celle-ci existe.
+    if game.key.provider != Provider::Steam {
+        if let Some((url, _app_id)) = steam_fallback(&game.title) {
+            match download(&url, &game.key) {
+                Ok(path) => return Ok((path, Some(url))),
+                Err(error) => errors.push(error),
+            }
+        }
+    }
+    Err(errors
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| "aucune couverture disponible".to_string()))
+}
+
+/// Jaquette verticale d'un jeu Steam à partir de son AppID.
+pub fn steam_cover_url(app_id: &str) -> Option<String> {
+    let app_id = app_id.trim();
+    if app_id.is_empty() || !app_id.chars().all(|character| character.is_ascii_digit()) {
+        return None;
+    }
+    Some(format!(
+        "https://cdn.cloudflare.steamstatic.com/steam/apps/{app_id}/library_600x900.jpg"
+    ))
+}
+
+/// Cherche le jeu sur le catalogue Steam et renvoie la jaquette du meilleur
+/// titre. Aucune image n'est inventée si la recherche ne correspond pas.
+fn steam_fallback(title: &str) -> Option<(String, u32)> {
+    let client = crate::artwork::http();
+    let items = crate::steam_store::search(&client, title, "english", "US").ok()?;
+    let wanted = normalize(title);
+    if wanted.is_empty() {
+        return None;
+    }
+    let exact = items
+        .iter()
+        .find(|item| normalize(&item.name) == wanted)
+        .or_else(|| {
+            items.iter().find(|item| {
+                let candidate = normalize(&item.name);
+                candidate.contains(&wanted) || wanted.contains(&candidate)
+            })
+        })?;
+    let url = steam_cover_url(&exact.app_id.to_string())?;
+    Some((url, exact.app_id))
+}
+
+fn normalize(title: &str) -> String {
+    title
+        .to_lowercase()
+        .chars()
+        .map(|character| {
+            if character.is_alphanumeric() {
+                character
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]
@@ -199,6 +263,21 @@ mod tests {
         let missing = cache_path(&key(Provider::Gog, "does-not-exist-42"));
         let _ = std::fs::remove_file(&missing);
         assert!(cached(&key(Provider::Gog, "does-not-exist-42")).is_none());
+    }
+
+    #[test]
+    fn la_jaquette_steam_de_repli_ne_devine_pas_l_appid_et_normalise_le_titre() {
+        assert_eq!(
+            steam_cover_url("620").unwrap(),
+            "https://cdn.cloudflare.steamstatic.com/steam/apps/620/library_600x900.jpg"
+        );
+        assert!(steam_cover_url("app_123").is_none());
+        assert!(steam_cover_url("").is_none());
+        assert_eq!(
+            normalize("The Witcher 3: Wild Hunt"),
+            "the witcher 3 wild hunt"
+        );
+        assert_eq!(normalize("  Portal  2  "), "portal 2");
     }
 
     #[test]

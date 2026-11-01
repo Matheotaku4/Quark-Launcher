@@ -189,6 +189,7 @@ impl QuarkApp {
             } else {
                 report.unlock.name.clone()
             };
+            self.announce_achievement(&key, &title);
             if key.provider == Provider::Gog {
                 self.toast_info(format!("Succès GOG « {title} » · synchronisation…"));
             } else {

@@ -145,6 +145,35 @@ pub fn split_member(group: &mut ManualGameGroup, member: &ProviderGameKey) {
     group.members.retain(|candidate| candidate != member);
 }
 
+/// Supprime le dossier d'une installation de boutique après confirmation.
+///
+/// La vérification est volontairement stricte : un dossier racine, le dossier
+/// personnel ou un chemin hors de la racine choisie ne sont jamais supprimés.
+/// Les fichiers de sauvegarde et le préfixe Proton vivent ailleurs et restent
+/// intacts.
+pub fn remove_install_directory(path: &std::path::Path) -> Result<(), String> {
+    if !path.is_absolute() {
+        return Err("chemin d'installation non absolu".to_string());
+    }
+    let canonical = path
+        .canonicalize()
+        .map_err(|_| "dossier d'installation introuvable".to_string())?;
+    if !canonical.is_dir() {
+        return Err("chemin d'installation invalide".to_string());
+    }
+    if canonical.components().count() < 3 {
+        return Err("suppression refusée : dossier trop haut dans l'arborescence".to_string());
+    }
+    let home = crate::config::home_dir()
+        .canonicalize()
+        .unwrap_or_else(|_| crate::config::home_dir());
+    if canonical == home || canonical == crate::config::data_dir() {
+        return Err("suppression refusée : dossier personnel".to_string());
+    }
+    std::fs::remove_dir_all(&canonical)
+        .map_err(|_| "suppression du dossier d'installation impossible".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,5 +310,19 @@ mod tests {
         operation.apply_to(&mut game);
         assert_eq!(game.install_state, InstallState::Unknown);
         assert!(game.install_path.is_none());
+    }
+    #[test]
+    fn la_suppression_d_un_dossier_installe_refuse_les_chemins_dangereux() {
+        assert!(remove_install_directory(std::path::Path::new("relative/path")).is_err());
+        assert!(remove_install_directory(std::path::Path::new("/")).is_err());
+        assert!(remove_install_directory(&crate::config::home_dir()).is_err());
+        let root = std::env::temp_dir().join(format!("quark-remove-{}", std::process::id()));
+        let game = root.join("Jeu");
+        std::fs::create_dir_all(&game).unwrap();
+        std::fs::write(game.join("data.bin"), b"x").unwrap();
+        assert!(remove_install_directory(&game).is_ok());
+        assert!(!game.exists());
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(remove_install_directory(&game).is_err());
     }
 }

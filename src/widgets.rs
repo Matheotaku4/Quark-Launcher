@@ -29,6 +29,8 @@ pub enum Icon {
     Close,
     /// Maison de la page d'accueil.
     Home,
+    /// Téléchargements en cours.
+    Download,
     ArrowLeft,
     ArrowRight,
 }
@@ -343,6 +345,32 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
                 ),
                 1.0,
                 color,
+            );
+        }
+        Icon::Download => {
+            let stroke = Stroke::new((s * 0.09).max(1.4), color);
+            painter.line_segment(
+                [
+                    Pos2::new(c.x, c.y - s * 0.36),
+                    Pos2::new(c.x, c.y + s * 0.10),
+                ],
+                stroke,
+            );
+            painter.add(Shape::convex_polygon(
+                vec![
+                    Pos2::new(c.x - s * 0.17, c.y - s * 0.03),
+                    Pos2::new(c.x + s * 0.17, c.y - s * 0.03),
+                    Pos2::new(c.x, c.y + s * 0.20),
+                ],
+                color,
+                Stroke::NONE,
+            ));
+            painter.line_segment(
+                [
+                    Pos2::new(c.x - s * 0.33, c.y + s * 0.32),
+                    Pos2::new(c.x + s * 0.33, c.y + s * 0.32),
+                ],
+                stroke,
             );
         }
         Icon::ArrowLeft | Icon::ArrowRight => {

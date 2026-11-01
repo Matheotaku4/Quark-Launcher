@@ -496,6 +496,11 @@ pub struct Settings {
     /// Garde Quark dans la zone de notification : la croix ne quitte plus
     /// l'application, elle la range dans l'icône.
     pub tray_icon: bool,
+    /// Overlay en jeu : petit panneau toujours au-dessus, captures et
+    /// notifications, affiché tant qu'un jeu tourne.
+    pub overlay: bool,
+    /// Touche de capture d'écran globale (F12 par défaut).
+    pub screenshot_key: String,
     /// Fait défiler le carrousel de l'accueil tout seul.
     pub carousel_auto: bool,
     /// Intervalle du défilement automatique, en secondes.
@@ -527,6 +532,8 @@ impl Default for Settings {
             default_env: Vec::new(),
             defaults_migrated: false,
             tray_icon: true,
+            overlay: true,
+            screenshot_key: "F12".to_string(),
             carousel_auto: true,
             carousel_secs: 8.0,
             home_genre: String::new(),
