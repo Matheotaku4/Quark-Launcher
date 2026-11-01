@@ -108,6 +108,7 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
     // Sans ces chargeurs, toute image distante ou `file://` (miniatures de la
     // recherche, propositions d'artworks) s'afficherait comme une erreur.
     egui_extras::install_image_loaders(&ctx);
+    crate::fonts::install(&ctx);
 
     let mut app = QuarkApp::new(&ctx);
     if opts.demo {
@@ -248,18 +249,58 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
                 crate::providers::PlaytimeState::Ready(45_230),
             );
             // Téléchargement factice : rend visible le panneau (débit, ETA,
-            // taille) sans lancer Legendary ni gogdl.
-            app.epic_installing = Some(gog_key);
-            app.epic_install_progress = Some(Arc::new(Mutex::new(
-                crate::providers::runner::InstallProgress {
+            // taille) sans lancer Legendary ni gogdl. Le sender est conservé
+            // pour que le job reste affiché pendant tout le rendu.
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::mem::forget(tx);
+            app.provider_install_jobs.push(crate::app::ProviderInstallJob {
+                key: gog_key,
+                progress: Arc::new(Mutex::new(crate::providers::runner::InstallProgress {
                     percent: Some(42.4),
                     stage: "Téléchargement".into(),
                     speed: Some("18,2 MB/s".into()),
                     eta: Some("6 min 12 s".into()),
                     written: Some(4_500_000_000),
                     total: Some(10_600_000_000),
-                },
-            )));
+                })),
+                cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                rx,
+            });
+            // Grande bibliothèque de boutiques : reproduit le nombre réel de
+            // cartes pour vérifier la virtualisation et le défilement.
+            if let Some(count) = opts.demo_count {
+                let sources: Vec<(String, String)> = app
+                    .lib
+                    .games
+                    .iter()
+                    .map(|game| (game.name.clone(), game.id.clone()))
+                    .collect();
+                app.lib.provider_library.games = (0..count)
+                    .map(|index| {
+                        let source = &sources[index % sources.len()];
+                        crate::providers::ProviderGame {
+                            key: crate::providers::ProviderGameKey {
+                                provider: crate::providers::Provider::Steam,
+                                product_id: format!("demo-{index:04}"),
+                            },
+                            title: source.0.clone(),
+                            owned: true,
+                            install_path: None,
+                            custom_save_paths: Vec::new(),
+                            cover_url: None,
+                            install_exe: None,
+                            install_state: if index % 4 == 0 {
+                                crate::providers::InstallState::Installed
+                            } else {
+                                crate::providers::InstallState::NotInstalled
+                            },
+                            quark_game_id: Some(source.1.clone()),
+                            capabilities: Default::default(),
+                            last_synced: Some(crate::config::now_ts()),
+                        }
+                    })
+                    .collect();
+            }
             app.credentials.steam_web_api_key = Some("[stored secret]".into());
             app.credentials.steam_id = Some("76561198000000000".into());
             if opts.providers_error {

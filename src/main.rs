@@ -8,6 +8,7 @@ mod app;
 mod artwork;
 mod config;
 mod disk;
+mod fonts;
 mod game_search;
 mod icon;
 mod images;
@@ -71,6 +72,7 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(|cc| {
             egui_extras::install_image_loaders(&cc.egui_ctx);
+            fonts::install(&cc.egui_ctx);
             let mut app = QuarkApp::new(&cc.egui_ctx);
             app.startup();
             Ok(Box::new(app))

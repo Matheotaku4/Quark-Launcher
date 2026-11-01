@@ -1,3 +1,35 @@
+## Quark 1.0.8 — Mes jeux fluide, téléchargements simultanés et Archivo
+
+- **Cartes de « Mes jeux » réparées** : le pied de carte utilisait un `scope_builder`
+  qui faisait avancer le curseur de la rangée. La carte suivante commençait donc avant la
+  fin de la précédente et les couvertures se chevauchaient. Le pied est maintenant un enfant
+  isolé et clipé, avec 60 px réservés sous l'image : les cartes restent séparées, y compris
+  avec une police agrandie.
+- **Défilement virtualisé** : seules les lignes visibles sont construites et décodées. Le
+  bouton « Afficher 72 jeux de plus » disparaît : toute la bibliothèque défile d'un seul
+  tenant, sans blocage ni pic de mémoire au moment de l'affichage. Une bibliothèque de 450
+  jeux de boutique a été rendue en 1360×860 et 1024×640.
+- **Trois téléchargements simultanés** : chaque installation Epic/GOG est une tâche
+  indépendante, avec son propre pourcentage, sa vitesse, son ETA et son bouton Annuler. Le
+  panneau de la barre du haut et la page « Mes jeux » listent toutes les tâches ; une même
+  fiche ne peut pas être lancée deux fois. La limite est de trois pour ne pas saturer la
+  connexion et le disque.
+- **Images de boutique dans « Personnaliser »** : une fiche Steam du même titre est
+  prioritaire lors du rattachement d'une installation GOG/Epic. Sa jaquette et sa bannière
+  sont complétées si elles manquent, et les images déjà en cache apparaissent sous chaque
+  emplacement avec un bouton **Depuis la boutique** (GOG, Epic, Steam). Une image existante
+  n'est jamais remplacée sans action de l'utilisateur.
+- **Police Archivo** : l'interface embarque Archivo (licence SIL OFL, fichier dans
+  `assets/fonts/`) au lieu de dépendre de la police du système. Les polices egui restent en
+  secours pour les glyphes absents.
+- **Recherche multi-sites** : les résultats continuent d'ouvrir la page du site dans le
+  navigateur. Aucun lien direct d'hébergeur n'est extrait et aucune archive n'est téléchargée
+  ou décompressée automatiquement.
+- **Vérifications** : `cargo test --offline` (218 tests) et
+  `cargo build --release --locked --offline` passent ; le rendu de 450 jeux de boutique a été
+  contrôlé. Les téléchargements simultanés et le rattachement des images n'ont pas pu être
+  testés avec de vrais comptes Epic/GOG dans cet environnement.
+
 ## Quark 1.0.7 — 660 jeux espacés, recherche multi-sites et bannières importées
 
 - **Grille virtualisée** : la vue grille ne construit et ne décode plus que les lignes

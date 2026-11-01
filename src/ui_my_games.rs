@@ -188,11 +188,6 @@ impl QuarkApp {
                                 self.provider_install_panel(ui, &pal);
                                 let needle = self.my_games_query.trim().to_string();
                                 let games = visible_games(&all_games, selected, &needle);
-                                let filter = (selected, needle.clone());
-                                if self.my_games_last_filter.as_ref() != Some(&filter) {
-                                    self.my_games_last_filter = Some(filter);
-                                    self.my_games_visible = 72;
-                                }
                                 if games.is_empty() {
                                     ui.add_space(20.0);
                                     ui.label(
@@ -219,17 +214,13 @@ impl QuarkApp {
                                         .color(pal.text_dim),
                                     );
                                 } else {
-                                    // Une bibliothèque de 450 jeux ne construit
-                                    // plus 450 cartes à chaque image : les
-                                    // premières sont rendues, le reste arrive
-                                    // par paliers explicites.
-                                    let total = games.len();
-                                    let shown = self.my_games_visible.min(total);
-                                    self.queue_provider_covers(ui.ctx(), &games[..shown]);
+                                    // Seules les lignes visibles sont construites
+                                    // et décodées : une bibliothèque de plusieurs
+                                    // centaines de jeux garde un défilement fluide.
                                     self.provider_grid(
                                         ui,
                                         &pal,
-                                        &games[..shown],
+                                        &games,
                                         &mut install,
                                         &mut install_request,
                                         &mut adopt,
@@ -241,28 +232,6 @@ impl QuarkApp {
                                         &mut choose_save_folder,
                                         &mut remove_save_folder,
                                     );
-                                    if shown < total {
-                                        ui.add_space(10.0);
-                                        ui.horizontal(|ui| {
-                                            if widgets_button(
-                                                ui,
-                                                &format!(
-                                                    "Afficher {} jeux de plus",
-                                                    (total - shown).min(72)
-                                                ),
-                                                &pal,
-                                            ) {
-                                                self.my_games_visible = (shown + 72).min(total);
-                                            }
-                                            ui.label(
-                                                RichText::new(format!(
-                                                    "{shown} / {total} affichés"
-                                                ))
-                                                .size(10.5)
-                                                .color(pal.text_faint),
-                                            );
-                                        });
-                                    }
                                 }
                                 ui.add_space(16.0);
                                 for candidate in
@@ -454,75 +423,92 @@ impl QuarkApp {
             .floor()
             .max(120.0);
         let cover_h = tile_w * crate::theme::COVER_RATIO;
-        let tile_h = cover_h + 54.0;
+        // Les 60 px du pied de carte couvrent le titre et la ligne boutique
+        // même avec une police agrandie ; le clip du pied empêche tout débord.
+        let tile_h = cover_h + 60.0;
+        let row_step = tile_h + gap;
+        let rows = games.len().div_ceil(columns);
+        let grid_top = ui.cursor().top();
+        let width = ui.available_width();
+        // Le rectangle de clip est en coordonnées écran, comme `grid_top` ; une
+        // ligne de marge de chaque côté évite un trou pendant un défilement
+        // rapide.
+        let clip = ui.clip_rect();
+        let first = (((clip.top() - grid_top) / row_step).floor().max(0.0) as usize)
+            .saturating_sub(1);
+        let last = ((((clip.bottom() - grid_top) / row_step).ceil().max(0.0) as usize) + 1)
+            .min(rows);
         // Même cascade que la bibliothèque, pour que les deux pages se
         // répondent quand on passe de l'une à l'autre.
         let age = self.page_at.elapsed().as_secs_f32();
+        let mut visible = Vec::new();
 
-        let mut index = 0;
-        while index < games.len() {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 0.0;
-                for slot in 0..columns {
-                    let Some(game) = games.get(index + slot) else {
-                        break;
-                    };
-                    if slot > 0 {
-                        ui.add_space(gap);
-                    }
-                    let cover = self.cover_for(game);
-                    let texture = cover
-                        .as_ref()
-                        .and_then(|path| self.texture_thumb(ui.ctx(), path));
-                    let appear = ((age - (index + slot) as f32 * 0.02) / 0.3).clamp(0.0, 1.0);
-                    if appear < 1.0 {
-                        ui.ctx().request_repaint();
-                    }
-                    provider_card(
-                        ui,
-                        pal,
-                        game,
-                        Vec2::new(tile_w, tile_h),
-                        appear,
-                        texture.as_ref(),
-                        &mut *install,
-                        &mut *install_request,
-                        &mut *adopt,
-                        &mut *achievements,
-                        &mut *uninstall,
-                        &mut *open,
-                        &mut *preview_save,
-                        &mut *inventory_save,
-                        &mut *choose_save_folder,
-                        &mut *remove_save_folder,
-                    );
+        for row in first..last {
+            let index = row * columns;
+            let row_rect = Rect::from_min_size(
+                Pos2::new(ui.max_rect().left(), grid_top + row as f32 * row_step),
+                Vec2::new(width, tile_h),
+            );
+            let mut row_ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(row_rect)
+                    .layout(Layout::left_to_right(Align::Center)),
+            );
+            row_ui.set_clip_rect(row_rect.intersect(ui.clip_rect()));
+            row_ui.spacing_mut().item_spacing.x = 0.0;
+            for slot in 0..columns {
+                let Some(game) = games.get(index + slot) else {
+                    break;
+                };
+                if slot > 0 {
+                    row_ui.add_space(gap);
                 }
-            });
-            ui.add_space(gap);
-            index += columns;
+                let cover = self.cover_for(game);
+                let texture = cover
+                    .as_ref()
+                    .and_then(|path| self.texture_thumb(row_ui.ctx(), path));
+                let appear = ((age - slot as f32 * 0.02) / 0.3).clamp(0.0, 1.0);
+                if appear < 1.0 {
+                    row_ui.ctx().request_repaint();
+                }
+                visible.push(game.clone());
+                provider_card(
+                    &mut row_ui,
+                    pal,
+                    game,
+                    Vec2::new(tile_w, tile_h),
+                    appear,
+                    texture.as_ref(),
+                    &mut *install,
+                    &mut *install_request,
+                    &mut *adopt,
+                    &mut *achievements,
+                    &mut *uninstall,
+                    &mut *open,
+                    &mut *preview_save,
+                    &mut *inventory_save,
+                    &mut *choose_save_folder,
+                    &mut *remove_save_folder,
+                );
+            }
         }
+
+        // Réserve la hauteur totale : la barre de défilement représente toute
+        // la bibliothèque, pas seulement les lignes déjà construites.
+        ui.allocate_space(Vec2::new(width, rows as f32 * row_step));
+        self.queue_provider_covers(ui.ctx(), &visible);
     }
 
     /// Bandeau des installations fournisseur en cours : pourcentage, étape,
     /// débit, ETA et bouton d'annulation. Sans lui, un téléchargement de
     /// plusieurs gigaoctets ne montrait qu'un « Installation… » figé.
     fn provider_install_panel(&mut self, ui: &mut egui::Ui, pal: &crate::theme::Palette) {
-        let active = [
-            (
-                Provider::Epic,
-                self.epic_installing.clone(),
-                self.epic_install_progress.clone(),
-            ),
-            (
-                Provider::Gog,
-                self.gog_installing.clone(),
-                self.gog_install_progress.clone(),
-            ),
-        ];
-        for (provider, key, progress) in active {
-            let Some(key) = key else {
-                continue;
-            };
+        let jobs: Vec<_> = self
+            .provider_install_jobs
+            .iter()
+            .map(|job| (job.key.clone(), job.progress.clone()))
+            .collect();
+        for (key, progress) in jobs {
             let title = self
                 .lib
                 .provider_library
@@ -532,8 +518,9 @@ impl QuarkApp {
                 .map(|game| game.title.clone())
                 .unwrap_or_else(|| key.product_id.clone());
             let snapshot = progress
-                .as_ref()
-                .and_then(|progress| progress.lock().ok().map(|state| state.clone()))
+                .lock()
+                .ok()
+                .map(|state| state.clone())
                 .unwrap_or_default();
             egui::Frame::new()
                 .fill(pal.surface)
@@ -547,7 +534,7 @@ impl QuarkApp {
                             ui.label(
                                 RichText::new(format!(
                                     "Installation {} · {title}",
-                                    provider_name(provider)
+                                    provider_name(key.provider)
                                 ))
                                 .size(12.5)
                                 .strong()
@@ -578,7 +565,7 @@ impl QuarkApp {
                             )
                             .clicked()
                             {
-                                self.cancel_provider_install(provider);
+                                self.cancel_provider_install(&key);
                             }
                         });
                     });
@@ -599,13 +586,10 @@ impl QuarkApp {
                                     pal.accent,
                                 );
                             }
-                            // Repaint régulier : la barre suit le processus.
                             ui.ctx()
                                 .request_repaint_after(std::time::Duration::from_millis(180));
                         }
                         None => {
-                            // Sans pourcentage, une bande qui respire : on sait
-                            // que le travail avance, sans inventer un chiffre.
                             let phase = ui.input(|input| input.time) as f32;
                             let pulse = (phase * 0.9).sin() * 0.5 + 0.5;
                             let width = bar.width() * 0.22;
@@ -630,26 +614,18 @@ impl QuarkApp {
 
     /// Nombre de téléchargements visibles dans l'icône de la barre du haut.
     pub(crate) fn active_install_count(&self) -> usize {
-        [
-            self.epic_installing.is_some(),
-            self.gog_installing.is_some(),
-        ]
-        .into_iter()
-        .filter(|active| *active)
-        .count()
+        self.provider_install_jobs.len()
     }
 
     /// Panneau de l'icône « Téléchargements » : pourcentage, étape, taille
     /// totale, débit, ETA et annulation, pour Epic comme pour GOG.
     pub(crate) fn downloads_popup(&mut self, ui: &mut egui::Ui, pal: &crate::theme::Palette) {
         ui.set_min_width(330.0);
-        let mut active = Vec::new();
-        if let Some(key) = self.epic_installing.clone() {
-            active.push((Provider::Epic, key, self.epic_install_progress.clone()));
-        }
-        if let Some(key) = self.gog_installing.clone() {
-            active.push((Provider::Gog, key, self.gog_install_progress.clone()));
-        }
+        let active: Vec<_> = self
+            .provider_install_jobs
+            .iter()
+            .map(|job| (job.key.clone(), job.progress.clone()))
+            .collect();
         if active.is_empty() {
             ui.label(
                 RichText::new("Aucun téléchargement en cours.")
@@ -663,7 +639,7 @@ impl QuarkApp {
             );
             return;
         }
-        for (provider, key, progress) in active {
+        for (key, progress) in active {
             let title = self
                 .lib
                 .provider_library
@@ -673,8 +649,9 @@ impl QuarkApp {
                 .map(|game| game.title.clone())
                 .unwrap_or_else(|| key.product_id.clone());
             let snapshot = progress
-                .as_ref()
-                .and_then(|progress| progress.lock().ok().map(|state| state.clone()))
+                .lock()
+                .ok()
+                .map(|state| state.clone())
                 .unwrap_or_default();
             egui::Frame::new()
                 .fill(pal.surface)
@@ -685,14 +662,14 @@ impl QuarkApp {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
                         ui.label(
-                            RichText::new(format!("{} · {title}", provider_name(provider)))
+                            RichText::new(format!("{} · {title}", provider_name(key.provider)))
                                 .size(11.5)
                                 .strong()
                                 .color(pal.text),
                         );
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             if ui.small_button("Annuler").clicked() {
-                                self.cancel_provider_install(provider);
+                                self.cancel_provider_install(&key);
                             }
                         });
                     });
@@ -858,7 +835,7 @@ fn provider_card(
         .animate_bool_with_time(id.with("hover"), response.hovered(), 0.12);
     painter.rect_filled(rect, 8.0, pal.panel);
     // Le survol soulève la couverture de 3 px, en plus de la resserrer.
-    let cover_rect = Rect::from_min_size(rect.min, Vec2::new(rect.width(), rect.height() - 54.0))
+    let cover_rect = Rect::from_min_size(rect.min, Vec2::new(rect.width(), rect.height() - 60.0))
         .shrink(2.0 * hover)
         .translate(Vec2::new(0.0, -3.0 * hover));
     match texture {
@@ -907,37 +884,39 @@ fn provider_card(
         Pos2::new(rect.left() + 8.0, cover_rect.bottom() + 4.0),
         Pos2::new(rect.right() - 6.0, rect.bottom() - 2.0),
     );
-    ui.scope_builder(
+    // Un enfant dédié ne fait pas avancer le curseur de la rangée : avec un
+    // `scope_builder`, le pied de carte décalait la carte suivante et les
+    // couvertures se chevauchaient.
+    let mut footer_ui = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(footer)
             .layout(Layout::top_down(Align::Min)),
-        |ui| {
-            ui.spacing_mut().item_spacing.y = 1.0;
-            ui.add(
-                egui::Label::new(
-                    RichText::new(&game.title)
-                        .size(12.0)
-                        .strong()
-                        .color(pal.text),
-                )
-                .truncate(),
-            );
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 5.0;
-                ui.label(
-                    RichText::new(buffer_or(&game.key.provider))
-                        .size(10.0)
-                        .color(pal.text_faint),
-                );
-                ui.label(RichText::new("·").size(10.0).color(pal.text_faint));
-                if installed {
-                    ui.colored_label(status_color, RichText::new(status).size(10.0));
-                } else {
-                    ui.label(RichText::new(status).size(10.0).color(status_color));
-                }
-            });
-        },
     );
+    footer_ui.set_clip_rect(footer);
+    footer_ui.spacing_mut().item_spacing.y = 1.0;
+    footer_ui.add(
+        egui::Label::new(
+            RichText::new(&game.title)
+                .size(12.0)
+                .strong()
+                .color(pal.text),
+        )
+        .truncate(),
+    );
+    footer_ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 5.0;
+        ui.label(
+            RichText::new(buffer_or(&game.key.provider))
+                .size(10.0)
+                .color(pal.text_faint),
+        );
+        ui.label(RichText::new("·").size(10.0).color(pal.text_faint));
+        if installed {
+            ui.colored_label(status_color, RichText::new(status).size(10.0));
+        } else {
+            ui.label(RichText::new(status).size(10.0).color(status_color));
+        }
+    });
 
     // Clic gauche ou droit sur un jeu possédé mais absent : confirmation
     // d'installation (taille + dossier + Installer). Sur un jeu installé (ou

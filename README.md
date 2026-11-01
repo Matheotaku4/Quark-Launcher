@@ -165,7 +165,8 @@ with save snapshots through Ludusavi, an in-game overlay and F12 screenshots.
   repaint while a value is actually moving, so an idle window stays idle and the launcher
   keeps its responsiveness.
 - **AMOLED theme** (`#000000`) by default, plus a "Graphite" variant (softer black) in the
-  settings.
+  settings. The interface uses the embedded **Archivo** typeface (`assets/fonts/`, SIL Open
+  Font License), so it looks the same on every distribution without installing a system font.
 - **Proton**: automatic runtime detection (`steamapps/common/Proton*` and
   `compatibilitytools.d/*`, including Flatpak/Snap), runtime chosen **per game** or as a
   default, a **default Proton prefix** in the settings and a **per-game override**.
@@ -203,8 +204,9 @@ with save snapshots through Ludusavi, an in-game overlay and F12 screenshots.
   fills its section as soon as it answers, with title, size/version or release category, and
   a link that opens the page in your browser. AnkerGames, GameBounty and Kryoto expose JSON
   search endpoints, scene.cat returns its results in HTML, and AstralGames' JavaScript-only
-  search page is read through a text reader. Quark never downloads a file from those sites;
-  if a source fails or returns nothing, a button opens its own search page.
+  search page is read through a text reader. Quark never downloads or extracts an archive
+  from those sites: the result buttons only open the page in your browser. If a source fails
+  or returns nothing, a button opens its own search page.
 - **Mes jeux**: Steam (read from local `appmanifest_*.acf`), Epic (through Legendary) and
   GOG (through the GOG API) games in one grid — owned, installed, or both — with one tab per
   store and a counter, the detected install path, and what the store can actually do. The
@@ -215,13 +217,15 @@ with save snapshots through Ludusavi, an in-game overlay and F12 screenshots.
   (`keyImages`) — cached on disk and fetched up to four at a time when the page is open. Epic
   and GOG are tried first, then the Steam vertical cover for the same title, and only then a
   monogram; wrong GOG covers from 1.0.3 are ignored because the cache is versioned. Grid cards
-  use 360 px thumbnails so a page of 72 games does not upload full-size covers to the GPU. A
+  use 360 px thumbnails, and only the rows actually on screen are built and decoded: a library
+  of several hundred store games scrolls continuously instead of growing a **Show more** batch,
+  and card footers are clipped so covers can never overlap the next row. A
   **left or right click** on an uninstalled game opens the install sheet (download size,
   destination folder, **Changer…** and **Installer**); the folder defaults to
   **Settings → New games → Store install folder** (`~/Games`). Installed games open their
-  action menu on right click. A **download** icon in the top
-  bar (badge = active transfers) opens a panel with each install's step, progress, total size,
-  speed in **MB/s**, ETA and **Cancel**.
+  action menu on right click. Up to **three Epic/GOG downloads run at once**, each with its own
+  progress and **Cancel**; the **download** icon in the top bar (badge = active transfers)
+  lists every transfer with its step, total size, speed in **MB/s** and ETA.
 - **Store sync starts on its own**: once the interface is up, every connected store is
   refreshed in the background. **Settings → Stores & tools** opens on a *Sync* section with a
   button per store, *Sync all*, the number of games, the last sync time and any error;
@@ -240,10 +244,13 @@ with save snapshots through Ludusavi, an in-game overlay and F12 screenshots.
   card opens an installed game or prepares the install sheet, and a successful install creates
   the matching Quark entry (default settings, **cover and wide banner**, store link) so the
   game lands in the library ready to play. A linked game that only had its poster is completed
-  in the background, without replacing images you chose yourself. While an install runs, **Mes jeux** shows its own progress bar —
-  percentage, step, size, speed, ETA in **MB/s** parsed from Legendary/gogdl output — with a
-  **Cancel** button. Covers are imported as soon as the game is adopted, in the background,
-  without blocking the page.
+  in the background, without replacing images you chose yourself. A GOG/Epic cover and banner
+  are attached to the matching **Steam** entry when one exists, so they are available from
+  **Personnaliser → Depuis la boutique** (the current image is never overwritten). While one or
+  several installs run, **Mes jeux** shows a progress bar per game — percentage, step, size,
+  speed, ETA in **MB/s** parsed from Legendary/gogdl output — each with its own **Cancel**
+  button. Covers are imported as soon as the game is adopted, in the background, without
+  blocking the page.
 - **Save folders and snapshots from the same page**: custom save folders per installation,
   Ludusavi preview, backup, backup inventory and restore — see *Save files* below.
 - **Achievements in the game page**: next to **Actualités**, the **Succès** tab reads Epic
@@ -611,6 +618,7 @@ src/stats.rs        session history: hours per week, heat-map calendar, streak, 
 src/disk.rs         disk usage of prefixes, artwork, logs, updates and game folders
 src/steamlib.rs     installed Steam library import (appmanifest_*.acf)
 src/icon.rs         embedded Quark icon (window and executable)
+src/fonts.rs        embedded Archivo typeface for the whole interface
 src/tray.rs         notification-area icon (StatusNotifierItem via ksni) + `quark --tray`
 src/images.rs       texture cache, rounded/cropped drawing, accent and luminance analysis
 src/proton.rs       Proton runtime detection + launch command (options, umu, anti-cheat)

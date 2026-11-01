@@ -2174,6 +2174,8 @@ impl QuarkApp {
         let mut browse: Option<AssetKind> = None;
         let mut clear: Option<AssetKind> = None;
         let mut pick: Option<(AssetKind, usize)> = None;
+        let mut provider_pick: Option<(AssetKind, PathBuf)> = None;
+        let provider_images = self.provider_art_choices(&game_id);
 
         // Miniatures actuelles, décodées une seule fois par image.
         let handles: Vec<(AssetKind, Option<egui::TextureHandle>)> = AssetKind::ALL
@@ -2282,6 +2284,32 @@ impl QuarkApp {
                                         clear = Some(*asset);
                                     }
                                 });
+                                let shop_images: Vec<_> = provider_images
+                                    .iter()
+                                    .filter(|(kind, _, _)| kind == asset)
+                                    .collect();
+                                if !shop_images.is_empty() {
+                                    ui.add_space(3.0);
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.label(
+                                            RichText::new("Depuis la boutique :")
+                                                .size(10.5)
+                                                .color(pal.text_faint),
+                                        );
+                                        for (kind, path, source) in shop_images {
+                                            if ui
+                                                .small_button(format!(
+                                                    "{source} · {}",
+                                                    kind.label()
+                                                ))
+                                                .on_hover_text(path.display().to_string())
+                                                .clicked()
+                                            {
+                                                provider_pick = Some((*kind, path.clone()));
+                                            }
+                                        }
+                                    });
+                                }
                             });
                         });
                         ui.add_space(6.0);
@@ -2364,6 +2392,9 @@ impl QuarkApp {
         }
         if let Some((asset, index)) = pick {
             self.apply_customize_pick(ctx, asset, index);
+        }
+        if let Some((asset, path)) = provider_pick {
+            self.import_provider_art(asset, &path);
         }
         if open_settings {
             self.customize = None;

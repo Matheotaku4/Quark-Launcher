@@ -289,6 +289,21 @@ pub enum PickerTarget {
     SaveFolder(crate::providers::ProviderGameKey),
 }
 
+/// Trois téléchargements simultanés au plus : assez pour lancer une file de
+/// jeux, sans saturer la connexion ou le disque d'une machine modeste.
+pub const MAX_CONCURRENT_INSTALLS: usize = 3;
+
+/// Une installation Epic ou GOG indépendante, suivie jusqu'à son résultat.
+pub struct ProviderInstallJob {
+    pub key: crate::providers::ProviderGameKey,
+    pub progress: Arc<Mutex<crate::providers::runner::InstallProgress>>,
+    pub cancel: Arc<AtomicBool>,
+    pub rx: Receiver<(
+        crate::providers::ProviderGameKey,
+        Result<crate::providers::ProviderGame, String>,
+    )>,
+}
+
 /// Confirmation d'installation d'un jeu Epic/GOG : taille annoncée et dossier
 /// choisi avant de lancer le téléchargement. La taille est lue en arrière-plan
 /// par `legendary info` / `gogdl info`, jamais inventée.
@@ -684,23 +699,13 @@ pub struct QuarkApp {
     >,
     /// Fenêtre d'installation ouverte depuis une carte (taille + dossier).
     pub install_request: Option<InstallRequest>,
-    /// Avancement des installations fournisseur, lu à chaque image par l'UI.
-    pub epic_install_progress: Option<Arc<Mutex<crate::providers::runner::InstallProgress>>>,
-    pub epic_install_cancel: Option<Arc<AtomicBool>>,
-    pub gog_install_progress: Option<Arc<Mutex<crate::providers::runner::InstallProgress>>>,
-    pub gog_install_cancel: Option<Arc<AtomicBool>>,
+    /// Installations fournisseur en cours : plusieurs jeux à la fois.
+    pub provider_install_jobs: Vec<ProviderInstallJob>,
     /// Dernier relevé de couvertures manquantes : la liste n'est pas reparcourue
     /// à chaque image.
     pub provider_cover_scan_at: Option<Instant>,
     /// Installation GOG (gogdl), même principe que l'installation Epic.
     pub gog_install_pending: Option<crate::providers::ProviderGameKey>,
-    pub gog_installing: Option<crate::providers::ProviderGameKey>,
-    pub gog_install_rx: Option<
-        Receiver<(
-            crate::providers::ProviderGameKey,
-            Result<crate::providers::ProviderGame, String>,
-        )>,
-    >,
     /// Succès Epic lus à la demande (jamais au démarrage).
     pub achievements: HashMap<crate::providers::ProviderGameKey, AchievementsState>,
     pub achievements_job: Option<
@@ -727,10 +732,6 @@ pub struct QuarkApp {
     /// Désinstallation d'un jeu de boutique, après confirmation.
     pub confirm_uninstall: Option<crate::providers::ProviderGameKey>,
     pub uninstall_rx: Option<Receiver<(crate::providers::ProviderGameKey, Result<(), String>)>>,
-    /// Nombre de cartes de « Mes jeux » rendues : une bibliothèque de 450 jeux
-    /// ne construit plus 450 cartes à chaque image.
-    pub my_games_visible: usize,
-    pub(crate) my_games_last_filter: Option<(Option<crate::providers::Provider>, String)>,
     /// Panneau des téléchargements ouvert depuis l'icône de la barre du haut.
     pub downloads_open: bool,
     /// Choix de la confirmation « retirer de la bibliothèque » : supprimer
@@ -743,13 +744,6 @@ pub struct QuarkApp {
     pub frames_alive: u32,
     pub epic_owned_fallback: Option<Vec<crate::providers::ProviderGame>>,
     pub epic_install_pending: Option<crate::providers::ProviderGameKey>,
-    pub epic_installing: Option<crate::providers::ProviderGameKey>,
-    pub epic_install_rx: Option<
-        Receiver<(
-            crate::providers::ProviderGameKey,
-            Result<crate::providers::ProviderGame, String>,
-        )>,
-    >,
     pub steam_id_draft: String,
     /// Métadonnées Steam à charger, une requête à la fois.
     pub meta_job: Option<MetadataJob>,
@@ -896,13 +890,8 @@ impl QuarkApp {
             session_unlocks: crate::session_sync::load_session_unlocks(),
             gog_unlock_job: None,
             install_request: None,
-            epic_install_progress: None,
-            epic_install_cancel: None,
-            gog_install_progress: None,
-            gog_install_cancel: None,
+            provider_install_jobs: Vec::new(),
             gog_install_pending: None,
-            gog_installing: None,
-            gog_install_rx: None,
             achievements: HashMap::new(),
             achievements_job: None,
             achievements_open: None,
@@ -914,8 +903,6 @@ impl QuarkApp {
             install_probe_rx: None,
             confirm_uninstall: None,
             uninstall_rx: None,
-            my_games_visible: 72,
-            my_games_last_filter: None,
             downloads_open: false,
             remove_with_files: false,
             uninstall_queue: VecDeque::new(),
@@ -923,8 +910,6 @@ impl QuarkApp {
             frames_alive: 0,
             epic_owned_fallback: None,
             epic_install_pending: None,
-            epic_installing: None,
-            epic_install_rx: None,
             managed_tools: std::array::from_fn(|_| None),
             provider_login: None,
             tool_jobs: std::array::from_fn(|_| None),
@@ -1012,8 +997,7 @@ impl QuarkApp {
         self.poll_steam_sync(ctx);
         self.poll_epic_sync(ctx);
         self.poll_gog_sync(ctx);
-        self.poll_epic_install(ctx);
-        self.poll_gog_install(ctx);
+        self.poll_provider_installs(ctx);
         self.poll_install_size(ctx);
         self.poll_provider_covers(ctx);
         self.poll_achievements(ctx);
@@ -1031,8 +1015,7 @@ impl QuarkApp {
             self.ensure_store(ctx);
         }
 
-        if self.epic_install_rx.is_some()
-            || self.gog_install_rx.is_some()
+        if !self.provider_install_jobs.is_empty()
             || self.provider_cover_job.is_some()
             || self.achievements_job.is_some()
             || self.gog_unlock_job.is_some()
@@ -1041,9 +1024,7 @@ impl QuarkApp {
                 .site_search
                 .as_ref()
                 .is_some_and(|search| search.pending > 0)
-            || self.epic_install_progress.is_some()
             || self.install_request.is_some()
-            || self.gog_install_progress.is_some()
             || self.playtime_job.is_some()
             || self.install_probe_rx.is_some()
             || self.uninstall_rx.is_some()
@@ -1893,6 +1874,61 @@ impl QuarkApp {
                     game.artwork.set(kind, path);
                 }
                 self.toast_info(format!("{} importée", kind.label()));
+                self.touch();
+            }
+            Err(err) => self.toast_error(format!("Import impossible : {err}")),
+        }
+    }
+
+    /// Images déjà téléchargées pour les fiches de boutique reliées à ce jeu.
+    /// Elles sont proposées dans « Personnaliser » sans nouvelle requête.
+    pub(crate) fn provider_art_choices(
+        &self,
+        game_id: &str,
+    ) -> Vec<(AssetKind, PathBuf, &'static str)> {
+        let mut choices: Vec<(AssetKind, PathBuf, &'static str)> = Vec::new();
+        for record in &self.lib.provider_library.games {
+            if record.quark_game_id.as_deref() != Some(game_id) {
+                continue;
+            }
+            let source = match record.key.provider {
+                crate::providers::Provider::Steam => "Steam",
+                crate::providers::Provider::Epic => "Epic Games",
+                crate::providers::Provider::Gog => "GOG",
+            };
+            for (kind, path) in [
+                (
+                    AssetKind::Cover,
+                    crate::providers::covers::cached(&record.key),
+                ),
+                (
+                    AssetKind::Hero,
+                    crate::providers::covers::cached_hero(&record.key),
+                ),
+            ] {
+                if let Some(path) = path {
+                    if !choices.iter().any(|(_, existing, _)| existing == &path) {
+                        choices.push((kind, path, source));
+                    }
+                }
+            }
+        }
+        choices
+    }
+
+    /// Importe une image de boutique dans les artworks du jeu, sans toucher aux
+    /// autres emplacements.
+    pub fn import_provider_art(&mut self, kind: AssetKind, source: &std::path::Path) {
+        let Some(game_id) = self.customize.as_ref().map(|c| c.game_id.clone()) else {
+            return;
+        };
+        let dir = crate::config::artwork_root().join(&game_id);
+        match artwork::import_file(source, &dir, kind) {
+            Ok(path) => {
+                if let Some(game) = self.lib.get_mut(&game_id) {
+                    game.artwork.set(kind, path);
+                }
+                self.toast_info(format!("{} importée depuis la boutique", kind.label()));
                 self.touch();
             }
             Err(err) => self.toast_error(format!("Import impossible : {err}")),
@@ -2922,10 +2958,9 @@ impl QuarkApp {
         }
         self.install_probe_at = Some(Instant::now());
         let busy = self
-            .epic_installing
-            .clone()
-            .into_iter()
-            .chain(self.gog_installing.clone())
+            .provider_install_jobs
+            .iter()
+            .map(|job| job.key.clone())
             .collect::<Vec<_>>();
         let installed: Vec<(crate::providers::ProviderGameKey, PathBuf)> = self
             .lib
@@ -4209,12 +4244,18 @@ impl QuarkApp {
         ctx: &egui::Context,
         key: &crate::providers::ProviderGameKey,
     ) {
-        if self.epic_install_rx.is_some()
-            || self.gog_install_rx.is_some()
-            || self.epic_installing.is_some()
-            || self.gog_installing.is_some()
+        if self
+            .provider_install_jobs
+            .iter()
+            .any(|job| job.key == *key)
         {
-            self.toast_info("Une installation est déjà en cours");
+            self.toast_info("Cette installation est déjà en cours");
+            return;
+        }
+        if self.provider_install_jobs.len() >= MAX_CONCURRENT_INSTALLS {
+            self.toast_info(format!(
+                "Maximum de {MAX_CONCURRENT_INSTALLS} téléchargements simultanés"
+            ));
             return;
         }
         let Some(game) = self
@@ -4452,6 +4493,20 @@ impl QuarkApp {
         let Some(key) = self.epic_install_pending.take() else {
             return;
         };
+        if self
+            .provider_install_jobs
+            .iter()
+            .any(|job| job.key == key)
+        {
+            self.toast_info("Cette installation est déjà en cours");
+            return;
+        }
+        if self.provider_install_jobs.len() >= MAX_CONCURRENT_INSTALLS {
+            self.toast_info(format!(
+                "Maximum de {MAX_CONCURRENT_INSTALLS} téléchargements simultanés"
+            ));
+            return;
+        }
         if let Err(error) = std::fs::create_dir_all(&destination) {
             self.toast_error(format!("Dossier de destination Epic invalide : {error}"));
             return;
@@ -4466,7 +4521,6 @@ impl QuarkApp {
         else {
             return;
         };
-        self.epic_installing = Some(key.clone());
         if let Some(record) = self
             .lib
             .provider_library
@@ -4481,10 +4535,11 @@ impl QuarkApp {
             crate::providers::runner::InstallProgress::default(),
         ));
         let cancel = Arc::new(AtomicBool::new(false));
-        self.epic_install_progress = Some(progress.clone());
-        self.epic_install_cancel = Some(cancel.clone());
         let (tx, rx) = channel();
         let repaint = ctx.clone();
+        let job_key = key.clone();
+        let job_progress = progress.clone();
+        let job_cancel = cancel.clone();
         std::thread::spawn(move || {
             let adapter = crate::providers::legendary::LegendaryAdapter::new();
             let result = (|| {
@@ -4537,7 +4592,12 @@ impl QuarkApp {
             let _ = tx.send((key, result));
             repaint.request_repaint();
         });
-        self.epic_install_rx = Some(rx);
+        self.provider_install_jobs.push(ProviderInstallJob {
+            key: job_key,
+            progress: job_progress,
+            cancel: job_cancel,
+            rx,
+        });
         self.toast_info(format!(
             "Installation Epic de {} lancée par Legendary",
             game.title
@@ -4545,100 +4605,120 @@ impl QuarkApp {
         ctx.request_repaint_after(Duration::from_millis(120));
     }
 
-    fn poll_epic_install(&mut self, ctx: &egui::Context) {
-        let Some(result) = self.epic_install_rx.as_ref().map(Receiver::try_recv) else {
+    /// Termine les installations dont le processus a répondu. Les autres
+    /// continuent en parallèle : aucune ne remplace l'avancement d'une autre.
+    fn poll_provider_installs(&mut self, ctx: &egui::Context) {
+        if self.provider_install_jobs.is_empty() {
             return;
+        }
+        let mut done = Vec::new();
+        for (index, job) in self.provider_install_jobs.iter().enumerate() {
+            match job.rx.try_recv() {
+                Ok((key, result)) => done.push((index, key, result)),
+                Err(TryRecvError::Disconnected) => done.push((
+                    index,
+                    job.key.clone(),
+                    Err("installation interrompue".to_string()),
+                )),
+                Err(TryRecvError::Empty) => {}
+            }
+        }
+        if done.is_empty() {
+            ctx.request_repaint_after(Duration::from_millis(120));
+            return;
+        }
+        for (index, key, result) in done.into_iter().rev() {
+            if index >= self.provider_install_jobs.len() {
+                continue;
+            }
+            self.provider_install_jobs.remove(index);
+            match result {
+                Ok(installed) => self.finish_install_success(ctx, key, installed),
+                Err(error) => self.finish_install_failure(key, error),
+            }
+        }
+        if !self.provider_install_jobs.is_empty() {
+            ctx.request_repaint_after(Duration::from_millis(120));
+        }
+    }
+
+    fn finish_install_success(
+        &mut self,
+        ctx: &egui::Context,
+        key: crate::providers::ProviderGameKey,
+        installed: crate::providers::ProviderGame,
+    ) {
+        let provider = key.provider;
+        let title = installed.title.clone();
+        if let Some(record) = self
+            .lib
+            .provider_library
+            .games
+            .iter_mut()
+            .find(|game| game.key == key)
+        {
+            if provider == crate::providers::Provider::Epic {
+                let group = crate::providers::legendary::merge_epic(
+                    std::slice::from_ref(record),
+                    std::slice::from_ref(&installed),
+                );
+                if let Some(updated) = group.into_iter().find(|game| game.key == key) {
+                    *record = updated;
+                }
+            } else {
+                record.install_state = crate::providers::InstallState::Installed;
+                record.install_path = installed.install_path.clone();
+                record.install_exe = installed.install_exe.clone();
+            }
+        }
+        self.touch();
+        self.toast_info(format!("{title} installé et détecté localement"));
+        self.adopt_provider_install(ctx, &key);
+    }
+
+    fn finish_install_failure(
+        &mut self,
+        key: crate::providers::ProviderGameKey,
+        error: String,
+    ) {
+        let provider = key.provider;
+        let name = match provider {
+            crate::providers::Provider::Epic => "Epic",
+            crate::providers::Provider::Gog => "GOG",
+            crate::providers::Provider::Steam => "Steam",
         };
-        match result {
-            Ok((key, Ok(installed))) => {
-                self.epic_install_rx = None;
-                self.epic_installing = None;
-                self.epic_install_progress = None;
-                self.epic_install_cancel = None;
-                if let Some(record) = self
-                    .lib
-                    .provider_library
-                    .games
-                    .iter_mut()
-                    .find(|game| game.key == key)
-                {
-                    let group = crate::providers::legendary::merge_epic(
-                        std::slice::from_ref(record),
-                        std::slice::from_ref(&installed),
-                    );
-                    if let Some(updated) = group.into_iter().find(|game| game.key == key) {
-                        *record = updated;
-                    }
-                }
-                self.touch();
-                self.toast_info(format!(
-                    "{} installé et détecté localement",
-                    installed.title
-                ));
-                self.adopt_provider_install(ctx, &key);
-            }
-            Ok((key, Err(error))) => {
-                self.epic_install_rx = None;
-                self.epic_installing = None;
-                self.epic_install_progress = None;
-                self.epic_install_cancel = None;
-                let cancelled = error.contains("annul");
-                if let Some(record) = self
-                    .lib
-                    .provider_library
-                    .games
-                    .iter_mut()
-                    .find(|game| game.key == key)
-                {
-                    if record
-                        .install_path
-                        .as_ref()
-                        .is_some_and(|path| path.is_dir())
-                    {
-                        record.install_state = crate::providers::InstallState::Installed;
-                    } else {
-                        record.install_state = if cancelled {
-                            crate::providers::InstallState::NotInstalled
-                        } else {
-                            crate::providers::InstallState::Failed
-                        };
-                        record.install_path = None;
-                    }
-                }
-                self.touch();
-                if cancelled {
-                    self.toast_info("Installation Epic annulée");
+        let cancelled = error.to_lowercase().contains("annul");
+        let mut title = key.product_id.clone();
+        if let Some(record) = self
+            .lib
+            .provider_library
+            .games
+            .iter_mut()
+            .find(|game| game.key == key)
+        {
+            title = record.title.clone();
+            if record
+                .install_path
+                .as_ref()
+                .is_some_and(|path| path.is_dir())
+            {
+                record.install_state = crate::providers::InstallState::Installed;
+            } else {
+                record.install_state = if cancelled {
+                    crate::providers::InstallState::NotInstalled
+                } else if error.contains("interrompue") {
+                    crate::providers::InstallState::Unknown
                 } else {
-                    self.toast_error(format!("Installation Epic non confirmée : {error}"));
-                }
+                    crate::providers::InstallState::Failed
+                };
+                record.install_path = None;
             }
-            Err(TryRecvError::Disconnected) => {
-                self.epic_install_rx = None;
-                self.epic_install_progress = None;
-                self.epic_install_cancel = None;
-                if let Some(key) = self.epic_installing.take() {
-                    if let Some(record) = self
-                        .lib
-                        .provider_library
-                        .games
-                        .iter_mut()
-                        .find(|game| game.key == key)
-                    {
-                        record.install_state = if record
-                            .install_path
-                            .as_ref()
-                            .is_some_and(|path| path.is_dir())
-                        {
-                            crate::providers::InstallState::Installed
-                        } else {
-                            crate::providers::InstallState::Unknown
-                        };
-                    }
-                    self.touch();
-                }
-                self.toast_error("Installation Epic interrompue; aucun succès n'a été enregistré");
-            }
-            Err(TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(120)),
+        }
+        self.touch();
+        if cancelled {
+            self.toast_info(format!("Installation {name} de {title} annulée"));
+        } else {
+            self.toast_error(format!("Installation {name} de {title} non confirmée : {error}"));
         }
     }
 
@@ -4656,6 +4736,20 @@ impl QuarkApp {
         let Some(key) = self.gog_install_pending.take() else {
             return;
         };
+        if self
+            .provider_install_jobs
+            .iter()
+            .any(|job| job.key == key)
+        {
+            self.toast_info("Cette installation est déjà en cours");
+            return;
+        }
+        if self.provider_install_jobs.len() >= MAX_CONCURRENT_INSTALLS {
+            self.toast_info(format!(
+                "Maximum de {MAX_CONCURRENT_INSTALLS} téléchargements simultanés"
+            ));
+            return;
+        }
         if let Err(error) = std::fs::create_dir_all(&destination) {
             self.toast_error(format!("Dossier de destination GOG invalide : {error}"));
             return;
@@ -4670,7 +4764,6 @@ impl QuarkApp {
         else {
             return;
         };
-        self.gog_installing = Some(key.clone());
         if let Some(record) = self
             .lib
             .provider_library
@@ -4685,11 +4778,12 @@ impl QuarkApp {
             crate::providers::runner::InstallProgress::default(),
         ));
         let cancel = Arc::new(AtomicBool::new(false));
-        self.gog_install_progress = Some(progress.clone());
-        self.gog_install_cancel = Some(cancel.clone());
         let (tx, rx) = channel();
         let repaint = ctx.clone();
         let title = game.title.clone();
+        let job_key = key.clone();
+        let job_progress = progress.clone();
+        let job_cancel = cancel.clone();
         std::thread::spawn(move || {
             let adapter =
                 crate::providers::gog::GogAdapter::new(crate::providers::gog::auth_config_path());
@@ -4750,90 +4844,17 @@ impl QuarkApp {
             let _ = tx.send((key, result));
             repaint.request_repaint();
         });
-        self.gog_install_rx = Some(rx);
+        self.provider_install_jobs.push(ProviderInstallJob {
+            key: job_key,
+            progress: job_progress,
+            cancel: job_cancel,
+            rx,
+        });
         self.toast_info(format!(
             "Installation GOG de {} lancée par gogdl",
             game.title
         ));
         ctx.request_repaint_after(Duration::from_millis(120));
-    }
-
-    fn poll_gog_install(&mut self, ctx: &egui::Context) {
-        let Some(result) = self.gog_install_rx.as_ref().map(Receiver::try_recv) else {
-            return;
-        };
-        match result {
-            Ok((key, Ok(installed))) => {
-                self.gog_install_rx = None;
-                self.gog_installing = None;
-                self.gog_install_progress = None;
-                self.gog_install_cancel = None;
-                if let Some(record) = self
-                    .lib
-                    .provider_library
-                    .games
-                    .iter_mut()
-                    .find(|game| game.key == key)
-                {
-                    record.install_state = crate::providers::InstallState::Installed;
-                    record.install_path = installed.install_path.clone();
-                    record.install_exe = installed.install_exe.clone();
-                }
-                self.touch();
-                self.adopt_provider_install(ctx, &key);
-            }
-            Ok((key, Err(error))) => {
-                self.gog_install_rx = None;
-                self.gog_installing = None;
-                self.gog_install_progress = None;
-                self.gog_install_cancel = None;
-                let cancelled = error.contains("annul");
-                if let Some(record) = self
-                    .lib
-                    .provider_library
-                    .games
-                    .iter_mut()
-                    .find(|game| game.key == key)
-                {
-                    record.install_state = if record
-                        .install_path
-                        .as_ref()
-                        .is_some_and(|path| path.is_dir())
-                    {
-                        crate::providers::InstallState::Installed
-                    } else if cancelled {
-                        crate::providers::InstallState::NotInstalled
-                    } else {
-                        crate::providers::InstallState::Failed
-                    };
-                }
-                self.touch();
-                if cancelled {
-                    self.toast_info("Installation GOG annulée");
-                } else {
-                    self.toast_error(format!("Installation GOG non confirmée : {error}"));
-                }
-            }
-            Err(TryRecvError::Disconnected) => {
-                self.gog_install_rx = None;
-                self.gog_install_progress = None;
-                self.gog_install_cancel = None;
-                if let Some(key) = self.gog_installing.take() {
-                    if let Some(record) = self
-                        .lib
-                        .provider_library
-                        .games
-                        .iter_mut()
-                        .find(|game| game.key == key)
-                    {
-                        record.install_state = crate::providers::InstallState::Unknown;
-                    }
-                    self.touch();
-                }
-                self.toast_error("Installation GOG interrompue; aucun succès n'a été enregistré");
-            }
-            Err(TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(120)),
-        }
     }
 
     /// Ajoute un jeu de boutique installé à la bibliothèque Quark : c'est ce qui
@@ -4884,22 +4905,48 @@ impl QuarkApp {
         // Le jeu peut déjà avoir été ajouté à la main : dans ce cas il est
         // relié au lieu de créer un doublon « installé » et un doublon pointé
         // par l'utilisateur, qui finissaient avec deux fiches différentes.
-        let existing = self
+        //
+        // Une fiche Steam du même titre est prioritaire : les images GOG/Epic
+        // arrivent ainsi sur la fiche Steam, visible dans « Personnaliser »,
+        // au lieu de rester sur une seconde fiche invisible.
+        let steam_target = self
             .lib
+            .provider_library
             .games
             .iter()
             .find(|candidate| {
-                candidate
-                    .name
-                    .trim()
-                    .eq_ignore_ascii_case(record.title.trim())
-                    && (candidate.exe.trim().is_empty()
-                        || record
-                            .install_path
-                            .as_ref()
-                            .is_some_and(|path| candidate.exe_path().starts_with(path)))
+                candidate.key.provider == crate::providers::Provider::Steam
+                    && candidate.title.trim().eq_ignore_ascii_case(record.title.trim())
             })
-            .map(|candidate| candidate.id.clone());
+            .and_then(|candidate| candidate.quark_game_id.clone())
+            .or_else(|| {
+                self.lib
+                    .games
+                    .iter()
+                    .find(|candidate| {
+                        candidate.steam_app_id.is_some()
+                            && candidate.name.trim().eq_ignore_ascii_case(record.title.trim())
+                    })
+                    .map(|candidate| candidate.id.clone())
+            })
+            .filter(|id| self.lib.get(id).is_some());
+        let existing = steam_target.or_else(|| {
+            self.lib
+                .games
+                .iter()
+                .find(|candidate| {
+                    candidate
+                        .name
+                        .trim()
+                        .eq_ignore_ascii_case(record.title.trim())
+                        && (candidate.exe.trim().is_empty()
+                            || record
+                                .install_path
+                                .as_ref()
+                                .is_some_and(|path| candidate.exe_path().starts_with(path)))
+                })
+                .map(|candidate| candidate.id.clone())
+        });
         if let Some(id) = existing {
             if let Some(game) = self.lib.get_mut(&id) {
                 if game.exe.trim().is_empty() {
@@ -5294,16 +5341,16 @@ impl QuarkApp {
         ctx.request_repaint_after(Duration::from_millis(150));
     }
 
-    pub(crate) fn cancel_provider_install(&mut self, provider: crate::providers::Provider) {
-        let flag = match provider {
-            crate::providers::Provider::Epic => self.epic_install_cancel.as_ref(),
-            crate::providers::Provider::Gog => self.gog_install_cancel.as_ref(),
-            crate::providers::Provider::Steam => None,
+    pub(crate) fn cancel_provider_install(&mut self, key: &crate::providers::ProviderGameKey) {
+        let Some(job) = self
+            .provider_install_jobs
+            .iter()
+            .find(|job| &job.key == key)
+        else {
+            return;
         };
-        if let Some(flag) = flag {
-            flag.store(true, Ordering::SeqCst);
-            self.toast_info("Annulation demandée");
-        }
+        job.cancel.store(true, Ordering::SeqCst);
+        self.toast_info("Annulation demandée");
     }
 
     fn poll_achievements(&mut self, ctx: &egui::Context) {

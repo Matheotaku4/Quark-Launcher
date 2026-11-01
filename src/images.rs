@@ -117,8 +117,8 @@ impl QuarkApp {
 
 /// Largeur maximale des miniatures de grille. Une jaquette de 600 × 900 est
 /// réduite à 360 px de large : la carte n'en affiche jamais plus, et la texture
-/// GPU passe de ~2,2 Mo à ~0,8 Mo. Sur 72 cartes visibles, cela évite les gros
-/// à-coups de mémoire au moment d'« Afficher plus de jeux ».
+/// GPU passe de ~2,2 Mo à ~0,8 Mo. Les grilles ne décodant que les lignes
+/// visibles, cette taille garde les cartes nettes sans gros à-coups mémoire.
 pub const THUMB_WIDTH: u32 = 360;
 
 /// Nombre de miniatures gardées : une page complète (72 cartes) tient à l'aise,
