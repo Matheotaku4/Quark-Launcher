@@ -6,7 +6,7 @@ own, launches Windows games through Proton (or umu-launcher), and stays out of
 the way with an AMOLED interface, a store page, save snapshots and an in-game
 overlay.
 
-This is the 1.1.1 documentation. Older release notes are kept on the GitHub
+This is the 1.1.2 documentation. Older release notes are kept on the GitHub
 releases page; `docs/release-notes.md` only describes the release currently
 being published.
 
@@ -64,8 +64,8 @@ Download `quark-<version>-linux-x86_64.tar.gz` and its `.sha256` file from the
 then verify and unpack it:
 
 ```bash
-sha256sum -c quark-1.1.1-linux-x86_64.tar.gz.sha256
-tar -xzf quark-1.1.1-linux-x86_64.tar.gz
+sha256sum -c quark-1.1.2-linux-x86_64.tar.gz.sha256
+tar -xzf quark-1.1.2-linux-x86_64.tar.gz
 ./quark/quark
 ```
 
@@ -168,9 +168,12 @@ save, so an interrupted migration cannot duplicate entries.
 
 The game information panel lists the editions. Selecting one changes the
 executable and prefix used by **Play**, without touching the other edition.
-This is what makes a Steam copy and a GOG copy of the same title coexist with
-separate prefixes, saves and launch state while keeping one cover, one notes
-page and one playtime history.
+When the historical `~/.local/share/quark/prefixes/<game>` prefix already exists,
+it is reused so that existing saves stay visible after switching from a local
+copy to a store edition. A genuinely new second installation gets its own
+`<game>-<store>` prefix instead. This keeps a Steam copy and a GOG copy of the
+same title usable with separate launch state while preserving the historical
+saves.
 
 The legacy fields (`exe`, `prefix`, `proton`, …) are still serialized for
 compatibility and remain the values used by the launch resolver. The active

@@ -2370,15 +2370,25 @@ impl QuarkApp {
                     // lancement si l'utilisateur l'a déjà installé.
                     if let Some(prefix) = resolved.prefix.as_ref() {
                         let wine_prefix = prefix.join("pfx");
-                        if wine_prefix.join("user.reg").is_file()
-                            && crate::providers::legendary::LegendaryAdapter::eos_overlay_installed_path()
-                                .is_some()
+                        if crate::providers::legendary::LegendaryAdapter::eos_overlay_installed_path()
+                            .is_some()
                         {
-                            match adapter.enable_eos_overlay(&wine_prefix) {
-                                Ok(()) => resolved.extras.push("overlay EOS".to_string()),
-                                Err(error) => {
-                                    self.toast_error(format!("Overlay Epic : {error}"));
+                            if wine_prefix.join("user.reg").is_file() {
+                                match adapter.enable_eos_overlay(&wine_prefix) {
+                                    Ok(()) => resolved.extras.push("overlay EOS".to_string()),
+                                    Err(error) => {
+                                        self.toast_error(format!("Overlay Epic : {error}"));
+                                    }
                                 }
+                            } else {
+                                // `eos-overlay enable` écrit dans user.reg : sur
+                                // un préfixe neuf, il n'existe pas encore. Le
+                                // premier lancement le crée ; le suivant active
+                                // l'overlay avant le démarrage du jeu.
+                                self.toast_info(format!(
+                                    "{} : l'overlay Epic sera activé au prochain lancement (préfixe en cours de création)",
+                                    game.name
+                                ));
                             }
                         }
                     }
@@ -3945,16 +3955,15 @@ impl QuarkApp {
                             Some(job_cancel),
                         )?,
                     };
-                let enabled = wine_prefix.and_then(|wine_prefix| {
-                    if wine_prefix.join("user.reg").is_file() {
-                        adapter
-                            .enable_eos_overlay(&wine_prefix)
-                            .ok()
-                            .map(|_| wine_prefix)
-                    } else {
-                        None
+                let enabled = match wine_prefix {
+                    Some(wine_prefix) if wine_prefix.join("user.reg").is_file() => {
+                        adapter.enable_eos_overlay(&wine_prefix).map_err(|error| {
+                            format!("overlay installé, mais activation impossible : {error}")
+                        })?;
+                        Some(wine_prefix)
                     }
-                });
+                    _ => None,
+                };
                 Ok((installed, enabled))
             })();
             let _ = tx.send(result);

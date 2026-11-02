@@ -807,6 +807,21 @@ impl Default for Game {
     }
 }
 
+/// Préfixe automatique d'une installation supplémentaire.
+///
+/// `legacy_ready` indique que `prefix_root()/<jeu>` contient déjà un `drive_c`
+/// (donc probablement les sauvegardes historiques). Dans ce cas, on ne crée
+/// pas de dossier séparé : l'édition activée doit continuer à voir ces saves.
+fn auto_installation_prefix(
+    game_id: &str,
+    slug: &str,
+    installation_count: usize,
+    legacy_ready: bool,
+) -> Option<PathBuf> {
+    (installation_count > 1 && !legacy_ready)
+        .then(|| prefix_root().join(format!("{game_id}-{slug}")))
+}
+
 impl Game {
     pub fn new(name: impl Into<String>, exe: impl Into<String>) -> Self {
         Self {
@@ -847,15 +862,20 @@ impl Game {
         self.active_installation = Some(installation.id.clone());
         self.exe = installation.exe.clone();
         self.prefix = installation.prefix.clone();
-        // Une deuxième édition ne doit pas partager le préfixe de la première.
-        // La première garde le dossier historique pour ne pas perdre ses saves.
-        if self.prefix.is_none() && self.installations.len() > 1 {
-            self.prefix = Some(
-                prefix_root()
-                    .join(format!("{}-{}", self.id, installation.slug()))
-                    .display()
-                    .to_string(),
-            );
+        // Une deuxième édition ne reçoit un préfixe séparé que si le dossier
+        // historique n'existe pas encore. S'il existe, il contient les saves
+        // de l'utilisateur : le réutiliser évite de les rendre invisibles en
+        // basculant d'une installation locale vers Epic/GOG.
+        let legacy = prefix_root().join(&self.id);
+        if self.prefix.is_none()
+            && let Some(prefix) = auto_installation_prefix(
+                &self.id,
+                installation.slug(),
+                self.installations.len(),
+                legacy.join("drive_c").is_dir(),
+            )
+        {
+            self.prefix = Some(prefix.display().to_string());
         }
         true
     }
@@ -1272,6 +1292,36 @@ impl Library {
     pub fn migrate_installations(&mut self) {
         for game in &mut self.games {
             game.normalize_installations();
+            // Les versions précédentes ont pu enregistrer un préfixe
+            // `<jeu>-epic` encore vide alors que le dossier historique existe.
+            // On l'oublie pour retrouver les sauvegardes ; un préfixe déjà
+            // initialisé ou choisi à la main n'est jamais touché.
+            let legacy = prefix_root().join(&game.id);
+            if !legacy.join("drive_c").is_dir() {
+                continue;
+            }
+            for installation in &mut game.installations {
+                let auto = prefix_root().join(format!("{}-{}", game.id, installation.slug()));
+                if installation
+                    .prefix
+                    .as_deref()
+                    .is_some_and(|prefix| PathBuf::from(prefix) == auto)
+                    && !auto.join("drive_c").is_dir()
+                {
+                    installation.prefix = None;
+                }
+            }
+            if let Some(active) = game.active_installation().cloned() {
+                let auto = prefix_root().join(format!("{}-{}", game.id, active.slug()));
+                if game
+                    .prefix
+                    .as_deref()
+                    .is_some_and(|prefix| PathBuf::from(prefix) == auto)
+                    && !auto.join("drive_c").is_dir()
+                {
+                    game.prefix = None;
+                }
+            }
         }
         let records: Vec<crate::providers::ProviderGame> = self.provider_library.games.clone();
         for record in records {
@@ -1506,6 +1556,17 @@ mod tests {
             id: id.to_string(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn un_prefixe_historique_est_reutilise_pour_une_seconde_installation() {
+        // Le dossier `<jeu>` existe déjà : on ne crée pas `<jeu>-epic`, sinon
+        // les sauvegardes de l'ancienne installation deviennent invisibles.
+        assert!(auto_installation_prefix("jeu", "epic", 2, true).is_none());
+        // Une seule installation garde aussi le dossier historique.
+        assert!(auto_installation_prefix("jeu", "epic", 1, false).is_none());
+        let prefix = auto_installation_prefix("jeu", "epic", 2, false).unwrap();
+        assert_eq!(prefix.file_name().unwrap(), "jeu-epic");
     }
 
     #[test]

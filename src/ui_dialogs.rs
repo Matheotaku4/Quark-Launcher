@@ -2260,6 +2260,22 @@ impl QuarkApp {
                         .size(11.0)
                         .color(pal.text_faint),
                 );
+                // Les sauvegardes Dying Light (et d'autres jeux) vivent dans le
+                // préfixe historique `<jeu>`. Si une bascule d'installation a
+                // créé un dossier séparé, on permet de revenir aux anciennes
+                // sauvegardes sans éditer config.json à la main.
+                let legacy = config::prefix_root().join(&game.id);
+                if legacy.join("drive_c").is_dir() && legacy != effective {
+                    if widgets::ghost_button(ui, "Utiliser l'ancien préfixe", &pal, Icon::Refresh)
+                        .on_hover_text(
+                            "Revenir au dossier Proton historique de ce jeu, celui qui contient \
+                             probablement les sauvegardes d'avant la bascule Epic/GOG.",
+                        )
+                        .clicked()
+                    {
+                        game.prefix = Some(legacy.display().to_string());
+                    }
+                }
 
                 section_hint(
                     ui,

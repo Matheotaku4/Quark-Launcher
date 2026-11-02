@@ -1,3 +1,28 @@
+## Quark 1.1.2 — preserve existing Proton prefixes and clarify EOS activation
+
+### Existing saves stay visible
+
+- Switching a game from a local installation to its Epic or GOG installation no
+  longer creates a second `<game>-epic` prefix when the historical
+  `~/.local/share/quark/prefixes/<game>` prefix already exists. The historical
+  prefix is reused, so Proton finds the existing `Documents` saves again.
+- A separate prefix is still created for a genuinely new second installation
+  when no historical prefix exists.
+- Configurations already written by 1.1.1 get a **Use the old prefix** action
+  in the game settings when the historical prefix is present. It switches the
+  game back to that prefix without deleting the newer one.
+- An automatically generated `<game>-epic` prefix that was never initialized is
+  discarded at load time, so it cannot hide the historical saves.
+
+### Epic overlay
+
+- The EOS overlay is still enabled automatically in the game prefix before
+  launch. On a brand-new prefix, `user.reg` does not exist yet, so Quark now
+  explains that the overlay will be enabled on the next launch instead of
+  silently doing nothing.
+- A failed `eos-overlay enable` is no longer reported as a successful install:
+  the error is shown in the interface.
+
 ## Quark 1.1.1 — settings tabs, reliable local saves and the Epic overlay
 
 ### Settings tabs are back at the top
