@@ -103,6 +103,7 @@ impl QuarkApp {
         let gap = 16.0;
         let available = (ui.available_width() - padding * 2.0).max(240.0);
         let columns = ((available + gap) / 172.0).floor().clamp(2.0, 8.0) as usize;
+        self.grid_columns = columns;
         let tile_w = ((available - gap * (columns as f32 - 1.0)) / columns as f32)
             .floor()
             .max(110.0);
@@ -428,6 +429,7 @@ impl QuarkApp {
                         let gap = 10.0;
                         let available = ui.available_width() - padding * 2.0;
                         let columns = 3;
+                        self.grid_columns = columns;
                         let tile_w = ((available - gap * (columns as f32 - 1.0)) / columns as f32)
                             .floor()
                             .max(80.0);

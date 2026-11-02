@@ -968,9 +968,10 @@ impl QuarkApp {
                             widgets::info_button(
                                 ui,
                                 &pal,
-                                "Le dossier choisi est utilisé tel quel : Quark n'y crée aucun \
-                                 sous-dossier. Vide = un préfixe par jeu sous \
-                                 ~/.local/share/quark/prefixes/.",
+                                "Le dossier choisi est recopié dans un nouveau jeu, puis utilisé \
+                                 tel quel : Quark n'y crée aucun sous-dossier. Changer ce défaut \
+                                 ne déplace pas les jeux déjà configurés. Vide = un préfixe par \
+                                 jeu sous ~/.local/share/quark/prefixes/.",
                             );
                         });
 
@@ -2229,7 +2230,7 @@ impl QuarkApp {
                     &pal,
                     "Préfixe Proton propre à ce jeu",
                     Some(
-                        "Sinon celui des valeurs par défaut, ou \
+                        "Sinon celui de l'installation active, ou \
                          ~/.local/share/quark/prefixes/<jeu>. Le dossier est utilisé tel quel.",
                     ),
                     &mut custom,

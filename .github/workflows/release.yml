@@ -45,6 +45,8 @@ jobs:
           mkdir -p dist/quark
           cp target/release/quark dist/quark/
           cp README.md dist/quark/
+          cp assets/quark.desktop dist/quark/
+          cp assets/quark.png dist/quark/
           tar -czf "quark-${{ steps.version.outputs.value }}-linux-x86_64.tar.gz" -C dist quark
           sha256sum "quark-${{ steps.version.outputs.value }}-linux-x86_64.tar.gz" > "quark-${{ steps.version.outputs.value }}-linux-x86_64.tar.gz.sha256"
 

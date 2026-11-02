@@ -503,6 +503,9 @@ pub struct Settings {
     /// Migration des anciennes variables globales : elles ont été recopiées
     /// une fois dans les jeux qui n'en avaient pas.
     pub defaults_migrated: bool,
+    /// Migration du préfixe par défaut : il a été recopié une fois dans les
+    /// jeux qui n'avaient encore ni préfixe propre ni préfixe d'installation.
+    pub prefix_defaults_migrated: bool,
     /// Garde Quark dans la zone de notification : la croix ne quitte plus
     /// l'application, elle la range dans l'icône.
     pub tray_icon: bool,
@@ -552,6 +555,7 @@ impl Default for Settings {
             default_umu: false,
             default_env: Vec::new(),
             defaults_migrated: false,
+            prefix_defaults_migrated: false,
             tray_icon: true,
             overlay: true,
             screenshot_key: "F12".to_string(),
@@ -976,21 +980,36 @@ impl Game {
         !crate::proton::looks_windows(&self.exe_path())
     }
 
-    /// Préfixe Proton effectif : jeu > réglages > dossier géré par Quark.
+    /// Préfixe Proton effectif : jeu > installation active > dossier géré par
+    /// Quark.
     ///
-    /// Le dossier choisi (par le jeu ou par les réglages) est utilisé **tel
-    /// quel** : Quark n'y crée aucun sous-dossier, donc le préfixe est
-    /// exactement celui que tu as sélectionné. Seul le repli automatique
-    /// (aucun préfixe indiqué) range les préfixes sous
-    /// `~/.local/share/quark/prefixes/`.
-    pub fn prefix_path(&self, s: &Settings) -> PathBuf {
+    /// Le dossier choisi est utilisé **tel quel** : Quark n'y crée aucun
+    /// sous-dossier. Le préfixe « par défaut » des réglages n'est pas relu ici :
+    /// il est recopié une seule fois dans chaque jeu lors de la migration, puis
+    /// chaque jeu garde le sien (changer le défaut ne déplace pas les saves
+    /// d'un jeu déjà configuré). Seul le repli automatique range les préfixes
+    /// sous `~/.local/share/quark/prefixes/`.
+    pub fn prefix_path(&self, _s: &Settings) -> PathBuf {
         if let Some(p) = self.prefix.as_ref().filter(|p| !p.trim().is_empty()) {
             return PathBuf::from(expand_tilde(p));
         }
-        if let Some(p) = s.default_prefix.as_ref().filter(|p| !p.trim().is_empty()) {
+        if let Some(p) = self
+            .active_installation()
+            .and_then(|installation| installation.prefix.as_ref())
+            .filter(|p| !p.trim().is_empty())
+        {
             return PathBuf::from(expand_tilde(p));
         }
         prefix_root().join(&self.id)
+    }
+
+    /// Préfixe Wine réellement écrit par le runtime : Proton range son
+    /// `drive_c` dans `<préfixe>/pfx`, tandis qu'umu utilise directement le
+    /// dossier `WINEPREFIX`. Confondre les deux fait chercher `user.reg` et les
+    /// sauvegardes au mauvais endroit pour les jeux lancés par umu.
+    pub fn wine_prefix_path(&self, settings: &Settings) -> PathBuf {
+        let root = self.prefix_path(settings);
+        if self.umu { root } else { root.join("pfx") }
     }
 
     pub fn playtime_label(&self) -> String {
@@ -1259,6 +1278,33 @@ impl Library {
     /// des jeux existants ne change pas.
     pub fn migrate_defaults(&mut self) {
         self.migrate_installations();
+        // Le préfixe par défaut était appliqué à la volée à tous les jeux qui
+        // n'en avaient pas : changer le réglage déplaçait donc leurs saves.
+        // On le recopie une seule fois dans ces jeux ; ensuite le réglage ne
+        // concerne plus que les nouveaux jeux.
+        if !self.settings.prefix_defaults_migrated {
+            if let Some(prefix) = self
+                .settings
+                .default_prefix
+                .clone()
+                .filter(|prefix| !prefix.trim().is_empty())
+            {
+                for game in &mut self.games {
+                    let has_installation_prefix = game
+                        .active_installation()
+                        .and_then(|installation| installation.prefix.as_deref())
+                        .is_some_and(|prefix| !prefix.trim().is_empty());
+                    let has_game_prefix = game
+                        .prefix
+                        .as_deref()
+                        .is_some_and(|prefix| !prefix.trim().is_empty());
+                    if !has_game_prefix && !has_installation_prefix {
+                        game.prefix = Some(prefix.clone());
+                    }
+                }
+            }
+            self.settings.prefix_defaults_migrated = true;
+        }
         // Anciennes installations : rattache une fiche fournisseur à la racine
         // par défaut quand son chemin y est clairement contenu, pour que la
         // désinstallation puisse vérifier la racine. Indépendant de
@@ -1570,6 +1616,61 @@ mod tests {
     }
 
     #[test]
+    fn le_prefixe_de_l_installation_active_est_utilise_sans_prefixe_de_jeu() {
+        let mut g = game("abc");
+        g.installations.push(Installation {
+            id: "epic:1".to_string(),
+            prefix: Some("/tmp/quark-tests/epic".to_string()),
+            ..Installation::default()
+        });
+        g.active_installation = Some("epic:1".to_string());
+        assert_eq!(
+            g.prefix_path(&Settings::default()),
+            PathBuf::from("/tmp/quark-tests/epic")
+        );
+        // Un préfixe de jeu reste prioritaire sur celui de l'installation.
+        g.prefix = Some("/tmp/quark-tests/jeu".to_string());
+        assert_eq!(
+            g.prefix_path(&Settings::default()),
+            PathBuf::from("/tmp/quark-tests/jeu")
+        );
+    }
+
+    #[test]
+    fn le_prefixe_wine_suit_proton_ou_umu() {
+        let mut g = game("abc");
+        assert_eq!(
+            g.wine_prefix_path(&Settings::default()),
+            prefix_root().join("abc").join("pfx")
+        );
+        g.umu = true;
+        assert_eq!(
+            g.wine_prefix_path(&Settings::default()),
+            prefix_root().join("abc")
+        );
+    }
+
+    #[test]
+    fn le_prefixe_par_defaut_est_recopie_une_seule_fois() {
+        let mut lib = Library::default();
+        lib.settings.default_prefix = Some("/tmp/quark-tests/defaut".to_string());
+        lib.games.push(game("a"));
+        lib.migrate_defaults();
+        assert_eq!(
+            lib.get("a").and_then(|game| game.prefix.as_deref()),
+            Some("/tmp/quark-tests/defaut")
+        );
+
+        // Changer le défaut ne déplace plus le préfixe d'un jeu existant.
+        lib.settings.default_prefix = Some("/tmp/quark-tests/nouveau".to_string());
+        lib.migrate_defaults();
+        assert_eq!(
+            lib.get("a").and_then(|game| game.prefix.as_deref()),
+            Some("/tmp/quark-tests/defaut")
+        );
+    }
+
+    #[test]
     fn lettre_ignore_les_articles_initiaux() {
         assert_eq!(monogram_letter("The Witcher 3: Wild Hunt"), "W");
         assert_eq!(monogram_letter("A Short Hike"), "S");
@@ -1621,13 +1722,14 @@ mod tests {
     }
 
     #[test]
-    fn prefix_par_defaut_utilise_le_dossier_choisi() {
+    fn un_prefixe_par_defaut_n_est_pas_relu_a_la_volee() {
         let mut settings = Settings::default();
         settings.default_prefix = Some("/tmp/quark-tests/prefixes".to_string());
-        // Aucun sous-dossier : le dossier indiqué est le préfixe, tel quel.
+        // Le défaut est recopié à l'ajout (ou par la migration) ; un jeu sans
+        // préfixe garde son dossier automatique et ne suit pas les changements.
         assert_eq!(
             game("abc").prefix_path(&settings),
-            PathBuf::from("/tmp/quark-tests/prefixes")
+            prefix_root().join("abc")
         );
     }
 

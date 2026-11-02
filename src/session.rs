@@ -37,7 +37,9 @@ pub struct Session {
     /// Secondes écoulées, mises à jour à chaque tick.
     pub session: u64,
     pub log: PathBuf,
-    pub prefix: Option<PathBuf>,
+    /// Préfixe Wine réel (`<prefix>/pfx` pour Proton, le dossier lui-même
+    /// pour umu). C'est lui que `wineserver -k` doit recevoir.
+    pub wine_prefix: Option<PathBuf>,
     /// `wineserver` du runtime utilisé (celui de Proton), pour fermer le
     /// préfixe.
     pub wineserver: Option<PathBuf>,
@@ -103,8 +105,9 @@ pub fn start(game: &Game, resolved: &Resolved) -> Result<Session, String> {
         use std::os::unix::fs::OpenOptionsExt as _;
         options.mode(0o600);
     }
-    let mut file =
-        options.open(&log).map_err(|err| format!("journal {} : {err}", log.display()))?;
+    let mut file = options
+        .open(&log)
+        .map_err(|err| format!("journal {} : {err}", log.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
@@ -192,7 +195,7 @@ pub fn start(game: &Game, resolved: &Resolved) -> Result<Session, String> {
         started_ts: config::now_ts(),
         session: 0,
         log,
-        prefix: resolved.prefix.clone(),
+        wine_prefix: wine_prefix_for(resolved),
         wineserver: wineserver_for(resolved),
         stopping: None,
         kill_sent: false,
@@ -254,6 +257,17 @@ fn copy_log(
     })
 }
 
+/// Préfixe Wine réellement utilisé par le runtime : Proton range son
+/// `drive_c` dans `<préfixe>/pfx`, umu utilise directement `WINEPREFIX`.
+fn wine_prefix_for(resolved: &Resolved) -> Option<PathBuf> {
+    let prefix = resolved.prefix.as_ref()?;
+    Some(if resolved.kind == crate::proton::LaunchKind::Umu {
+        prefix.clone()
+    } else {
+        prefix.join("pfx")
+    })
+}
+
 /// `wineserver` du runtime Proton utilisé, pour fermer son préfixe. Un jeu
 /// natif n'en a pas besoin.
 fn wineserver_for(resolved: &Resolved) -> Option<PathBuf> {
@@ -276,7 +290,7 @@ pub fn stop(session: &mut Session) {
     }
     session.stopping = Some(Instant::now());
 
-    if let Some(prefix) = session.prefix.clone() {
+    if let Some(prefix) = session.wine_prefix.clone() {
         // Le wineserver de Proton n'est pas dans le PATH : sans le chemin du
         // runtime, on essaie celui du système, et on ignore l'échec.
         let program = session
@@ -407,6 +421,37 @@ mod tests {
     }
 
     #[test]
+    fn le_wineserver_recoit_le_prefixe_wine_reel() {
+        let base = PathBuf::from("/tmp/quark-prefix");
+        let spec = crate::proton::LaunchSpec {
+            program: PathBuf::from("proton"),
+            args: Vec::new(),
+            env: Vec::new(),
+        };
+        let resolved = crate::proton::Resolved {
+            kind: crate::proton::LaunchKind::Proton,
+            spec: spec.clone(),
+            runtime: None,
+            prefix: Some(base.clone()),
+            anticheat: crate::config::AnticheatMode::None,
+            extras: Vec::new(),
+            warnings: Vec::new(),
+        };
+        assert_eq!(wine_prefix_for(&resolved), Some(base.join("pfx")));
+
+        let umu = crate::proton::Resolved {
+            kind: crate::proton::LaunchKind::Umu,
+            spec,
+            runtime: None,
+            prefix: Some(base.clone()),
+            anticheat: crate::config::AnticheatMode::None,
+            extras: Vec::new(),
+            warnings: Vec::new(),
+        };
+        assert_eq!(wine_prefix_for(&umu), Some(base));
+    }
+
+    #[test]
     fn la_queue_du_journal_ne_lit_que_la_fin() {
         let dir = std::env::temp_dir().join(format!("quark-log-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -448,7 +493,7 @@ mod tests {
             started_ts: 0,
             session: 0,
             log: PathBuf::new(),
-            prefix: None,
+            wine_prefix: None,
             wineserver: None,
             stopping: None,
             kill_sent: false,

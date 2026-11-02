@@ -1082,7 +1082,7 @@ fn mark_running(app: &mut QuarkApp) {
                 started_ts: now_ts() - 4_740,
                 session: 4_740,
                 log,
-                prefix: None,
+                wine_prefix: None,
                 wineserver: None,
                 stopping: None,
                 kill_sent: false,

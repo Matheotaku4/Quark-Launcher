@@ -662,6 +662,26 @@ fn resolve_with_extra(
         }
     };
 
+    // Un runtime anti-triche est un dossier de données, pas un Proton
+    // lançable. Il peut être choisi par erreur comme runtime par défaut ou
+    // dans les réglages du jeu : refuser ici évite d'exécuter un dossier.
+    if runtime.kind == RuntimeKind::AntiCheat {
+        return Err(format!(
+            "« {} » est un runtime anti-triche, pas un Proton lançable. Choisis un runtime Proton \
+             dans les paramètres du jeu.",
+            runtime.name
+        ));
+    }
+    // Un runtime Proton sans script `proton` (installation incomplète ou
+    // dossier supprimé) ne doit pas non plus être exécuté comme un dossier.
+    if !runtime.has_proton_script {
+        return Err(format!(
+            "« {} » n'est pas un Proton lançable : son script `proton` est introuvable. \
+             Réinstalle ce runtime ou choisis-en un autre dans les paramètres du jeu.",
+            runtime.name
+        ));
+    }
+
     // Option anti-triche : Steam installe ces dossiers à part (« Proton
     // BattlEye Runtime », « Proton EasyAntiCheat Runtime ») et Proton ne les
     // lance pas — il les trouve par une variable d'environnement.
@@ -1182,6 +1202,45 @@ mod tests {
         game.anticheat = AnticheatMode::EasyAntiCheat;
         let err = resolve(&game, &Settings::default(), &seul_proton).unwrap_err();
         assert!(err.contains("EasyAntiCheat"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn un_runtime_anti_triche_ne_peut_pas_etre_lance_comme_proton() {
+        let dir = std::env::temp_dir().join(format!("quark-anti-lance-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("jeu.exe");
+        std::fs::write(&exe, b"MZ").unwrap();
+        let root = dir.join("steam");
+        std::fs::create_dir_all(&root).unwrap();
+        let runtime = ProtonRuntime {
+            key: "Proton BattlEye Runtime".to_string(),
+            name: "Proton BattlEye Runtime".to_string(),
+            version: None,
+            path: root.join("steamapps/common/Proton BattlEye Runtime"),
+            steam_root: root.clone(),
+            kind: RuntimeKind::AntiCheat,
+            has_proton_script: false,
+        };
+        let mut game = Game::new("Jeu", exe.display().to_string());
+        game.proton = ProtonMode::Runtime(runtime.key.clone());
+        let error = resolve(&game, &Settings::default(), &[runtime]).unwrap_err();
+        assert!(error.contains("anti-triche"), "{error}");
+
+        // Un runtime Proton incomplet est refusé avec un message distinct.
+        let broken = ProtonRuntime {
+            key: "Proton casse".to_string(),
+            name: "Proton casse".to_string(),
+            version: None,
+            path: root.join("steamapps/common/Proton casse"),
+            steam_root: root,
+            kind: RuntimeKind::Proton,
+            has_proton_script: false,
+        };
+        game.proton = ProtonMode::Runtime(broken.key.clone());
+        let error = resolve(&game, &Settings::default(), &[broken]).unwrap_err();
+        assert!(error.contains("script `proton`"), "{error}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

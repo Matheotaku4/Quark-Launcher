@@ -1,7 +1,9 @@
 [Desktop Entry]
 Type=Application
 Name=Quark
+GenericName=Game Launcher
 Comment=Lanceur de jeux léger pour Linux
+Keywords=game;launcher;proton;steam;epic;gog;
 Exec=quark
 Icon=quark
 Terminal=false

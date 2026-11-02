@@ -518,6 +518,9 @@ pub struct QuarkApp {
     pub pal: Palette,
     pub tab: Tab,
     pub selected: Option<String>,
+    /// Nombre de colonnes de la dernière grille affichée, pour que les flèches
+    /// du clavier suivent la mise en page réelle (2 à 8 colonnes).
+    pub grid_columns: usize,
     pub filter: String,
     pub store_query: String,
     /// Recherche multi-sites ouverte depuis une carte de la boutique.
@@ -833,6 +836,7 @@ impl QuarkApp {
         Self {
             applied_theme: Some(lib.settings.theme),
             selected,
+            grid_columns: 3,
             runtimes,
             tools: proton::Tools::detect(),
             lib,
@@ -1272,10 +1276,22 @@ impl QuarkApp {
             return false;
         }
         match record.key.provider {
-            crate::providers::Provider::Epic => true,
+            // Sans outil ou sans session, la synchronisation automatique ne
+            // pourrait qu'échouer après chaque partie : on la laisse alors
+            // silencieuse. Le bouton manuel, lui, explique le problème.
+            crate::providers::Provider::Epic => {
+                let adapter = crate::providers::legendary::LegendaryAdapter::new();
+                adapter.executable.is_file()
+                    && crate::providers::legendary::LegendaryAdapter::is_logged_in()
+            }
             crate::providers::Provider::Gog => {
-                crate::providers::cloud_saves::save_path_for(self.lib.get(game_id), record)
-                    .is_some()
+                let adapter = crate::providers::gog::GogAdapter::new(
+                    crate::providers::gog::auth_config_path(),
+                );
+                adapter.executable.is_file()
+                    && crate::providers::gog::GogAdapter::is_logged_in()
+                    && crate::providers::cloud_saves::save_path_for(self.lib.get(game_id), record)
+                        .is_some()
             }
             crate::providers::Provider::Steam => false,
         }
@@ -2369,7 +2385,11 @@ impl QuarkApp {
                     // L'overlay EOS est activé par préfixe : on le réactive au
                     // lancement si l'utilisateur l'a déjà installé.
                     if let Some(prefix) = resolved.prefix.as_ref() {
-                        let wine_prefix = prefix.join("pfx");
+                        let wine_prefix = if game.umu {
+                            prefix.clone()
+                        } else {
+                            prefix.join("pfx")
+                        };
                         if crate::providers::legendary::LegendaryAdapter::eos_overlay_installed_path()
                             .is_some()
                         {
@@ -3058,8 +3078,8 @@ impl QuarkApp {
         }
         // Dans la grille, haut/bas suivent les colonnes ; en liste, tout
         // déplace d'une ligne.
-        let columns = if self.lib.settings.view == ViewMode::Grid {
-            3
+        let columns: i64 = if self.lib.settings.view == ViewMode::Grid {
+            self.grid_columns.max(1) as i64
         } else {
             1
         };
@@ -3919,7 +3939,7 @@ impl QuarkApp {
             self.toast_error("L'overlay EOS ne concerne que les jeux Epic");
             return;
         }
-        let wine_prefix = game.prefix_path(&self.lib.settings).join("pfx");
+        let wine_prefix = game.wine_prefix_path(&self.lib.settings);
         self.start_eos_overlay_job(ctx, Some(wine_prefix));
     }
 
@@ -4034,7 +4054,7 @@ impl QuarkApp {
             .quark_game_id
             .as_deref()
             .and_then(|game_id| self.lib.get(game_id))
-            .map(|linked| linked.prefix_path(&self.lib.settings).join("pfx"))
+            .map(|linked| linked.wine_prefix_path(&self.lib.settings))
             .filter(|prefix| prefix.join("drive_c").is_dir());
         Ok(crate::saves::SaveIdentity {
             provider_key: game.key.clone(),
@@ -4288,7 +4308,7 @@ impl QuarkApp {
         let wine_prefix = self
             .lib
             .get(game_id)
-            .map(|linked| linked.prefix_path(&self.lib.settings).join("pfx"))
+            .map(|linked| linked.wine_prefix_path(&self.lib.settings))
             .filter(|prefix| prefix.join("drive_c").is_dir());
         Some(crate::saves::SaveIdentity {
             provider_key: provider.key.clone(),

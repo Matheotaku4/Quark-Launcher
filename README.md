@@ -6,7 +6,7 @@ own, launches Windows games through Proton (or umu-launcher), and stays out of
 the way with an AMOLED interface, a store page, save snapshots and an in-game
 overlay.
 
-This is the 1.1.2 documentation. Older release notes are kept on the GitHub
+This is the 1.1.3 documentation. Older release notes are kept on the GitHub
 releases page; `docs/release-notes.md` only describes the release currently
 being published.
 
@@ -64,12 +64,24 @@ Download `quark-<version>-linux-x86_64.tar.gz` and its `.sha256` file from the
 then verify and unpack it:
 
 ```bash
-sha256sum -c quark-1.1.2-linux-x86_64.tar.gz.sha256
-tar -xzf quark-1.1.2-linux-x86_64.tar.gz
+sha256sum -c quark-1.1.3-linux-x86_64.tar.gz.sha256
+tar -xzf quark-1.1.3-linux-x86_64.tar.gz
 ./quark/quark
 ```
 
-The archive contains the binary, the README and the desktop file. Quark needs
+The archive contains `quark/quark`, `quark/README.md`, `quark/quark.desktop`
+and `quark/quark.png`. To add Quark to the applications menu, install them for
+the current user:
+
+```bash
+install -Dm755 quark/quark ~/.local/bin/quark
+install -Dm644 quark/quark.desktop ~/.local/share/applications/quark.desktop
+install -Dm644 quark/quark.png ~/.local/share/icons/hicolor/512x512/apps/quark.png
+update-desktop-database ~/.local/share/applications 2>/dev/null || true
+```
+
+`~/.local/bin` must be in your `PATH` for the `Exec=quark` entry to work; if it
+is not, use the absolute path of the binary in the desktop file. Quark needs
 X11 or Wayland, OpenGL and the usual font/GL libraries of your distribution.
 `python3` is required by Legendary and gogdl (both are Python zipapps).
 
@@ -302,7 +314,8 @@ and keeps the file.
 
 ## Settings
 
-The settings window is organized as a sidebar with five groups:
+The settings window uses a horizontal tab bar with eight pages, grouped by
+purpose:
 
 - **Interface:** Appearance, In game.
 - **Library:** New games, Artworks.
@@ -329,8 +342,8 @@ logs, updates and game folders in a background thread.
 quark                     Open the launcher
 quark --doctor            Check the local environment
 quark --search <query>    Search Steam / SteamGridDB without opening the UI
-quark --fetch <appid>     Fetch Steam metadata and artwork
-quark --news <appid>      Read the Steam news feed
+quark --fetch <name>      Search a title and download its artwork
+quark --news <appid|name> Read the Steam news feed
 quark --scan <folder>     Scan a folder for games
 quark --update            Check and download the latest release
 quark --ui <file.png>     Render the interface off-screen (no display needed)
