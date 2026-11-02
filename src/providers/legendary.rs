@@ -203,7 +203,9 @@ impl LegendaryAdapter {
     }
 
     pub fn supports_cloud_saves(&self) -> CapabilityState {
-        CapabilityState::Unknown
+        // `legendary sync-saves` compare les dates locales et distantes et
+        // télécharge ou envoie la sauvegarde la plus récente.
+        CapabilityState::Supported
     }
 }
 
@@ -319,7 +321,10 @@ pub fn parse_owned_csv(text: &str, fetched_at: i64) -> Result<Vec<ProviderGame>,
             install_exe: None,
             install_state: InstallState::NotInstalled,
             quark_game_id: None,
-            capabilities: Default::default(),
+            capabilities: super::model::GameCapabilities {
+                achievements: CapabilityState::Supported,
+                cloud_saves: CapabilityState::Supported,
+            },
             last_synced: Some(fetched_at),
         });
     }
@@ -363,7 +368,10 @@ pub fn parse_owned_json(json: &str, fetched_at: i64) -> Result<Vec<ProviderGame>
             install_exe: None,
             install_state: InstallState::NotInstalled,
             quark_game_id: None,
-            capabilities: Default::default(),
+            capabilities: super::model::GameCapabilities {
+                achievements: CapabilityState::Supported,
+                cloud_saves: CapabilityState::Supported,
+            },
             last_synced: Some(fetched_at),
         });
     }
@@ -411,14 +419,20 @@ pub fn parse_installed_json(json: &str, fetched_at: i64) -> Result<Vec<ProviderG
             },
             title: entry.title,
             owned: true,
-            install_root: entry.install_path.parent().map(std::path::Path::to_path_buf),
+            install_root: entry
+                .install_path
+                .parent()
+                .map(std::path::Path::to_path_buf),
             install_path: Some(entry.install_path),
             custom_save_paths: Vec::new(),
             cover_url: None,
             install_exe: executable,
             install_state: InstallState::Installed,
             quark_game_id: None,
-            capabilities: Default::default(),
+            capabilities: super::model::GameCapabilities {
+                achievements: CapabilityState::Supported,
+                cloud_saves: CapabilityState::Supported,
+            },
             last_synced: Some(fetched_at),
         });
     }
@@ -669,27 +683,31 @@ pub fn parse_achievements(text: &str) -> Result<AchievementInfo, String> {
         .find("\"total_achievements\"")
         .or_else(|| text.find("\"completed\""))
         .or_else(|| text.find("\"in_progress\""));
-    let start = marker
+    let Some(start) = marker
         .and_then(|marker| text[..marker].rfind('{'))
         .or_else(|| text.find('{'))
-        .ok_or_else(|| "réponse de Legendary illisible (aucun JSON)".to_string())?;
+    else {
+        // Legendary peut être lancé sans `--json` par une ancienne version,
+        // ou ne rien écrire sur stdout alors que la commande a réussi. Le
+        // tableau texte reste alors exploitable.
+        return parse_achievements_text(text);
+    };
     // Legendary peut ajouter une ligne de journal avant ou après le JSON ;
     // `from_str` exigeait alors que l'objet occupe toute la fin de la sortie.
     // On lit le premier objet complet et on ignore ce qui suit.
     let mut stream = serde_json::Deserializer::from_str(&text[start..]).into_iter::<Raw>();
-    let raw = stream
-        .next()
-        .ok_or_else(|| "réponse de Legendary vide".to_string())?
-        .map_err(|_| "réponse de Legendary illisible (JSON invalide)".to_string())?;
+    let raw = match stream.next() {
+        Some(Ok(raw)) => raw,
+        Some(Err(_)) | None => {
+            // Un objet JSON étranger (journal, réponse d'erreur) ne doit pas
+            // masquer un tableau texte valide.
+            return parse_achievements_text(text);
+        }
+    };
     let mut rows = Vec::new();
-    for list in [
-        raw.completed,
-        raw.in_progress,
-        raw.uninitiated,
-        raw.hidden,
-    ]
-    .into_iter()
-    .flatten()
+    for list in [raw.completed, raw.in_progress, raw.uninitiated, raw.hidden]
+        .into_iter()
+        .flatten()
     {
         for row in list {
             let key = row.name.trim().to_string();
@@ -754,6 +772,72 @@ pub fn parse_achievements(text: &str) -> Result<AchievementInfo, String> {
     Ok(info)
 }
 
+/// Repli pour la sortie texte de `legendary achievements` (versions qui ne
+/// connaissent pas `--json`, ou réponse vide). Les lignes publiées sont :
+/// ` - Nom | 100XP | description | Progress: 42.0% | Completed on: …`.
+pub fn parse_achievements_text(text: &str) -> Result<AchievementInfo, String> {
+    let mut total = 0u32;
+    let mut unlocked = 0u32;
+    let mut rows = Vec::new();
+    let mut section = "";
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(value) = line.strip_prefix("Total achievements:") {
+            total = value.trim().parse().unwrap_or(0);
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("Completed achievements:") {
+            unlocked = value.trim().parse().unwrap_or(0);
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("* ") {
+            section = value.trim();
+            continue;
+        }
+        if !line.starts_with("- ") || section.is_empty() {
+            continue;
+        }
+        let fields: Vec<&str> = line[2..].split('|').map(str::trim).collect();
+        let name = fields.first().copied().unwrap_or("").trim();
+        if name.is_empty() {
+            continue;
+        }
+        let description = fields.get(2).copied().unwrap_or("").trim().to_string();
+        let progress = fields
+            .get(3)
+            .and_then(|value| value.strip_prefix("Progress:"))
+            .and_then(|value| value.trim().trim_end_matches('%').parse::<f32>().ok())
+            .map(|percent| (percent / 100.0).clamp(0.0, 1.0))
+            .unwrap_or(0.0);
+        let is_unlocked = section.eq_ignore_ascii_case("Completed");
+        rows.push(AchievementRow {
+            key: name.to_string(),
+            id: name.to_string(),
+            name: name.to_string(),
+            description,
+            unlocked: is_unlocked,
+            progress: if is_unlocked { 1.0 } else { progress },
+            session: false,
+            rarity: None,
+            icon_url: None,
+            icon_path: None,
+        });
+    }
+    if rows.is_empty() {
+        return Err(
+            "Legendary n'a renvoyé aucun succès lisible (jeu sans succès ou cache Epic incomplet)"
+                .to_string(),
+        );
+    }
+    let mut info = AchievementInfo {
+        total: total.max(rows.len() as u32),
+        unlocked,
+        rows,
+    };
+    info.normalize();
+    Ok(info)
+}
+
 /// Taille annoncée par `legendary info --json`, quand la version de Legendary
 /// la publie. Une absence n'est pas une erreur : la fenêtre d'installation
 /// affiche simplement « taille inconnue » et laisse démarrer le téléchargement.
@@ -778,13 +862,45 @@ pub fn epic_achievements(app_name: &str) -> Result<AchievementInfo, String> {
             "Legendary n'est pas installé : les succès Epic sont indisponibles".to_string(),
         );
     }
-    let output = super::runner::run(
-        adapter.command(LegendaryAdapter::achievements_args(app_name)),
+    let run = || {
+        super::runner::run(
+            adapter.command(LegendaryAdapter::achievements_args(app_name)),
+            Duration::from_secs(120),
+            None,
+        )
+    };
+    let mut output = run()?;
+    if output.exit_code != Some(0) {
+        return Err(format!(
+            "Legendary n'a pas pu lire les succès ({})",
+            super::runner::failure_hint(&output)
+        ));
+    }
+    let first = parse_achievements(&output.stdout);
+    if first.is_ok() {
+        return first;
+    }
+    // Le cache de métadonnées Epic ne contient parfois pas encore la fiche des
+    // succès. `info` la rafraîchit ; on retente une seule fois pour éviter une
+    // boucle de commandes réseau.
+    let info = super::runner::run(
+        adapter.command(LegendaryAdapter::info_args(app_name)),
         Duration::from_secs(120),
         None,
-    )?;
-    ensure_success(&output)?;
-    parse_achievements(&output.stdout)
+    );
+    if info
+        .as_ref()
+        .is_ok_and(|output| output.exit_code == Some(0))
+    {
+        output = run()?;
+        if let Ok(info) = parse_achievements(&output.stdout) {
+            return Ok(info);
+        }
+    }
+    Err(match first {
+        Err(error) => error,
+        Ok(_) => "Les succès Epic n'ont pas pu être relus".to_string(),
+    })
 }
 
 /// Temps de jeu Epic. Legendary ne le publie pas dans ses listes, mais son
@@ -1381,9 +1497,30 @@ Empty,,1.0,False\n";
         let info = parse_achievements(json).unwrap();
         assert_eq!(info.total, 1);
         assert_eq!(info.rows[0].name, "Premier");
-        assert_eq!(info.rows[0].icon_url.as_deref(), Some("https://cdn/ach.png"));
+        assert_eq!(
+            info.rows[0].icon_url.as_deref(),
+            Some("https://cdn/ach.png")
+        );
         assert_eq!(info.rows[0].progress, 0.5);
         assert!(parse_achievements("pas de json").is_err());
+    }
+
+    #[test]
+    fn un_tableau_texte_legendary_reste_lisible_sans_json() {
+        let text = r#"* Achievements for "Celeste"
+  Total achievements: 2
+  Completed achievements: 1
+* Completed
+ - First Step | 100XP | Termine le tutoriel | Progress: 100.0% | Completed on: 2026-01-01
+* In progress
+ - Summit | 200XP | Atteins le sommet | Progress: 40.0% | Completed on: None
+"#;
+        let info = parse_achievements(text).unwrap();
+        assert_eq!(info.total, 2);
+        assert_eq!(info.unlocked, 1);
+        assert_eq!(info.rows.len(), 2);
+        assert!(info.rows[0].unlocked);
+        assert_eq!(info.rows[1].progress, 0.4);
     }
 
     #[test]

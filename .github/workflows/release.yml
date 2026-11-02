@@ -63,6 +63,7 @@ jobs:
             "hover-row:--view list --hover 160,340" \
             "hover-tile:--view grid --hover 150,300" \
             "dialog-settings:--dialog settings" \
+            "dialog-settings-ingame:--dialog settings-ingame" \
             "dialog-settings-defaults:--dialog settings-defaults" \
             "dialog-install:--dialog install --providers-demo" \
             "dialog-updates:--dialog updates" \

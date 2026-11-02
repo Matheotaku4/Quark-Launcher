@@ -139,8 +139,8 @@ fn download_as(url: &str, path: &Path, wide: bool) -> Result<PathBuf, String> {
         ));
     }
     let bytes = crate::net::bytes(response, 12 * 1024 * 1024, "image de boutique")?;
-    let image = image::load_from_memory(&bytes)
-        .map_err(|_| "image de boutique illisible".to_string())?;
+    let image =
+        image::load_from_memory(&bytes).map_err(|_| "image de boutique illisible".to_string())?;
     if image.width() < 96 || image.height() < 96 {
         return Err("image de boutique trop petite".to_string());
     }
@@ -378,9 +378,7 @@ mod tests {
             hero_cache_path(&key(Provider::Steam, "620")),
             cache_path(&key(Provider::Steam, "620"))
         );
-        assert!(
-            hero_cache_path(&key(Provider::Steam, "620")).ends_with("hero-steam-620.png")
-        );
+        assert!(hero_cache_path(&key(Provider::Steam, "620")).ends_with("hero-steam-620.png"));
         assert_eq!(
             normalize("The Witcher 3: Wild Hunt"),
             "the witcher 3 wild hunt"

@@ -506,11 +506,21 @@ pub struct Settings {
     /// Garde Quark dans la zone de notification : la croix ne quitte plus
     /// l'application, elle la range dans l'icône.
     pub tray_icon: bool,
-    /// Overlay en jeu : petit panneau toujours au-dessus, captures et
-    /// notifications, affiché tant qu'un jeu tourne.
+    /// Overlay en jeu : panneau au-dessus du jeu, captures et succès.
     pub overlay: bool,
     /// Touche de capture d'écran globale (F12 par défaut).
     pub screenshot_key: String,
+    /// Raccourci global qui ouvre ou ferme l'overlay (Maj+Retour arrière).
+    pub overlay_hotkey: String,
+    /// Affiche aussi les succès verrouillés dans l'overlay.
+    pub overlay_show_locked: bool,
+    /// Version compacte des lignes de succès dans l'overlay.
+    pub overlay_compact: bool,
+    /// Affiche la progression et la rareté dans l'overlay.
+    pub overlay_show_progress: bool,
+    /// Synchronise les sauvegardes cloud Epic/GOG après installation et à la
+    /// fermeture du jeu.
+    pub cloud_saves: bool,
     /// Fait défiler le carrousel de l'accueil tout seul.
     pub carousel_auto: bool,
     /// Intervalle du défilement automatique, en secondes.
@@ -545,6 +555,11 @@ impl Default for Settings {
             tray_icon: true,
             overlay: true,
             screenshot_key: "F12".to_string(),
+            overlay_hotkey: "Shift+BackSpace".to_string(),
+            overlay_show_locked: true,
+            overlay_compact: false,
+            overlay_show_progress: true,
+            cloud_saves: true,
             carousel_auto: true,
             carousel_secs: 8.0,
             home_genre: String::new(),
@@ -634,6 +649,75 @@ impl LaunchOptions {
     }
 }
 
+/// Une édition installée d'un jeu. Une fiche Quark peut réunir plusieurs
+/// installations (Steam, Epic, GOG, locale) sans dupliquer les métadonnées, les
+/// artworks, les notes ou le temps de jeu.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Installation {
+    /// Stable pour la vie de la configuration : `local:<jeu>` ou
+    /// `<boutique>:<identifiant produit>`.
+    pub id: String,
+    /// Boutique d'origine. `None` désigne une installation ajoutée à la main.
+    pub provider: Option<crate::providers::Provider>,
+    /// Identifiant du produit chez la boutique (App name Epic, ID GOG…).
+    pub product_id: Option<String>,
+    /// Nom lisible de l'édition (« Steam », « GOG »…).
+    pub label: String,
+    /// Dossier d'installation, quand la boutique le publie.
+    pub path: Option<String>,
+    /// Exécutable de cette édition.
+    pub exe: String,
+    /// Préfixe Proton propre à cette édition (vide = préfixe du jeu).
+    pub prefix: Option<String>,
+    /// Dossier de sauvegarde utilisé par la synchronisation cloud.
+    pub save_path: Option<String>,
+    /// Dernier horodatage de synchronisation GOG (`gogdl save-sync --ts`).
+    pub save_sync_ts: Option<i64>,
+    /// Dernière synchronisation cloud réussie.
+    pub last_synced: Option<i64>,
+    /// L'édition est réellement présente sur le disque.
+    pub installed: bool,
+}
+
+impl Default for Installation {
+    fn default() -> Self {
+        Self {
+            id: new_id(),
+            provider: None,
+            product_id: None,
+            label: "Installation locale".to_string(),
+            path: None,
+            exe: String::new(),
+            prefix: None,
+            save_path: None,
+            save_sync_ts: None,
+            last_synced: None,
+            installed: true,
+        }
+    }
+}
+
+impl Installation {
+    pub fn source_label(&self) -> &'static str {
+        match self.provider {
+            None => "Locale",
+            Some(crate::providers::Provider::Steam) => "Steam",
+            Some(crate::providers::Provider::Epic) => "Epic Games",
+            Some(crate::providers::Provider::Gog) => "GOG",
+        }
+    }
+
+    pub fn slug(&self) -> &'static str {
+        match self.provider {
+            None => "local",
+            Some(crate::providers::Provider::Steam) => "steam",
+            Some(crate::providers::Provider::Epic) => "epic",
+            Some(crate::providers::Provider::Gog) => "gog",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Game {
@@ -681,6 +765,11 @@ pub struct Game {
     pub description: String,
     /// Historique des sessions, du plus ancien au plus récent.
     pub sessions: Vec<PlaySession>,
+    /// Éditions installées de ce jeu. La première est créée automatiquement
+    /// depuis l'ancien champ `exe` à la première ouverture.
+    pub installations: Vec<Installation>,
+    /// Édition utilisée par « Jouer ». Vide = la première installation.
+    pub active_installation: Option<String>,
 }
 
 impl Default for Game {
@@ -712,6 +801,8 @@ impl Default for Game {
             released: String::new(),
             description: String::new(),
             sessions: Vec::new(),
+            installations: Vec::new(),
+            active_installation: None,
         }
     }
 }
@@ -727,6 +818,137 @@ impl Game {
 
     pub fn exe_path(&self) -> PathBuf {
         PathBuf::from(expand_tilde(&self.exe))
+    }
+
+    /// Installation actuellement sélectionnée pour le lancement.
+    pub fn active_installation(&self) -> Option<&Installation> {
+        self.active_installation
+            .as_deref()
+            .and_then(|id| {
+                self.installations
+                    .iter()
+                    .find(|installation| installation.id == id)
+            })
+            .or_else(|| self.installations.first())
+    }
+
+    /// Bascule vers une édition installée. L'exécutable et le préfixe de
+    /// l'édition deviennent ceux du jeu, ce qui laisse tout le code de
+    /// lancement (Proton, umu, journal) inchangé.
+    pub fn activate_installation(&mut self, id: &str) -> bool {
+        let Some(installation) = self
+            .installations
+            .iter()
+            .find(|installation| installation.id == id)
+            .cloned()
+        else {
+            return false;
+        };
+        self.active_installation = Some(installation.id.clone());
+        self.exe = installation.exe.clone();
+        self.prefix = installation.prefix.clone();
+        // Une deuxième édition ne doit pas partager le préfixe de la première.
+        // La première garde le dossier historique pour ne pas perdre ses saves.
+        if self.prefix.is_none() && self.installations.len() > 1 {
+            self.prefix = Some(
+                prefix_root()
+                    .join(format!("{}-{}", self.id, installation.slug()))
+                    .display()
+                    .to_string(),
+            );
+        }
+        true
+    }
+
+    /// Ajoute ou met à jour une édition sans créer de doublon.
+    pub fn upsert_installation(&mut self, installation: Installation) -> bool {
+        let existing = self.installations.iter_mut().find(|current| {
+            current.id == installation.id
+                || (current.provider == installation.provider
+                    && current.provider.is_some()
+                    && current.product_id == installation.product_id)
+        });
+        match existing {
+            Some(current) => {
+                let id = current.id.clone();
+                // `migrate_installations` reconstruit l'édition depuis la fiche
+                // de boutique à chaque sauvegarde. Elle ne connaît ni le
+                // préfixe choisi, ni l'horodatage GOG, ni le dossier de
+                // sauvegarde : ces valeurs locales doivent survivre au merge.
+                *current = Installation {
+                    exe: if installation.exe.trim().is_empty() {
+                        current.exe.clone()
+                    } else {
+                        installation.exe.clone()
+                    },
+                    prefix: current.prefix.clone().or(installation.prefix),
+                    save_path: current.save_path.clone().or(installation.save_path),
+                    save_sync_ts: current.save_sync_ts.or(installation.save_sync_ts),
+                    last_synced: current.last_synced.or(installation.last_synced),
+                    ..installation
+                };
+                current.id = id;
+                false
+            }
+            None => {
+                self.installations.push(installation);
+                true
+            }
+        }
+    }
+
+    /// Crée l'installation locale des anciennes configurations et recale les
+    /// champs historiques sur l'édition active.
+    pub fn normalize_installations(&mut self) {
+        if self.installations.is_empty() && !self.exe.trim().is_empty() {
+            let path = self
+                .exe_path()
+                .parent()
+                .map(|parent| parent.display().to_string());
+            self.installations.push(Installation {
+                id: format!("local:{}", self.id),
+                provider: None,
+                product_id: None,
+                label: "Installation locale".to_string(),
+                path,
+                exe: self.exe.clone(),
+                prefix: self.prefix.clone(),
+                save_path: None,
+                save_sync_ts: None,
+                last_synced: None,
+                installed: true,
+            });
+        }
+        if self.active_installation.is_none() && !self.installations.is_empty() {
+            self.active_installation = self.installations.first().map(|i| i.id.clone());
+        }
+        let active = self
+            .active_installation
+            .clone()
+            .or_else(|| self.installations.first().map(|i| i.id.clone()));
+        let exe_path = self.exe_path();
+        if let Some(installation) = active.and_then(|id| {
+            self.installations
+                .iter_mut()
+                .find(|installation| installation.id == id)
+        }) {
+            let belongs_to_installation = installation
+                .path
+                .as_deref()
+                .map(|path| exe_path.starts_with(path))
+                .unwrap_or(false);
+            if !self.exe.trim().is_empty()
+                && (installation.provider.is_none() || belongs_to_installation)
+            {
+                installation.exe = self.exe.clone();
+            } else if !installation.exe.trim().is_empty() {
+                self.exe = installation.exe.clone();
+            }
+            if self.prefix.is_some() {
+                installation.prefix = self.prefix.clone();
+            }
+            self.active_installation = Some(installation.id.clone());
+        }
     }
 
     /// Vrai si l'exécutable est un binaire Linux : il démarre sans Proton.
@@ -977,10 +1199,11 @@ impl Library {
     /// Écrit la configuration de façon durable : fichier temporaire, `fsync`,
     /// puis renommage atomique. Un chargement en erreur rend la sauvegarde
     /// impossible tant que l'utilisateur n'a pas réparé le fichier.
-    pub fn save(&self) -> Result<(), String> {
+    pub fn save(&mut self) -> Result<(), String> {
         if let Some(error) = &self.load_error {
             return Err(error.clone());
         }
+        self.migrate_installations();
         std::fs::create_dir_all(config_dir()).map_err(|e| e.to_string())?;
         let text = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
         let tmp = config_dir().join(format!(
@@ -1015,6 +1238,7 @@ impl Library {
     /// verse une seule fois dans ceux qui n'en ont pas encore : le lancement
     /// des jeux existants ne change pas.
     pub fn migrate_defaults(&mut self) {
+        self.migrate_installations();
         // Anciennes installations : rattache une fiche fournisseur à la racine
         // par défaut quand son chemin y est clairement contenu, pour que la
         // désinstallation puisse vérifier la racine. Indépendant de
@@ -1041,6 +1265,117 @@ impl Library {
             }
         }
         self.settings.defaults_migrated = true;
+    }
+
+    /// Relie les fiches de boutique aux installations de la bibliothèque
+    /// unifiée. Idempotent : appelé au chargement et avant chaque sauvegarde.
+    pub fn migrate_installations(&mut self) {
+        for game in &mut self.games {
+            game.normalize_installations();
+        }
+        let records: Vec<crate::providers::ProviderGame> = self.provider_library.games.clone();
+        for record in records {
+            let Some(game_id) = record.quark_game_id.clone() else {
+                continue;
+            };
+            let Some(game) = self.get_mut(&game_id) else {
+                continue;
+            };
+            let installed = record.install_state == crate::providers::InstallState::Installed;
+            let installation = Installation {
+                id: format!(
+                    "{}:{}",
+                    match record.key.provider {
+                        crate::providers::Provider::Steam => "steam",
+                        crate::providers::Provider::Epic => "epic",
+                        crate::providers::Provider::Gog => "gog",
+                    },
+                    record.key.product_id
+                ),
+                provider: Some(record.key.provider),
+                product_id: Some(record.key.product_id.clone()),
+                label: record.title.clone(),
+                path: record
+                    .install_path
+                    .as_ref()
+                    .map(|path| path.display().to_string()),
+                exe: record
+                    .install_exe
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_default(),
+                prefix: None,
+                save_path: record
+                    .custom_save_paths
+                    .first()
+                    .map(|path| path.display().to_string()),
+                save_sync_ts: None,
+                last_synced: record.last_synced,
+                installed,
+            };
+            game.upsert_installation(installation);
+            if game.exe.trim().is_empty() && !game.installations.is_empty() {
+                let active = game
+                    .active_installation()
+                    .map(|installation| (installation.exe.clone(), installation.prefix.clone()));
+                if let Some((exe, prefix)) = active {
+                    game.exe = exe;
+                    game.prefix = prefix;
+                }
+            }
+        }
+    }
+
+    /// Installation correspondant à une fiche de boutique, si elle existe.
+    pub fn installation_for_provider(
+        &self,
+        game_id: &str,
+        key: &crate::providers::ProviderGameKey,
+    ) -> Option<&Installation> {
+        self.get(game_id)?
+            .installations
+            .iter()
+            .find(|installation| {
+                installation.provider == Some(key.provider)
+                    && installation.product_id.as_deref() == Some(key.product_id.as_str())
+            })
+    }
+
+    /// Sélectionne l'édition d'une boutique après adoption ou installation.
+    pub fn activate_provider_installation(
+        &mut self,
+        game_id: &str,
+        key: &crate::providers::ProviderGameKey,
+    ) -> bool {
+        let Some(game) = self.get_mut(game_id) else {
+            return false;
+        };
+        let Some(id) = game
+            .installations
+            .iter()
+            .find(|installation| {
+                installation.provider == Some(key.provider)
+                    && installation.product_id.as_deref() == Some(key.product_id.as_str())
+            })
+            .map(|installation| installation.id.clone())
+        else {
+            return false;
+        };
+        game.activate_installation(&id)
+    }
+
+    pub fn installation_for_provider_mut(
+        &mut self,
+        game_id: &str,
+        key: &crate::providers::ProviderGameKey,
+    ) -> Option<&mut Installation> {
+        self.get_mut(game_id)?
+            .installations
+            .iter_mut()
+            .find(|installation| {
+                installation.provider == Some(key.provider)
+                    && installation.product_id.as_deref() == Some(key.product_id.as_str())
+            })
     }
 
     pub fn get(&self, id: &str) -> Option<&Game> {
@@ -1467,10 +1802,69 @@ mod tests {
         );
     }
     #[test]
+    fn migration_cree_une_installation_locale_puis_une_edition_de_boutique() {
+        let mut lib = Library::default();
+        let mut game = Game::new("Celeste", "/tmp/Celeste/Celeste.exe");
+        game.id = "quark-game".to_string();
+        lib.games.push(game);
+        lib.provider_library
+            .games
+            .push(crate::providers::ProviderGame {
+                key: crate::providers::ProviderGameKey {
+                    provider: crate::providers::Provider::Epic,
+                    product_id: "celeste-epic".to_string(),
+                },
+                title: "Celeste".to_string(),
+                owned: true,
+                install_path: Some(PathBuf::from("/tmp/Celeste")),
+                install_root: Some(PathBuf::from("/tmp")),
+                custom_save_paths: Vec::new(),
+                cover_url: None,
+                install_exe: Some(PathBuf::from("/tmp/Celeste/Celeste.exe")),
+                install_state: crate::providers::InstallState::Installed,
+                quark_game_id: Some("quark-game".to_string()),
+                capabilities: Default::default(),
+                last_synced: None,
+            });
+        lib.migrate_installations();
+        let game = lib.get("quark-game").unwrap();
+        assert_eq!(game.installations.len(), 2);
+        assert!(game.installations.iter().any(|installation| {
+            installation.provider == Some(crate::providers::Provider::Epic)
+                && installation.product_id.as_deref() == Some("celeste-epic")
+        }));
+        // Les données locales de l'édition (préfixe, horodatage GOG, dossier de
+        // sauvegarde) ne doivent pas être écrasées par la fiche de boutique.
+        if let Some(installation) = lib
+            .get_mut("quark-game")
+            .unwrap()
+            .installations
+            .iter_mut()
+            .find(|installation| installation.provider.is_some())
+        {
+            installation.prefix = Some("/tmp/prefix-epic".to_string());
+            installation.save_path = Some("/tmp/saves-epic".to_string());
+            installation.save_sync_ts = Some(42);
+        }
+        // La migration est idempotente : sauvegarder deux fois ne duplique pas
+        // les éditions et conserve les valeurs locales.
+        lib.migrate_installations();
+        let game = lib.get("quark-game").unwrap();
+        assert_eq!(game.installations.len(), 2);
+        let provider = game
+            .installations
+            .iter()
+            .find(|installation| installation.provider.is_some())
+            .unwrap();
+        assert_eq!(provider.prefix.as_deref(), Some("/tmp/prefix-epic"));
+        assert_eq!(provider.save_path.as_deref(), Some("/tmp/saves-epic"));
+        assert_eq!(provider.save_sync_ts, Some(42));
+    }
+
+    #[test]
     fn une_bibliotheque_illisible_ne_peut_pas_etre_sauvegardee() {
         let mut library = Library::default();
         library.load_error = Some("config.json illisible".to_string());
         assert!(library.save().is_err());
     }
-
 }

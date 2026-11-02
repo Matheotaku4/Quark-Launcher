@@ -327,6 +327,8 @@ pub struct NativePicker {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SettingsTab {
     Appearance,
+    /// Overlay, captures, succès et synchronisation des sauvegardes.
+    InGame,
     /// Ce qui est prérempli dans chaque jeu ajouté (ce n'est pas global) :
     /// préfixe, arguments, runtime Proton, anti-triche, options, variables.
     Defaults,
@@ -343,8 +345,9 @@ impl SettingsTab {
     /// Ordre de lecture : l'apparence, puis ce que reçoivent les nouveaux
     /// jeux, les boutiques (le seul onglet avec des actions), les données, et
     /// enfin la version installée.
-    pub const ALL: [(SettingsTab, &'static str); 7] = [
+    pub const ALL: [(SettingsTab, &'static str); 8] = [
         (SettingsTab::Appearance, "Apparence"),
+        (SettingsTab::InGame, "En jeu"),
         (SettingsTab::Defaults, "Nouveaux jeux"),
         (SettingsTab::Artworks, "Artworks"),
         (SettingsTab::Providers, "Boutiques & outils"),
@@ -358,6 +361,9 @@ impl SettingsTab {
         match self {
             SettingsTab::Appearance => {
                 "Thème, affichage de la bibliothèque, accueil et notifications."
+            }
+            SettingsTab::InGame => {
+                "Overlay, captures, succès et synchronisation des sauvegardes cloud."
             }
             SettingsTab::Defaults => {
                 "Ce que reçoit chaque jeu ajouté : préfixe, runtime, options et variables. \
@@ -452,6 +458,14 @@ pub struct SaveJob {
     pub key: crate::providers::ProviderGameKey,
     pub title: String,
     pub rx: Receiver<Result<SaveTaskOutput, String>>,
+}
+
+/// Synchronisation cloud d'une installation, exécutée hors du rendu.
+pub struct CloudSyncJob {
+    pub key: crate::providers::ProviderGameKey,
+    pub game_id: String,
+    pub title: String,
+    pub rx: Receiver<Result<crate::providers::CloudSaveReport, String>>,
 }
 
 pub enum SaveTaskOutput {
@@ -609,6 +623,9 @@ pub struct QuarkApp {
     )>,
     pub save_restore_rx: Option<Receiver<Result<(), String>>>,
     pub save_background_jobs: Vec<SaveBackgroundJob>,
+    /// Synchronisation des sauvegardes cloud Epic/GOG en cours.
+    pub cloud_sync: Option<CloudSyncJob>,
+    pub cloud_sync_status: HashMap<crate::providers::ProviderGameKey, String>,
     /// Pourquoi l'icône de notification n'a pas pu démarrer (dit dans les
     /// paramètres, jamais avalé).
     pub tray_error: Option<String>,
@@ -801,8 +818,7 @@ impl QuarkApp {
         let pal = theme::palette(lib.settings.theme);
         let (store_recommendations, store_recommendation_source) =
             crate::steam_store::recommendations_for(store_snapshot.as_ref(), &lib.games, None);
-        let (session_unlocks, session_unlocks_error) =
-            crate::session_sync::load_session_unlocks();
+        let (session_unlocks, session_unlocks_error) = crate::session_sync::load_session_unlocks();
         let config_error = lib.load_error.clone();
         Self {
             applied_theme: Some(lib.settings.theme),
@@ -879,6 +895,8 @@ impl QuarkApp {
             save_restore_confirm: None,
             save_restore_rx: None,
             save_background_jobs: Vec::new(),
+            cloud_sync: None,
+            cloud_sync_status: HashMap::new(),
             tray_error: None,
             home: false,
             carousel: 0,
@@ -1008,7 +1026,7 @@ impl QuarkApp {
     // -----------------------------------------------------------------------
 
     fn tick(&mut self, ctx: &egui::Context) {
-        self.poll_running_games();
+        self.poll_running_games(ctx);
         self.poll_update(ctx);
         self.poll_artwork_plan(ctx);
         self.poll_asset_job(ctx);
@@ -1041,6 +1059,7 @@ impl QuarkApp {
         self.ensure_provider_playtime(ctx);
         self.poll_save_jobs(ctx);
         self.poll_save_background_jobs(ctx);
+        self.poll_cloud_sync(ctx);
         self.poll_store(ctx);
         self.poll_site_search(ctx);
         if self.tab == Tab::Store && !self.store_offline_mode {
@@ -1157,7 +1176,7 @@ impl QuarkApp {
         }
     }
 
-    fn poll_running_games(&mut self) {
+    fn poll_running_games(&mut self, ctx: &egui::Context) {
         let mut finished: Vec<(String, u64, i64, Option<crate::saves::SaveIdentity>)> = Vec::new();
         for (id, game) in self.running.iter_mut() {
             match game.child.try_wait() {
@@ -1220,6 +1239,128 @@ impl QuarkApp {
                 self.provider_playtime.remove(&key);
             }
             self.touch();
+            if self.lib.settings.cloud_saves
+                && self.cloud_sync.is_none()
+                && self.can_auto_sync_cloud(&id)
+            {
+                self.sync_cloud_saves(ctx, &id);
+            }
+        }
+    }
+
+    /// Vrai quand la synchronisation peut démarrer sans demander quoi que ce
+    /// soit : jeu de boutique installé, et dossier de sauvegarde connu pour
+    /// GOG. Une synchronisation automatique sans dossier GOG ne ferait
+    /// qu'afficher une erreur après chaque partie.
+    fn can_auto_sync_cloud(&self, game_id: &str) -> bool {
+        let Some(record) = self.provider_record_for_game(game_id) else {
+            return false;
+        };
+        if record.install_state != crate::providers::InstallState::Installed {
+            return false;
+        }
+        match record.key.provider {
+            crate::providers::Provider::Epic => true,
+            crate::providers::Provider::Gog => {
+                crate::providers::cloud_saves::save_path_for(self.lib.get(game_id), record)
+                    .is_some()
+            }
+            crate::providers::Provider::Steam => false,
+        }
+    }
+
+    /// Lance la synchronisation des sauvegardes cloud d'un jeu lié à Epic ou
+    /// GOG. Epic peut calculer son dossier tout seul ; GOG utilise le dossier
+    /// choisi dans la fiche du jeu.
+    pub fn sync_cloud_saves(&mut self, ctx: &egui::Context, game_id: &str) {
+        if self.cloud_sync.is_some() {
+            self.toast_info("Une synchronisation de sauvegardes est déjà en cours");
+            return;
+        }
+        let Some(record) = self.provider_record_for_game(game_id).cloned() else {
+            self.toast_info("Ce jeu n'est lié à aucune boutique");
+            return;
+        };
+        if record.key.provider == crate::providers::Provider::Steam {
+            self.toast_info("Steam ne publie pas ses sauvegardes cloud hors du client Steam");
+            return;
+        }
+        if record.install_state != crate::providers::InstallState::Installed {
+            self.toast_info("Installe d'abord le jeu pour synchroniser ses sauvegardes");
+            return;
+        }
+        let save_path =
+            crate::providers::cloud_saves::save_path_for(self.lib.get(game_id), &record);
+        if record.key.provider == crate::providers::Provider::Gog && save_path.is_none() {
+            self.cloud_sync_status.insert(
+                record.key.clone(),
+                "Choisis un dossier de sauvegarde pour ce jeu GOG".to_string(),
+            );
+            self.toast_error("GOG : choisis d'abord un dossier de sauvegarde dans la fiche du jeu");
+            return;
+        }
+        let timestamp = self
+            .lib
+            .installation_for_provider(game_id, &record.key)
+            .and_then(|installation| installation.save_sync_ts);
+        let key = record.key.clone();
+        let title = record.title.clone();
+        let game_id = game_id.to_string();
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let result =
+                crate::providers::cloud_saves::sync(&record, save_path.as_deref(), timestamp);
+            let _ = tx.send(result);
+            repaint.request_repaint();
+        });
+        self.cloud_sync = Some(CloudSyncJob {
+            key: key.clone(),
+            game_id,
+            title: title.clone(),
+            rx,
+        });
+        self.cloud_sync_status
+            .insert(key, format!("{title} : synchronisation en cours…"));
+        self.toast_info(format!("{title} : synchronisation des sauvegardes cloud…"));
+        ctx.request_repaint_after(Duration::from_millis(150));
+    }
+
+    fn poll_cloud_sync(&mut self, ctx: &egui::Context) {
+        let Some(job) = self.cloud_sync.as_ref() else {
+            return;
+        };
+        let key = job.key.clone();
+        let game_id = job.game_id.clone();
+        let title = job.title.clone();
+        match job.rx.try_recv() {
+            Ok(Ok(report)) => {
+                if let Some(installation) = self.lib.installation_for_provider_mut(&game_id, &key) {
+                    installation.last_synced = Some(crate::config::now_ts());
+                    if let Some(timestamp) = report.timestamp {
+                        installation.save_sync_ts = Some(timestamp);
+                    }
+                }
+                self.cloud_sync_status
+                    .insert(key, format!("{title} : {}", report.message));
+                self.cloud_sync = None;
+                self.toast_info(format!("{title} : {}", report.message));
+                self.touch();
+            }
+            Ok(Err(error)) => {
+                self.cloud_sync_status
+                    .insert(key, format!("{title} : {error}"));
+                self.cloud_sync = None;
+                self.toast_error(format!("Sauvegardes cloud de {title} : {error}"));
+            }
+            Err(TryRecvError::Disconnected) => {
+                self.cloud_sync = None;
+                self.cloud_sync_status
+                    .insert(key, format!("{title} : synchronisation interrompue"));
+            }
+            Err(TryRecvError::Empty) => {
+                ctx.request_repaint_after(Duration::from_millis(150));
+            }
         }
     }
 
@@ -2184,14 +2325,18 @@ impl QuarkApp {
                         self.running.insert(id.to_string(), session);
                         let provider = provider_record.as_ref().map(|record| record.key.provider);
                         if self.lib.settings.overlay {
-                            let key = self.lib.settings.screenshot_key.clone();
+                            let screenshot = self.lib.settings.screenshot_key.clone();
+                            let hotkey = self.lib.settings.overlay_hotkey.clone();
                             self.game_overlay.set_game(
                                 crate::overlay::Target {
                                     name: game.name.clone(),
                                     provider,
+                                    key: provider_record.as_ref().map(|record| record.key.clone()),
+                                    game_id: id.to_string(),
                                     started,
                                 },
-                                &key,
+                                &screenshot,
+                                &hotkey,
                             );
                             self.game_overlay
                                 .notice("Partie lancée", format!("{} · overlay prêt", game.name));
@@ -2750,8 +2895,7 @@ impl QuarkApp {
         // Dernière étape : une fenêtre séparée, au-dessus du jeu. Elle n'existe
         // que si un jeu tourne et si le réglage est actif.
         if self.lib.settings.overlay && !self.running.is_empty() {
-            let key = self.lib.settings.screenshot_key.clone();
-            self.game_overlay.ui(ctx, &self.pal, &key);
+            self.game_overlay.ui(ctx, &self.pal, &self.lib.settings);
         }
     }
 
@@ -3033,9 +3177,57 @@ impl QuarkApp {
         if !self.lib.settings.overlay && self.game_overlay.target.is_some() {
             self.game_overlay.clear_game();
         }
+        // Overlay activé pendant une partie : le raccourci n'était pas pris au
+        // lancement, on l'installe maintenant sans attendre la prochaine partie.
+        if self.lib.settings.overlay && self.game_overlay.target.is_none() {
+            let target = self.running.iter().next().and_then(|(id, session)| {
+                let game = self.lib.get(id)?;
+                let record = self.provider_record_for_game(id);
+                Some(crate::overlay::Target {
+                    name: game.name.clone(),
+                    provider: record.map(|record| record.key.provider),
+                    key: record.map(|record| record.key.clone()),
+                    game_id: id.clone(),
+                    started: session.started,
+                })
+            });
+            if let Some(target) = target {
+                let name = target.name.clone();
+                self.game_overlay.set_game(
+                    target,
+                    &self.lib.settings.screenshot_key,
+                    &self.lib.settings.overlay_hotkey,
+                );
+                self.game_overlay
+                    .notice("Overlay activé", format!("{name} · prêt"));
+            }
+        }
         // Une capture peut arriver juste après la fermeture du jeu : elle est
         // traitée avant de masquer l'overlay, sinon elle serait perdue.
-        for capture in self.game_overlay.poll_captures() {
+        let captures = self.game_overlay.poll_captures();
+        if self.game_overlay.open
+            && let Some(key) = self.game_overlay.target_key()
+        {
+            match self.achievements.get(&key).cloned() {
+                Some(AchievementsState::Ready(mut info)) => {
+                    if let Some(unlocks) = self.session_unlocks.get(&key) {
+                        crate::providers::achievements::merge_session(&mut info, unlocks);
+                    }
+                    self.game_overlay.set_achievements(info);
+                }
+                Some(AchievementsState::Failed(error)) => {
+                    self.game_overlay.set_achievements_error(Some(error));
+                }
+                Some(AchievementsState::Loading) => {
+                    self.game_overlay.set_achievements_loading(true);
+                }
+                None => {
+                    self.game_overlay.set_achievements_loading(true);
+                    self.request_achievements(ctx, &key);
+                }
+            }
+        }
+        for capture in captures {
             let file = capture
                 .path
                 .file_name()
@@ -3209,8 +3401,7 @@ impl QuarkApp {
         let (tx, rx) = channel();
         let repaint = ctx.clone();
         std::thread::spawn(move || {
-            let result =
-                crate::providers::operations::remove_install_directory(&path, &root);
+            let result = crate::providers::operations::remove_install_directory(&path, &root);
             let _ = tx.send((sent, result));
             repaint.request_repaint();
         });
@@ -3388,8 +3579,9 @@ impl QuarkApp {
     pub fn quit(&mut self, ctx: &egui::Context) {
         if !self.snapshot_mode && self.dirty {
             if let Err(err) = self.lib.save() {
-                let message =
-                    format!("Quitter annulé : la bibliothèque n'a pas pu être enregistrée ({err}).");
+                let message = format!(
+                    "Quitter annulé : la bibliothèque n'a pas pu être enregistrée ({err})."
+                );
                 self.config_error = Some(message.clone());
                 self.toast_error(message);
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -3653,21 +3845,12 @@ impl QuarkApp {
     /// Deux installations du même titre (Steam + Epic, ou deux copies) ne
     /// doivent pas partager l'entrée `customGames` de Ludusavi. La première
     /// garde le titre historique ; les suivantes reçoivent un suffixe stable.
-    fn ludusavi_title(
-        &self,
-        key: &crate::providers::ProviderGameKey,
-        title: &str,
-    ) -> String {
+    fn ludusavi_title(&self, key: &crate::providers::ProviderGameKey, title: &str) -> String {
         let normalized = crate::providers::operations::normalize_title(title);
-        let mut matching = self
-            .lib
-            .provider_library
-            .games
-            .iter()
-            .filter(|game| {
-                game.install_state == crate::providers::InstallState::Installed
-                    && crate::providers::operations::normalize_title(&game.title) == normalized
-            });
+        let mut matching = self.lib.provider_library.games.iter().filter(|game| {
+            game.install_state == crate::providers::InstallState::Installed
+                && crate::providers::operations::normalize_title(&game.title) == normalized
+        });
         let Some(first) = matching.next() else {
             return title.to_string();
         };
@@ -4225,11 +4408,7 @@ impl QuarkApp {
 
     /// Ouvre la recherche d'un jeu de la boutique sur les cinq sites de
     /// téléchargement. Les résultats arrivent séparément, source par source.
-    pub fn open_site_search(
-        &mut self,
-        ctx: &egui::Context,
-        item: &crate::steam_store::StoreItem,
-    ) {
+    pub fn open_site_search(&mut self, ctx: &egui::Context, item: &crate::steam_store::StoreItem) {
         let query = item.name.trim().to_string();
         let (tx, rx) = channel();
         let repaint = ctx.clone();
@@ -4462,11 +4641,7 @@ impl QuarkApp {
         ctx: &egui::Context,
         key: &crate::providers::ProviderGameKey,
     ) {
-        if self
-            .provider_install_jobs
-            .iter()
-            .any(|job| job.key == *key)
-        {
+        if self.provider_install_jobs.iter().any(|job| job.key == *key) {
             self.toast_info("Cette installation est déjà en cours");
             return;
         }
@@ -4711,11 +4886,7 @@ impl QuarkApp {
         let Some(key) = self.epic_install_pending.take() else {
             return;
         };
-        if self
-            .provider_install_jobs
-            .iter()
-            .any(|job| job.key == key)
-        {
+        if self.provider_install_jobs.iter().any(|job| job.key == key) {
             self.toast_info("Cette installation est déjà en cours");
             return;
         }
@@ -4892,13 +5063,27 @@ impl QuarkApp {
         self.touch();
         self.toast_info(format!("{title} installé et détecté localement"));
         self.adopt_provider_install(ctx, &key);
+        self.lib.migrate_installations();
+        // Récupère immédiatement la sauvegarde cloud : un jeu installé sur une
+        // nouvelle machine doit repartir de la progression du compte, comme
+        // le ferait le launcher officiel.
+        if self.lib.settings.cloud_saves {
+            let game_id = self
+                .lib
+                .provider_library
+                .games
+                .iter()
+                .find(|game| game.key == key)
+                .and_then(|game| game.quark_game_id.clone());
+            if let Some(game_id) = game_id
+                && self.can_auto_sync_cloud(&game_id)
+            {
+                self.sync_cloud_saves(ctx, &game_id);
+            }
+        }
     }
 
-    fn finish_install_failure(
-        &mut self,
-        key: crate::providers::ProviderGameKey,
-        error: String,
-    ) {
+    fn finish_install_failure(&mut self, key: crate::providers::ProviderGameKey, error: String) {
         let provider = key.provider;
         let name = match provider {
             crate::providers::Provider::Epic => "Epic",
@@ -4936,7 +5121,9 @@ impl QuarkApp {
         if cancelled {
             self.toast_info(format!("Installation {name} de {title} annulée"));
         } else {
-            self.toast_error(format!("Installation {name} de {title} non confirmée : {error}"));
+            self.toast_error(format!(
+                "Installation {name} de {title} non confirmée : {error}"
+            ));
         }
     }
 
@@ -4954,11 +5141,7 @@ impl QuarkApp {
         let Some(key) = self.gog_install_pending.take() else {
             return;
         };
-        if self
-            .provider_install_jobs
-            .iter()
-            .any(|job| job.key == key)
-        {
+        if self.provider_install_jobs.iter().any(|job| job.key == key) {
             self.toast_info("Cette installation est déjà en cours");
             return;
         }
@@ -5142,7 +5325,10 @@ impl QuarkApp {
             .iter()
             .find(|candidate| {
                 candidate.key.provider == crate::providers::Provider::Steam
-                    && candidate.title.trim().eq_ignore_ascii_case(record.title.trim())
+                    && candidate
+                        .title
+                        .trim()
+                        .eq_ignore_ascii_case(record.title.trim())
             })
             .and_then(|candidate| candidate.quark_game_id.clone())
             .or_else(|| {
@@ -5151,7 +5337,10 @@ impl QuarkApp {
                     .iter()
                     .find(|candidate| {
                         candidate.steam_app_id.is_some()
-                            && candidate.name.trim().eq_ignore_ascii_case(record.title.trim())
+                            && candidate
+                                .name
+                                .trim()
+                                .eq_ignore_ascii_case(record.title.trim())
                     })
                     .map(|candidate| candidate.id.clone())
             })
@@ -5206,7 +5395,7 @@ impl QuarkApp {
             {
                 self.start_provider_art(ctx, &record, &id);
             }
-            self.selected = Some(id);
+            self.selected = Some(id.clone());
             self.toast_info(format!(
                 "{} était déjà dans la bibliothèque : la fiche a été reliée à {}",
                 record.title,
@@ -5216,6 +5405,8 @@ impl QuarkApp {
                     crate::providers::Provider::Gog => "GOG",
                 }
             ));
+            self.lib.migrate_installations();
+            self.lib.activate_provider_installation(&id, key);
             self.touch();
             return;
         }
@@ -5259,7 +5450,9 @@ impl QuarkApp {
         if needs_art {
             self.start_provider_art(ctx, &record, &id);
         }
-        self.selected = Some(id);
+        self.selected = Some(id.clone());
+        self.lib.migrate_installations();
+        self.lib.activate_provider_installation(&id, key);
         self.touch();
         if record.install_exe.is_none() {
             self.toast_info(format!(

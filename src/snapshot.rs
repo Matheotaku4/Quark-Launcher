@@ -91,7 +91,8 @@ pub const HELP: &str = "\
       [--view list|grid] [--tab library|store] [--theme amoled|graphite]\n\
       [--select <jeu>] [--info] [--running] [--marked] [--home]\n\
       [--dialog none|add|artwork|exe|scan|settings|settings-defaults|\n\
-      settings-env|settings-artworks|settings-stats|settings-disk|\n\
+      settings-ingame|settings-env|settings-artworks|settings-stats|\n\
+      settings-disk|\n\
       settings-about|game|logs|updates|customize|remove|steam|overlay|install|\n\
       site-search]\n\
       [--hover X,Y] [--click X,Y] [--button left|right]\n\
@@ -277,19 +278,20 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
             // pour que le job reste affiché pendant tout le rendu.
             let (tx, rx) = std::sync::mpsc::channel();
             std::mem::forget(tx);
-            app.provider_install_jobs.push(crate::app::ProviderInstallJob {
-                key: gog_key,
-                progress: Arc::new(Mutex::new(crate::providers::runner::InstallProgress {
-                    percent: Some(42.4),
-                    stage: "Téléchargement".into(),
-                    speed: Some("18,2 MB/s".into()),
-                    eta: Some("6 min 12 s".into()),
-                    written: Some(4_500_000_000),
-                    total: Some(10_600_000_000),
-                })),
-                cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                rx,
-            });
+            app.provider_install_jobs
+                .push(crate::app::ProviderInstallJob {
+                    key: gog_key,
+                    progress: Arc::new(Mutex::new(crate::providers::runner::InstallProgress {
+                        percent: Some(42.4),
+                        stage: "Téléchargement".into(),
+                        speed: Some("18,2 MB/s".into()),
+                        eta: Some("6 min 12 s".into()),
+                        written: Some(4_500_000_000),
+                        total: Some(10_600_000_000),
+                    })),
+                    cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    rx,
+                });
             // Grande bibliothèque de boutiques : reproduit le nombre réel de
             // cartes pour vérifier la virtualisation et le défilement.
             if let Some(count) = opts.demo_count {
@@ -577,6 +579,10 @@ fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
     match dialog {
         "none" => {}
         "settings" => app.settings_open = true,
+        "settings-ingame" => {
+            app.settings_open = true;
+            app.settings_tab = crate::app::SettingsTab::InGame;
+        }
         "settings-env" | "settings-defaults" | "settings-proton" => {
             app.settings_open = true;
             app.settings_tab = crate::app::SettingsTab::Defaults;
@@ -1504,10 +1510,7 @@ fn demo_large_library(count: usize, cover: Option<&Path>) -> Result<Vec<Game>, S
     std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
     let mut games = Vec::with_capacity(count);
     for index in 0..count {
-        let mut game = Game::new(
-            format!("Jeu de démonstration {index:03}"),
-            "/bin/true",
-        );
+        let mut game = Game::new(format!("Jeu de démonstration {index:03}"), "/bin/true");
         if let Some(cover) = cover {
             let path = root.join(format!("cover-{index:04}.png"));
             if !path.exists() {

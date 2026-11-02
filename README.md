@@ -1,653 +1,422 @@
 # Quark
 
-A **lightweight game launcher for Linux**, written in Rust (egui), meant as a sober
-alternative to Steam: deep black (AMOLED), list or grid view, a game banner with a
-**Play** button, playtime, ProtonDB rating and official artwork, with Windows games launched
-through **Proton** — or through **umu-launcher**. Three tabs: a Steam store page, your
-library, and **Mes jeux** — the Steam, Epic and GOG titles you own or have installed, in one list,
-with save snapshots through Ludusavi, an in-game overlay and F12 screenshots.
+A lightweight game launcher for Linux, written in Rust with egui. Quark keeps a
+single library for local games and for the Steam, Epic Games and GOG titles you
+own, launches Windows games through Proton (or umu-launcher), and stays out of
+the way with an AMOLED interface, a store page, save snapshots and an in-game
+overlay.
 
-## Features
+This is the 1.1.0 documentation. Older release notes are kept on the GitHub
+releases page; `docs/release-notes.md` only describes the release currently
+being published.
 
-- **Three tabs**: `Store` (Steam discovery), `Library`, and **Mes jeux** (owned and
-  installed games across stores), plus a **Home** page reachable from the button above the
-  game list. `Ctrl+Q` quits completely (tray icon included); the title bar and the executable
-  carry the Quark icon (`assets/quark.png`, `assets/quark.desktop`).
-- **Home page**: a carousel of the games you played last — the banner as background with
-  rounded corners, the game's logo (or title), a **Continue** button (it becomes
-  **Stop** while the game runs), playtime and last session next to it, the ProtonDB score
-  and a *Linux native* pill in the top-left corner, arrows and dots to move between the five
-  most recent games. Below it, the whole library as rounded covers, sorted by **last
-  session**, **date added** or **hours played** — the choice is remembered. The carousel can
-  advance **by itself** (Appearance → Home, 3–60 s), with a thin progress line under the
-  banner; filters above the grid narrow the library by **status**, **Steam genre** or
-  **personal tag**.
-- **Personal library data**: a status per game (*To play*, *Playing*, *Finished*,
-  *Dropped*), free-form **notes**, and **tags** (`coop`, `relaxing`…) with a real tag editor
-  (add/remove chips). Statuses and tags become filter chips on the home page and in the left
-  column — like Steam categories — and the search box also matches tags, genres and
-  developer.
-- **Steam metadata**: developer, genres, release date and short description come from the
-  same `appdetails` endpoint already used as an artwork fallback, fetched once when a game
-  is added (per-game *Fetch from Steam* button to refresh). Genres feed the genre filter.
-- **Grid view shows the grid, nothing else**: the game page opens **as an overlay** with a
-  close button, a click next to it, or `Esc`. The page background is the game's own banner,
-  blurred, and the bottom third of the banner **fades into it** instead of ending on a hard
-  edge; a graduated dark veil keeps the text readable all the way down. The four action
-  buttons are colour-coded small icons — **red bin** (remove), **green pencil** (customize),
-  **blue gear** (configure) — each on a dark disc with a coloured ring so it stays legible on
-  a pale banner too.
-- **Missing executable**: launching a game whose `.exe` no longer exists is refused with a
-  clear message, and the game stays **highlighted in red** in the list, the grid and its page
-  until the path is fixed.
-- **Memory that stays flat, even with 660 games**: the library grid builds and decodes only
-  the rows on screen instead of preparing every cover up front; artwork textures are decoded
-  once and cached, but the cache is capped at 96 entries — the least recently used are freed
-  first. A large library therefore no longer piles up hundreds of textures, and the cards keep
-  their regular spacing from the first row to the last. Settings → About shows the resident
-  memory and the number of textures currently held.
-- **Adding a game in two steps**:
-  1. type the game name — Quark searches **Steam** (public `storesearch` API) then
-     **SteamGridDB** and fetches the **original artwork** (banner `library_hero`,
-     logo, `library_600x900` cover, capsule icon);
-  2. point at the **executable** (text field, native system file picker, or drag and drop).
-- **Add from a folder**: pick a folder, Quark finds the executables, proposes a title
-  matched by the search, and you can fix the title, answer "it's a game" or "it's not a
-  game", then add everything at once.
-- **Pick the artwork yourself**: once the game is recognised, a step lists the proposed
-  banners, logos, covers and icons (SteamGridDB, then the official Steam assets) with a
-  preview — you choose the one you want. The other proposals stay in the list as a
-  fallback if a download fails or the format is wrong.
-- **Checked artwork**: every downloaded image is verified (real dimensions) so a wrongly
-  shaped thumbnail is rejected, with a fallback to Steam's `appdetails` page;
-  `library_600x900_2x` cover, `library_hero` banner, transparent logo and small capsule.
-  SteamGridDB previews use the API's lightweight `thumb` URL, so the 132×76 tiles no longer
-  decode a full 1920×620 banner and fail far less often; the full-size image is still what
-  gets saved.
-- **Steam-like layout**: list on the left (thumbnail + title, the selected row has a blue
-  marker), game pane on the right; a taller banner on top, **ProtonDB** and *Linux native*
-  badges in its top-left corner, **Play** button with **playtime and last session** right
-  next to it, then the **Journal**, **ⓘ**, **Customize** and **settings** buttons in the top
-  right. `Play` becomes `Stop` while the game is running. Thumbnails, covers and the
-  carousel use rounded corners. All interface icons are the embedded **Lucide** set
-  (`assets/fonts/lucide.ttf`, ISC licence), not image files or hand-drawn shapes.
-- **Thumbnails that never move**: the list shows the game icon (1:1), as Steam does. When a
-  game has no icon, the tile is filled with the first letter of its title — leading
-  articles ignored, so `The Witcher 3` → `W` and `Les Chevaliers de Baphomet` → `C`, while
-  `7 Days to Die` keeps its `7` — over a colour assigned to that game, so every row keeps
-  exactly the same geometry. Icons come from SteamGridDB's `icons` route, then from Steam's
-  `header.jpg`; small (16×16) and WebP icons are accepted, measured by real decoding rather
-  than by the file header alone.
-- **News under the banner**: the latest official announcements of the selected game
-  (public Steam `ISteamNews` feed) — source, author, date, headline and a two-line excerpt,
-  in plain text. Clicking a card expands the post **inside Quark** (up to 900 characters);
-  *Lire sur Steam* opens the full post in your browser.
-- **ProtonDB rating**: the compatibility tier (Platinum, Gold, Silver, Bronze, Borked) is
-  read from ProtonDB's public API for the game's Steam AppID and shown as a coloured pill in
-  the **top-left corner of the banner**, next to a *Linux native* pill when the executable is
-  a Linux binary that runs without Proton, plus a row in the information block. Clicking it
-  opens `protondb.com/app/<id>`. Cached per AppID; games without an AppID or without a report
-  simply show no rating.
-- **List / Grid switch**, only in the top-right corner of the top bar (no duplicate buttons
-  in the left column or on the grid page); grid view shows only the grid, the game page being
-  an overlay.
-- **Status sections in list view**: games are grouped under their status — *Playing*, *To
-  play*, *Finished*, *Dropped*, then *No status* — each header carrying its colour dot and
-  game count, with a rule between sections. Clicking a header folds the section, as Steam's
-  library columns do.
-- **Launch options as checkboxes, per game** — no command line to remember:
-  - **gamemoderun** (CPU governor from GameMode);
-  - **MangoHud** (`MANGOHUD=1`, no wrapper binary needed);
-  - **gamescope** with resolution, **FSR** upscaling (`-F fsr`) and frame limit
-    (`--framerate-limit`), built as `gamescope -W … -H … -f … -- gamemoderun … `;
-  - **PRIME offload** for hybrid laptops (`__NV_PRIME_RENDER_OFFLOAD`,
-    `__GLX_VENDOR_LIBRARY_NAME`, `__VK_LAYER_NV_optimus`, `DRI_PRIME`);
-  - a free **wrapper command** where `%command%` is replaced by the game command, exactly
-    like Steam's launch options (`env FOO=1 %command%`); the line runs through `sh`, so
-    `env`, pipes and redirections work. Without `%command%`, the wrapper is prepended.
-  A missing tool never prevents the game from starting: the option is ignored (and the game
-  still launches) and Quark says so. A “Tout réinitialiser” button clears them all.
-- **Session log, readable in the app**: stdout and stderr of the game and of Wine are
-  captured into `~/.local/share/quark/logs/<game>/session.log`, prefixed with the exact
-  command, the prefix and every environment variable. The **Journal** button (left of
-  *Customize*) shows the tail of that file, refreshes itself while the game runs, and can
-  open the folder. Optional **`PROTON_LOG=1`** switch per game: Proton writes its own
-  detailed log into the same folder (`PROTON_LOG_DIR`).
-- **Stopping a game really stops it**: `Stop` runs `wineserver -k` on the game's prefix
-  (closing the Windows processes the game spawned) and sends `SIGTERM` to the whole process
-  group; after 4 seconds, the group is killed with `SIGKILL`.
-- **umu-launcher support**: a per-game switch launches through `umu-run` instead of the
-  Proton script, with `WINEPREFIX`, `GAMEID` (editable, `0` by default) and `PROTONPATH`
-  when a runtime is selected. A missing `umu-run` is reported before launching.
-- **Stays in the notification area**: with the setting enabled, closing the window really
-  closes Quark — nothing is left in the task bar — while the icon stays in the notification
-  area, held by a small dedicated process (`quark --tray`, StatusNotifierItem over D-Bus, no
-  GTK dependency). One click on it starts Quark again; *Quit Quark* in its menu closes
-  everything. This is deliberately not "hide the window": `set_visible` does not exist on
-  Wayland, where the window would have stayed open. If your desktop has no watcher, the
-  settings page says why and the close button quits.
-- **Playtime tracking with history**: every session is timed and **stored** (start date and
-  duration), not just summed.
-- **Statistics page** (Settings → Statistics): total time, this week, current streak, hours
-  per week for the last twelve weeks, a **heat-map calendar** of the last 26 weeks, and the
-  most played games.
-- **Disk space page** (Settings → Disk space): size of each Proton prefix, the artwork cache,
-  session logs, downloaded update archives and each game folder, measured in a background
-  thread so the window never freezes.
-- **Steam library import** (Settings → Appearance → *Import the installed Steam library*):
-  reads `appmanifest_*.acf` files from every Steam library (`libraryfolders.vdf`, Flatpak and
-  Snap included), lists installed games with their AppID and detected executable, skips games
-  already in Quark, and fetches artwork and metadata for each imported game. It lives in the
-  settings rather than next to `+`, which is only for adding one game by hand.
-- **Environment variables per game**: a `NAME=value` list (for example
-  `WINEDLLOVERRIDES=winmm=n,b;steam_api64`) with a wide value field, plus default variables in
-  the settings that are **copied into each game when you add it** — each game then owns its
-  own copy, so editing one never touches the others.
-- **"Defaults" settings page**: prefix, arguments, Proton runtime, anti-cheat, **launch
-  options** (GameMode, MangoHud, gamescope, PRIME, wrapper, `PROTON_LOG`, umu) and environment
-  variables that are **pre-filled** in every new game. These are defaults, not global
-  settings: changing one does not modify games already in the library. Detected runtimes,
-  the anti-cheat folders and a *Redetect* button sit right under the runtime choice; there is
-  no separate “Proton” page any more, it only repeated these.
-- **Icons that follow their background**: icons drawn over a banner use a translucent panel
-  and switch to a dark tint of the background colour on a light image (a white icon over a
-  sky-blue banner would be invisible). Monograms follow the same rule.
-- **Right-click a game** for a menu with the same colour-coded icons as the game page:
-  *Launch*, *Customize*, *Settings*, *Remove*. **Ctrl+click** marks several games and removes
-  them in one go; `Esc` clears the selection.
-- **Proton prefix used as-is**: the folder you pick (per game, or as the global default) *is*
-  the prefix — Quark creates no sub-folder inside it. Only the automatic fallback keeps its
-  own folder under `~/.local/share/quark/prefixes/<id>`.
-- **Banners are cropped, never stretched**: the hero keeps its proportions at any window
-  size, fullscreen included.
-- **Customize** a game from its page (or by right-clicking it): each image — cover,
-  banner, logo, icon — can be replaced by another online proposal or by a file from your
-  disk, or removed to fall back to the built-in rendering.
-- **Short, cheap transitions**: hover, selection, banner entrance, news cards, tabs, the home
-  carousel (a 0.34 s slide-and-fade) and messages are animated. They all go through egui's
-  animation manager, or a timestamped progression for the carousel, which only asks for a
-  repaint while a value is actually moving, so an idle window stays idle and the launcher
-  keeps its responsiveness.
-- **AMOLED theme** (`#000000`) by default, plus a "Graphite" variant (softer black) in the
-  settings. The interface uses the embedded **Archivo** typeface and the **Lucide** icon font
-  (`assets/fonts/`, SIL Open Font License and ISC licence), so it looks the same on every
-  distribution without installing a system font. Scrolling is about one third faster than
-  egui's default on both wheels and touchpads.
-- **Proton**: automatic runtime detection (`steamapps/common/Proton*` and
-  `compatibilitytools.d/*`, including Flatpak/Snap), runtime chosen **per game** or as a
-  default, a **default Proton prefix** in the settings and a **per-game override**.
-- **Settings in tabs**: Appearance (theme, default view, notification icon), Defaults,
-  Artworks, Statistics, Disk space, **Stores & tools** (accounts and managed tools) and About.
-  Explanations live in small ⓘ buttons next to each setting instead of lines of grey text.
-- **BattlEye and EasyAntiCheat runtimes** are detected next to Proton — including Steam's
-  `Proton BattlEye Runtime` / `Proton EasyAntiCheat Runtime` folders, which carry no `proton`
-  script — and each one can be enabled separately per game (both at once is allowed). Quark
-  does not try to launch those folders: its keeps your Proton and passes them through
-  `PROTON_BATTLEYE_RUNTIME` / `PROTON_EAC_RUNTIME`, the variables Proton actually reads.
-- **Keyboard navigation**: arrows to move through the library (up/down and left/right in
-  the grid), `Enter` to launch, `Ctrl+F` (or `/`) to jump to the search field, `Esc` to
-  clear it. Shortcuts stay out of the way while a dialog or a text field has focus.
-- **Update check**: the settings show the running version and query the latest GitHub
-  release; the archive is downloaded to `~/.local/share/quark/updates/` and never installed
-  behind your back. `quark --update` does the same without opening a window.
-- **Command-line diagnostics**: `--doctor`, `--search`, `--fetch`, `--news`, `--scan`,
-  `--update` and `--ui` (no screen required, `--home` renders the home page). `--tray` runs
-  the notification-icon process and is started by Quark itself.
-- **Steam store page**: a vertical, Steam-like discovery page — a featured deal, then
-  *Recommandé pour vous*, *Populaires sur Steam* (the 20 most played games, with each
-  game's peak concurrent players), *Meilleures ventes*, *Offres spéciales*, *Nouveautés* and
-  *Prochainement* — in
-  card grids that scroll down, never sideways. Prices are regional and the store page opens
-  in your browser: Quark never buys anything. The catalogue is cached in
-  `~/.local/share/quark/store-cache.json` and shown again, marked as potentially stale, when
-  Steam is unreachable. Recommendations are ranked on your machine: from the titles in your
-  library, or from your **owned Steam games** through `IPlayerService/GetOwnedGames` when a
-  Steam Web API key and SteamID64 are configured — the section says which source was used,
-  and your profile is never sent to Steam. These Steam endpoints are undocumented and
-  handled as best-effort: a malformed response is reported, never cached as an empty store.
-- **Search a store game on five download sites**: clicking a card, a deal or the featured
-  game opens an in-app search for its title on **AnkerGames**, **AstralGames**,
-  **GameBounty**, **Kryoto** and **scene.cat**. Each source is queried in its own thread and
-  fills its section as soon as it answers, with title, size/version or release category, and
-  a link that opens the page in your browser. AnkerGames, GameBounty and Kryoto expose JSON
-  search endpoints, scene.cat returns its results in HTML, and AstralGames' JavaScript-only
-  search page is read through a text reader. Quark never downloads or extracts an archive
-  from those sites: the result buttons only open the page in your browser. If a source fails
-  or returns nothing, a button opens its own search page.
-- **Mes jeux**: Steam (read from local `appmanifest_*.acf`), Epic (through Legendary) and
-  GOG (through the GOG API) games in one grid — owned, installed, or both — with one tab per
-  store and a counter, the detected install path, and what the store can actually do.
-  Duplicate GOG editions suffixed with **Amazon Prime** are merged under the base title, and
-  a GOG install is located by its `goggame-<id>.info` manifest when gogdl chose a slightly
-  different folder name. The same game on two stores can be **merged** into one row and
-  **split** again. Every tab is
-  **sorted by name**, a **search field** filters owned titles as you type (accents and case
-  ignored), and each card shows the store's **vertical cover** — Steam from its CDN, GOG from
-  the API v2 `boxArtImage` (`_glx_vertical_cover`), Epic from Legendary's metadata cache
-  (`keyImages`) — cached on disk and fetched up to four at a time when the page is open. Epic
-  and GOG are tried first, then the Steam vertical cover for the same title, and only then a
-  monogram; wrong GOG covers from 1.0.3 are ignored because the cache is versioned. Grid cards
-  use 360 px thumbnails, and only the rows actually on screen are built and decoded: a library
-  of several hundred store games scrolls continuously instead of growing a **Show more** batch,
-  and card footers are clipped so covers can never overlap the next row. A
-  **left or right click** on an uninstalled game opens the install sheet (download size,
-  destination folder, **Changer…** and **Installer**); the folder defaults to
-  **Settings → New games → Store install folder** (`~/Games`). Installed games open their
-  action menu on right click. Up to **three Epic/GOG downloads run at once**, each with its own
-  progress and **Cancel**; the **download** icon in the top bar (badge = active transfers)
-  lists every transfer with its step, total size, speed in **MB/s** and ETA.
-- **Store sync starts on its own**: once the interface is up, every connected store is
-  refreshed in the background. **Settings → Stores & tools** opens on a *Sync* section with a
-  button per store, *Sync all*, the number of games, the last sync time and any error;
-  **Mes jeux** only shows the result. Epic is read with `legendary list --csv` because the
-  JSON listing (metadata, assets, achievements) overflows the provider output limit, and GOG
-  has no list command at all: Quark refreshes the gogdl session token and asks the GOG API
-  (`embed.gog.com/user/data/games`, then `api.gog.com/products` in batches) directly.
-- **Installs are delegated, never faked**: *Installer via Steam* hands the AppID to the Steam
-  client (`steam://install/<id>`) and then rescans; Epic and GOG installs open a confirmation
-  with the size reported by `legendary info` / `gogdl info`, the destination folder taken from
-  **Settings → New games**, a **Changer…** button for this install only, and **Installer**.
-  The parent folder is created when needed, and the game is only marked **Installé** once a
-  matching local directory has been found. A dialog closing or a process exiting is never
-  taken as proof. Legendary runs non-interactively (`-y --skip-sdl --skip-dlcs`, Windows
-  platform): without a terminal its prompts made every install fail. A **double-click** on a
-  card opens an installed game or prepares the install sheet, and a successful install creates
-  the matching Quark entry (default settings, **cover and wide banner**, store link) so the
-  game lands in the library ready to play. A linked game that only had its poster is completed
-  in the background, without replacing images you chose yourself. A GOG/Epic cover and banner
-  are attached to the matching **Steam** entry when one exists, so they are available from
-  **Personnaliser → Depuis la boutique** (the current image is never overwritten). While one or
-  several installs run, **Mes jeux** shows a progress bar per game — percentage, step, size,
-  speed, ETA in **MB/s** parsed from Legendary/gogdl output — each with its own **Cancel**
-  button. Covers are imported as soon as the game is adopted, in the background, without
-  blocking the page.
-- **Save folders and snapshots from the same page**: custom save folders per installation,
-  Ludusavi preview, backup, backup inventory and restore — see *Save files* below.
-- **Achievements in the game page**: next to **Actualités**, the **Succès** tab reads Epic
-  achievements from `legendary achievements <app> --json` (log lines around the JSON and
-  null lists are tolerated) and GOG achievements from
-  `gameplay.gog.com` with the gogdl session (`client_id` = product id, `user_id` from the
-  session), then shows unlocked/total, a progress bar and the full list with each store's
-  achievement icon (downloaded once into `artwork/achievement-icons/`, hidden achievements
-  stay hidden until unlocked), with a **session** badge for unlocks reported during play.
-  When the store publishes completion rates (GOG's `rarity`), each achievement shows the
-  percentage of players who unlocked it and the list is sorted from rarest to most common;
-  Epic achievements stay in the unlocked-then-name order when no rate is available.
-  **Cloud saves are deliberately absent** — no verified source is wired, so Quark shows
-  nothing rather than invented capabilities.
-- **Achievements from the running game**: every launch exports
-  `QUARK_ACHIEVEMENTS_URL`, `QUARK_ACHIEVEMENTS_TOKEN` and `QUARK_GAME_ID`. A game or a
-  script can report an unlock with a single POST; Quark records it, shows it in the list with
-  a *session* badge, and writes it to GOG when the store allows it (Epic has no public write
-  endpoint, so those stay local). The listener only binds `127.0.0.1`, the token is random per
-  launch and the session log masks it:
+## Table of contents
 
-  ```bash
-  curl -X POST "$QUARK_ACHIEVEMENTS_URL" \
-       -H "Authorization: Bearer $QUARK_ACHIEVEMENTS_TOKEN" \
-       -d '{"game":"'"$QUARK_GAME_ID"'","achievement":"ACH_FIRST","name":"Premier pas"}'
-  ```
-- **In-game overlay, on by default**: a game launched by Quark gets a transparent,
-  always-on-top, click-through HUD with its name, store and session clock. **F12**
-  (configurable in **Settings → In game**) saves a screenshot under
-  `~/.local/share/quark/screenshots/<game>/`; Epic and GOG captures also play a short chime
-  and raise a desktop notification, while Steam stays silent. The X11 shortcut covers Proton
-  games through XWayland; native Wayland capture uses `grim` or the desktop tools when
-  available.
-- **Store playtime**: a game linked to Epic or GOG shows the store's own playtime (Epic
-  library service; GOG total read from the public profile's `matchedGameStats`, with Galaxy
-  sessions as a fallback) instead of Quark's local counter. Steam games keep local playtime
-  because Steam does not publish it.
-- **Uninstall from the card**: Epic and GOG cards offer **Uninstall…** with an explicit
-  confirmation; the install folder is removed, saves and the Proton prefix are kept, and
-  several uninstalls are queued. Removing a linked game from the library offers to delete its
-  files too.
-- **Installed folders checked live**: every five seconds Quark re-checks provider install
-  folders, so a game deleted outside Quark becomes **Not installed**, its dead path is
-  cleared and a toast explains why.
-- **Cleaner settings**: game and global settings use full-width rows — label and explanation
-  on the left, an animated switch on the right — instead of mixed checkboxes. GameMode,
-  MangoHud, PRIME, gamescope (with its resolution/FSR/fps block), Proton logging, umu,
-  anti-cheat runtimes, the tray icon and the carousel all follow the same pattern.
-- **Hero / background transition**: switching games crossfades both the banner and the blurred
-  backdrop with an eased 0.55 s curve, and the bottom of the banner dissolves into the blurred
-  version of the same art, so there is no hard edge between hero and background.
-- **Storefront refresh**: a full-width hero with gradient scrim and discount badge, a
-  *Top reductions* rail, section headers with an accent rule and per-family colours, and
-  cards that lift with their discount and Linux badge on the artwork.
+1. [What Quark does](#what-quark-does)
+2. [Installation](#installation)
+3. [First launch](#first-launch)
+4. [Interface](#interface)
+5. [One game, several installations](#one-game-several-installations)
+6. [Stores, accounts and cloud saves](#stores-accounts-and-cloud-saves)
+7. [Achievements and the in-game overlay](#achievements-and-the-in-game-overlay)
+8. [Proton, umu and launch options](#proton-umu-and-launch-options)
+9. [Local saves and snapshots](#local-saves-and-snapshots)
+10. [Settings](#settings)
+11. [Command line](#command-line)
+12. [Files, data and privacy](#files-data-and-privacy)
+13. [Project layout](#project-layout)
+14. [Development and tests](#development-and-tests)
+15. [Known limitations](#known-limitations)
+16. [Licence](#licence)
 
-## Build
+## What Quark does
 
-Requirements: a recent Rust toolchain (`rustup`) and the X11/Wayland headers if your
-distribution does not ship them already:
+- **One library.** Local games and store games share covers, metadata, notes,
+  tags, playtime and statistics. A game can have several installed editions
+  without becoming two library entries.
+- **Steam, Epic Games and GOG.** Steam is read from the local Steam libraries.
+  Epic is managed with Legendary and GOG with gogdl. Accounts are connected
+  from the settings; passwords never pass through Quark.
+- **Proton without command lines.** Per-game runtime, prefix, GameMode,
+  MangoHud, gamescope, PRIME offload, a free wrapper command, environment
+  variables, BattlEye/EasyAntiCheat runtimes and umu-launcher.
+- **A real in-game overlay.** Press `Shift+Backspace` to open a Steam-like
+  panel over the game and read its achievements. `F12` takes a screenshot.
+- **Cloud saves for Epic and GOG.** The account save is fetched after an
+  installation, then synchronized again when the game exits, using the same
+  upstream data as the official clients.
+- **Local save snapshots.** Ludusavi creates verified snapshots before a launch
+  and after a session, with preview, inventory and restore.
+- **A sober interface.** AMOLED black or Graphite, list or grid, a home
+  carousel, status columns, tags, filters and an embedded Archivo font with
+  Lucide icons.
+
+Quark is not a store: it never buys anything, and it never downloads or
+extracts games from third-party download sites. Store search results open in
+your browser.
+
+## Installation
+
+### Release archive
+
+Download `quark-<version>-linux-x86_64.tar.gz` and its `.sha256` file from the
+[latest release](https://github.com/Matheotaku4/Quark-Launcher/releases/latest),
+then verify and unpack it:
 
 ```bash
-# Debian/Ubuntu
-sudo apt install build-essential pkg-config libx11-dev libxkbcommon-dev \
-                 libwayland-dev libgl1-mesa-dev
-# Arch
-sudo pacman -S base-devel libx11 libxkbcommon wayland mesa
+sha256sum -c quark-1.1.0-linux-x86_64.tar.gz.sha256
+tar -xzf quark-1.1.0-linux-x86_64.tar.gz
+./quark/quark
 ```
 
-Then:
+The archive contains the binary, the README and the desktop file. Quark needs
+X11 or Wayland, OpenGL and the usual font/GL libraries of your distribution.
+`python3` is required by Legendary and gogdl (both are Python zipapps).
+
+### Build from source
 
 ```bash
-cargo run --release        # run Quark
-cargo build --release      # binary: target/release/quark
+git clone https://github.com/Matheotaku4/Quark-Launcher.git
+cd Quark-Launcher
+cargo build --release --locked
+./target/release/quark
 ```
 
-### Main dependencies
+On Debian/Ubuntu, the CI installs:
 
-- `eframe` / `egui` **0.32** (UI), `egui_extras` 0.32 (loading the HTTP thumbnails shown in
-  the search results).
-- `reqwest` (blocking, rustls) for Steam, SteamGridDB and ProtonDB, `serde` for
-  `config.json`.
-- `rfd` for the **native** file pickers (XDG Desktop Portal: GTK or KDE dialog depending on
-  the desktop, `zenity` as a fallback). No GTK build dependency.
-- `ksni` (StatusNotifierItem over D-Bus, `blocking` + `async-io` features) for the
-  notification-area icon. No GTK/AppIndicator build dependency either.
-- `image` (PNG/JPEG/WebP codecs): Quark decodes artwork itself and hands egui plain
-  textures, instead of relying on the `file://` loader from `egui_extras`, which is not
-  compiled by default and used to show an error icon where banners should be.
+```bash
+sudo apt-get install build-essential pkg-config libx11-dev libxkbcommon-dev \
+  libwayland-dev libgl1-mesa-dev
+```
 
-Note: `egui` 0.37 reshuffles its API (panels / `App::ui`); Quark intentionally targets the
-0.32 series, whose API is stable and sufficient here.
+## First launch
 
-## Usage
+1. Open **Settings → Stores & tools** and install Legendary and/or gogdl with
+   **Install / update**. Quark verifies the SHA-256 digest published by GitHub
+   before running a downloaded tool.
+2. Connect Epic or GOG with the code copied from the browser page. The
+   credentials are stored locally in a private file, never sent to a Quark
+   server.
+3. Add a game with the **+** button, import the installed Steam library, or open
+   **Stores** to browse what you own.
+4. Pick a Proton runtime in **Settings → New games** if the automatic choice is
+   not what you want. Every game can override it.
 
-1. **Library** tab → the **+** button (top of the left column).
-2. Type the game name: the search starts on its own (Steam first, then SteamGridDB if an
-   API key is set).
-3. Click the right result, then fill in the executable → **Add game**.
-   Artwork downloads in the background (progress shown at the bottom of the column).
-   Arguments, Proton runtime and prefix come pre-filled from **Settings → Defaults**.
-4. The game appears selected: banner, logo, **Play** button, playtime and its ProtonDB
-   rating. The gear in the top right of the pane opens the **game settings**
-   (executable, arguments, Proton runtime, per-game prefix, anti-cheat, launch options,
-   per-game variables, removal); the page icon left of it opens the session log.
-   For a game with no Steam / SteamGridDB source, **Fiche Steam** contains a search field:
-   pick a result, press **Lier**, then **Enregistrer** to fetch its cover, banner, logo and
-   icon.
+## Interface
 
-### SteamGridDB API key (optional but recommended)
+### Home
 
-Without a key, Quark only uses the official artwork served by Steam's CDN.
-With a free key (<https://www.steamgriddb.com/profile/preferences/api>) it also picks the
-best-rated community banners/logos/covers, including for games absent from Steam
-(GOG, itch.io, emulation…). The key goes into **Settings → Artwork** and stays in your local
-configuration file.
+The home page is a carousel of recently played games. The banner is the game's
+hero image, the logo (or title) sits above a **Continue/Stop** button, and the
+playtime, last session, ProtonDB rating and native-Linux badge are visible at a
+glance. Below the carousel, the whole library is shown as covers. Sort it by
+last session, date added or hours played, and filter it by status, Steam genre
+or personal tag. The carousel can advance automatically; the delay is set in
+**Settings → Appearance**.
 
-## Stores, tools and save files
+### Library
 
-Steam works without any account: installed games are read from local `appmanifest_*.acf`
-files. Everything else is optional, and stays on this machine.
+The list shows one row per game with a square icon, a status dot and a blue
+selection marker. The grid shows covers and opens the game page as an overlay.
+Games with a missing executable are highlighted in red. Right-click a game for
+launch, customize, settings and remove; `Ctrl+click` marks several games for a
+batch removal.
 
-### Credentials
+Keyboard shortcuts: arrows navigate, `Enter` launches, `Ctrl+F` or `/` focuses
+the search field, `Esc` clears it and `Ctrl+Q` really quits Quark.
 
-Steam owned games (**Settings → Stores & tools**) need a personal Steam Web API key and a
-SteamID64. They are written to `~/.config/quark/credentials.json` with mode `0600`, and **that
-file is not encrypted**: anyone who can read your home directory can read the key. Quark never
-logs it, and redacts registered secrets from command output. `GetOwnedGames` still returns
-nothing for a profile whose game details are private, so an empty answer is reported as
-ambiguous — it never becomes a "verified empty library" that would erase the games you already
-know. Epic and GOG have their own fields in the same file.
+### Game page
 
-### Managed tools
+The page shows the hero banner, ProtonDB/native badges, the **Play** button with
+playtime, news and achievements tabs, and the action buttons for logs,
+information, customization and per-game settings. **Customize** replaces or
+removes the cover, hero, logo and icon; images can come from SteamGridDB,
+Steam, the store itself, or a local file.
 
-Legendary, gogdl and Ludusavi are downloaded from their official GitHub releases into
-`~/.local/share/quark/tools/`:
+### Stores
 
-| Tool | Used for | State |
-| --- | --- | --- |
-| Legendary | Epic library, installs, login | owned + installed lists, installs into a folder you pick |
-| Ludusavi | local save snapshots | preview, backup, inventory, restore |
-| gogdl | GOG | login through a GOG code; owned games listed through the GOG API, installs, achievements, session-based unlocks |
+The **Stores** tab is a Steam discovery page: featured deal, recommendations,
+the most played games, top sellers, specials, new releases and upcoming titles.
+Prices are regional and the store page opens in your browser. A game card also
+offers a search on the download sites supported by Quark; results only open the
+site in your browser.
 
-The SHA-256 digest published in the release metadata is mandatory: a release without a
-digest, a digest mismatch, a missing Linux x64 asset, or a `--version` that does not match the
-tag is refused. The downloaded file is never executed before its digest matches, and the
-verified binary then replaces the previous one atomically, so a failed download or update
-leaves the last working tool in place. **Settings → Stores & tools** shows the installed state
-and only downloads when you ask.
+### My games / Stores library
 
-Legendary and gogdl are published as **Python zipapps** (`#!/usr/bin/env python3` followed by
-a zip archive), not as native ELF binaries, so `python3` must be installed on the machine.
-Quark checks that exact layout instead of expecting an ELF, and refuses anything else.
+**My games** lists the titles you own or have installed on Steam, Epic and GOG,
+one tab per store, sorted by name, with a search field and store covers. A left
+or right click on an uninstalled game opens the install sheet; an installed game
+opens its actions. Up to three Epic/GOG downloads run at once, each with its own
+progress, speed, ETA and **Cancel** button. The download icon in the top bar
+lists every transfer.
 
-### Connecting Epic and GOG
+## One game, several installations
 
-**Settings → Stores & tools** connects the accounts without Quark ever seeing a password:
+Quark 1.1.0 introduces a `Game → Installations` model. A `Game` carries the
+shared data (name, artwork, notes, tags, status, playtime, sessions); each
+`Installation` carries one edition:
 
-1. *Se connecter* opens the store's own login page in your browser.
-2. Copy the code that page shows: the `authorizationCode` value of the JSON response for Epic
-   (`https://legendary.gl/epiclogin`), or the `code` parameter of the return address for GOG
-   (`https://auth.gog.com/auth?client_id=…&response_type=code`).
-3. Paste it into Quark and press *Connecter*: the code is handed to Legendary or gogdl, which
-   exchanges it and writes its own session file (`~/.config/legendary/user.json`,
-   `~/.local/share/quark/gogdl-auth.json`).
+- store or local source, product ID and install folder;
+- executable and Proton prefix;
+- cloud-save folder and GOG synchronization timestamp;
+- installed state and last sync time.
 
-Both tools print session tokens and even exit with status 0 when the store refuses the code,
-so Quark never trusts the exit status: the connection only counts once the session file has
-actually been created or rewritten. The code is passed as a single argument, discarded from
-output, and never logged or displayed again.
+The first launch migrates an existing configuration automatically: the old
+`exe` field becomes a local installation, and every linked store record becomes
+an edition of the same game. The migration is idempotent and runs before each
+save, so an interrupted migration cannot duplicate entries.
 
-### Save files (Ludusavi)
+The game information panel lists the editions. Selecting one changes the
+executable and prefix used by **Play**, without touching the other edition.
+This is what makes a Steam copy and a GOG copy of the same title coexist with
+separate prefixes, saves and launch state while keeping one cover, one notes
+page and one playtime history.
 
-Saves are handled per provider installation, not per title:
+The legacy fields (`exe`, `prefix`, `proton`, …) are still serialized for
+compatibility and remain the values used by the launch resolver. The active
+installation is the source of truth when it is selected.
 
-- **Custom folders**: **Mes jeux → Dossiers de sauvegarde…** adds folders Ludusavi does not
-  know for that installation. They are merged into Quark's isolated
-  `~/.local/share/quark/ludusavi/config.yaml`; `--config` is always passed, so your own
-  `~/.config/ludusavi` is never touched. An existing YAML file keeps its settings, its other
-  `customGames` entries and their keys (`registry`, `alias`…), but rewriting it drops comments
-  and inlines anchors, and a path is never removed automatically.
-- **Preview, then confirmation**: **Aperçu sauvegarde** runs Ludusavi's preview and shows the
-  changed and processed games plus the data size; nothing is written until **Créer la
-  sauvegarde**. A Ludusavi error or a failed file blocks that step and is reported as a
-  failure, never as a successful backup.
-- **One vault per installation** (`~/.local/share/quark/save-backups/<hash>/`), keeping at most
-  10 full backups and no differential ones.
-- **Automatic snapshots**: for a game linked to a provider installation, a background backup
-  starts when the game is launched and another one when it exits. They never block or cancel a
-  launch: a failure is a message, not a dialog.
-- **Restore** requires the backup inventory, a fresh preview of the destination paths and an
-  explicit confirmation; every destination is re-validated right before writing and must stay
-  inside your home directory, the installation folder or a declared save folder. The forced
-  Ludusavi call exists only inside that confirmed flow.
+## Stores, accounts and cloud saves
 
-Achievements are read for Epic (Legendary) and GOG (gameplay API + gogdl session), and games
-can report unlocks at runtime through the local bridge. Writing an Epic achievement is not
-possible outside Epic's own client, so those reported during a session stay marked *session*
-in Quark. Cloud saves are still **not** offered: no verified source is wired, so nothing is
-claimed or displayed as empty.
+### Accounts
 
-The full manual check — real Ludusavi binary, exact commands, expected JSON and pass/fail
-criteria — is in [`docs/verification/ludusavi-config.md`](docs/verification/ludusavi-config.md).
+- **Steam** is read locally from `libraryfolders.vdf` and
+  `appmanifest_*.acf`. A personal Steam Web API key and SteamID64 are optional
+  and only improve recommendations.
+- **Epic Games** uses Legendary. The authorization code is exchanged locally
+  and the resulting `user.json` stays in Legendary's configuration directory.
+- **GOG** uses gogdl. Its token file is separate from Quark's
+  `credentials.json` and is written with private permissions.
 
-## Files
+The managed tools are downloaded from their official GitHub releases. Quark
+refuses an asset without a published SHA-256 digest and never trusts a
+mismatched binary.
+
+### Cloud saves
+
+Cloud synchronization is enabled by default in **Settings → In game**.
+
+- **Epic:** Quark runs `legendary -y sync-saves <app> --accept-path`. Legendary
+  compares the local save folder with the cloud manifest; the newer side wins.
+  A custom save folder can be supplied with `--save-path`.
+- **GOG:** Quark runs `gogdl save-sync <folder> <game-id> --ts <timestamp>`.
+  gogdl requires a folder, so choose one in the game information panel or in
+  **My games → Save folder**. The timestamp returned by gogdl is stored in the
+  installation and reused for the next comparison.
+- **Steam:** Steam Cloud stays inside the Steam client. Quark does not read or
+  write Steam's cloud saves.
+
+The synchronization runs after a successful Epic/GOG installation and after a
+game launched by Quark exits. It is asynchronous, so it never blocks the
+interface. The game information panel also has a manual **Synchronize cloud
+saves** button and shows the last result. A save is never invented: when no
+local or remote save exists, the panel says so.
+
+## Achievements and the in-game overlay
+
+### Achievements
+
+Epic achievements are read with `legendary achievements <app> --json`. The
+parser accepts log lines around the JSON, null lists and the older plain-text
+table (`Total achievements`, `Completed`, `In progress`). If the metadata cache
+is incomplete, Quark refreshes it with `legendary info` and retries once. A
+missing session or a game without achievements now produces an explicit message
+instead of an unreadable-response error.
+
+GOG achievements come from `gameplay.gog.com` with the gogdl session. Both
+sources are normalized to the same rows, with icons cached locally, rarity when
+published, and a **session** badge for achievements reported during play.
+
+A game can report an unlock through the local bridge:
+
+```bash
+curl -X POST "$QUARK_ACHIEVEMENTS_URL" \
+  -H "Authorization: Bearer $QUARK_ACHIEVEMENTS_TOKEN" \
+  -d '{"game":"'"$QUARK_GAME_ID"'","achievement":"ACH_FIRST","name":"First step"}'
+```
+
+The listener only binds `127.0.0.1`; the token changes on every launch and is
+masked in the session log.
+
+### Overlay
+
+Press **`Shift+Backspace`** while a game launched by Quark is running. The
+overlay appears above the game as a full-screen panel with the game name,
+session clock, store and achievement progress. It is closed by the same
+shortcut, `Esc`, or the close button.
+
+`F12` takes a screenshot under
+`~/.local/share/quark/screenshots/<game>/`. Epic and GOG captures also play a
+short chime and raise a desktop notification; Steam captures stay silent. The
+overlay remains mouse-transparent while closed, so it never steals a click from
+the game.
+
+Display options live in **Settings → In game**:
+
+- show or hide locked achievements;
+- compact rows without descriptions;
+- show or hide progress and rarity;
+- choose the overlay shortcut and the screenshot key.
+
+The X11 global shortcut covers Proton games through XWayland. On native Wayland,
+the desktop's global-shortcut policy may prevent a global key; the overlay still
+works with the close button and the in-app screenshot path. The shortcut thread
+is stopped when the game ends or when the key changes.
+
+## Proton, umu and launch options
+
+Quark detects Proton builds under `steamapps/common/Proton*` and
+`compatibilitytools.d/`, including Flatpak and Snap installations. A runtime can
+be selected per game or as a default. The selected prefix is used as-is; only
+the automatic fallback creates `~/.local/share/quark/prefixes/<game>`.
+
+Per-game launch options are checkboxes, not command lines:
+
+- **GameMode** (`gamemoderun`);
+- **MangoHud** (`MANGOHUD=1`);
+- **gamescope** with resolution, FSR and frame limit;
+- **PRIME offload** for hybrid laptops;
+- a free **wrapper** command where `%command%` is replaced by the game command;
+- `PROTON_LOG=1`;
+- **umu-launcher** with `WINEPREFIX`, `GAMEID` and `PROTONPATH`.
+
+A missing optional tool is reported and ignored; the game still starts. The
+BattlEye and EasyAntiCheat runtimes are passed to Proton through
+`PROTON_BATTLEYE_RUNTIME` and `PROTON_EAC_RUNTIME`.
+
+## Local saves and snapshots
+
+The save panel is shared by the library and **My games**. It supports custom
+save folders, a Ludusavi preview, a full backup, a backup inventory and restore.
+Snapshots are taken before a launch and after a session. The restore preview is
+validated against the game's install roots; symlinks, `$HOME` as a root and
+paths outside the allowed roots are refused. Each provider installation has its
+own Ludusavi bucket, so two editions of the same title never share a snapshot.
+
+Ludusavi is downloaded from its official release and verified before use.
+Quark never replaces an unreadable Ludusavi configuration; it reports the error
+and keeps the file.
+
+## Settings
+
+The settings window is organized as a sidebar with five groups:
+
+- **Interface:** Appearance, In game.
+- **Library:** New games, Artworks.
+- **Accounts:** Stores & tools.
+- **Data:** Statistics, Disk space.
+- **Quark:** About.
+
+**Appearance** contains the theme, default view, home carousel and notification
+icon. **In game** contains the overlay shortcut, screenshot key, achievement
+display and cloud-save toggle. **New games** contains the values copied into
+each newly added game (prefix, install folder, arguments, runtime, anti-cheat,
+launch options, environment variables). These are defaults, not global
+settings: changing one never modifies an existing game.
+
+**Stores & tools** contains synchronization, accounts, managed tool
+installation and the actions that require a store session. **Statistics**
+shows total playtime, the week, the streak, twelve weeks of bars, a 26-week
+heat map and the most played games. **Disk space** measures prefixes, artwork,
+logs, updates and game folders in a background thread.
+
+## Command line
+
+```text
+quark                     Open the launcher
+quark --doctor            Check the local environment
+quark --search <query>    Search Steam / SteamGridDB without opening the UI
+quark --fetch <appid>     Fetch Steam metadata and artwork
+quark --news <appid>      Read the Steam news feed
+quark --scan <folder>     Scan a folder for games
+quark --update            Check and download the latest release
+quark --ui <file.png>     Render the interface off-screen (no display needed)
+quark --tray              Run the notification-icon process
+```
+
+`--ui` accepts `--demo`, `--view`, `--tab`, `--dialog`, `--select`, `--size`,
+`--frames`, `--hover`, `--click` and `--key`; `--demo` uses a temporary
+configuration and never reads or writes the real library.
+
+## Files, data and privacy
 
 | Path | Contents |
 | --- | --- |
-| `~/.config/quark/config.json` | settings + games (readable, hand-editable JSON) |
-| `~/.config/quark/credentials.json` | optional Steam/Epic/GOG credentials, mode `0600`, not encrypted |
-| `~/.local/share/quark/artwork/<id>/` | downloaded artwork (no network request while displaying) |
-| `~/.local/share/quark/prefixes/<id>/` | automatically created Proton prefixes |
-| `~/.local/share/quark/logs/<id>/session.log` | last session: command, environment, game and Wine output |
-| `~/.local/share/quark/screenshots/<game>/` | F12 screenshots (PNG, one folder per game) |
-| `~/.local/share/quark/tools/<name>` | managed tools (Legendary, gogdl, Ludusavi), digest-checked |
-| `~/.local/share/quark/ludusavi/config.yaml` | isolated Ludusavi config, custom save folders merged in |
-| `~/.local/share/quark/save-backups/<hash>/` | one save vault per provider installation |
-| `~/.local/share/quark/store-cache.json` | last Steam store catalogue, reused when Steam is unreachable |
-| `~/.local/share/quark/updates/` | downloaded release archives (never installed automatically) |
+| `~/.config/quark/config.json` | Settings, library, installations and play history |
+| `~/.config/quark/credentials.json` | Optional Steam Web API key and SteamID64 |
+| `~/.config/quark/legendary/user.json` | Epic session written by Legendary |
+| `~/.local/share/quark/gogdl-auth.json` | GOG tokens written by gogdl |
+| `~/.local/share/quark/artwork/` | Cached artwork and achievement icons |
+| `~/.local/share/quark/prefixes/` | Automatic Proton prefixes |
+| `~/.local/share/quark/logs/<game>/` | Session logs, mode `0600` |
+| `~/.local/share/quark/save-backups/` | Ludusavi snapshots |
+| `~/.local/share/quark/screenshots/` | Overlay screenshots |
+| `~/.local/share/quark/updates/` | Downloaded update archives |
 
-## Releases
+Library writes are atomic (`fsync` + rename) and retried when they fail. A
+corrupt `config.json` is copied aside and the library becomes read-only instead
+of being overwritten with an empty one. Session logs never contain environment
+values, full command lines or the achievement token. Quark has no server and
+does not send telemetry.
 
-Every push to `main` triggers
-[`.github/workflows/release.yml`](.github/workflows/release.yml): GitHub Actions builds
-Quark, packages `quark-<version>-linux-x86_64.tar.gz` (+ SHA-256 checksum) and publishes a
-release tagged `v<version>` (version read from `Cargo.toml`). It can also be started by hand
-from the repository's **Actions** tab.
+## Project layout
 
-The same run also renders the interface off-screen (`quark --ui`, no display required) for
-list, grid, settings, dialogs, hover and keyboard states, and attaches the PNGs to the build
-as the **quark-ui-renders** artifact — so every push can be reviewed without installing
-anything.
+```text
+src/
+  app.rs              application state, jobs and background workers
+  config.rs           library, settings, Game and Installation models
+  ui_home.rs          home carousel
+  ui_library.rs       library, game page and installation selector
+  ui_my_games.rs      owned/installed store games and install actions
+  ui_dialogs.rs       settings, add-game, game settings and save dialogs
+  ui_providers.rs     store accounts and synchronization UI
+  providers/          Steam, Epic (Legendary), GOG (gogdl), achievements,
+                      cloud_saves, artwork and managed tools
+  proton.rs           runtime detection, prefix resolution and launch options
+  session.rs          process groups, logs and screenshots
+  saves/              Ludusavi integration and snapshot validation
+  overlay.rs          in-game overlay, global shortcuts and X11 capture
+  snapshot.rs         off-screen PNG renderer for the CI previews
+docs/
+  release-notes.md    notes for the current release only
+.github/workflows/
+  rust.yml            tests and checks
+  release.yml         build, previews and GitHub release
+```
+
+## Development and tests
 
 ```bash
-tar -xzf quark-0.9.2-linux-x86_64.tar.gz
-cd quark && ./quark
+cargo fmt --check
+cargo test --offline
+cargo build --release --locked --offline
 ```
 
-To get the Quark icon in your dock and application menu (the window carries the image
-itself, on X11 and Wayland alike), copy the bundled desktop entry and icon:
+The release workflow builds on Ubuntu 22.04, renders the interface off-screen
+with `--ui --demo`, publishes the PNG previews as a workflow artifact and
+creates the GitHub release from `docs/release-notes.md`. The release notes file
+contains only the version currently being published; previous notes stay on
+their existing GitHub releases.
 
-```bash
-install -Dm644 assets/quark.desktop ~/.local/share/applications/quark.desktop
-install -Dm644 assets/quark.png ~/.local/share/icons/hicolor/512x512/apps/quark.png
-update-desktop-database ~/.local/share/applications 2>/dev/null || true
-```
+## Known limitations
 
-## Proton, concretely
+- Steam achievements are not readable without a Steam session, so Quark shows
+  the Steam achievement tab only when the store exposes a readable source.
+  Steam Cloud is left to the Steam client.
+- GOG cloud saves need an explicit save folder; gogdl cannot infer it from the
+  installation path. Epic can compute its path with Legendary.
+- Real Epic/GOG accounts and a graphical X11 session are not available in the
+  development environment. The parsers, argument construction, migration and
+  error paths are covered by tests; a manual account and overlay test is still
+  required before claiming a complete end-to-end validation.
+- Native Wayland global shortcuts depend on the compositor. The overlay and
+  screenshots have an X11/XWayland path and desktop-tool fallbacks.
+- Cloud synchronization is deliberately opt-in by store capability. Quark never
+  invents a remote save or marks a synchronization successful when the provider
+  returned an error.
 
-- Detection: `steam_root/{steamapps/common,compatibilitytools.d}`, plus
-  `~/.local/share/Steam`, `~/.steam/root`, Flatpak (`~/.var/app/com.valvesoftware.Steam`)
-  and Snap.
-- Launch: `proton run <exe>` with `STEAM_COMPAT_DATA_PATH` = effective prefix and
-  `STEAM_COMPAT_CLIENT_INSTALL_PATH` = Steam root.
-- **Effective prefix**: per-game prefix → otherwise the settings' *default prefix* →
-  otherwise `~/.local/share/quark/prefixes/<id>`.
-- **Launch mode**: `Automatic` (Proton only for a `.exe`, native otherwise), `Linux
-  (native)` to force a direct launch, or a specific Proton runtime.
-- A runtime from `compatibilitytools.d` (GE-Proton…) is preferred by default (most recent
-  first) when no explicit choice was made.
-- **Wrapping order**: user wrapper (outermost) → gamescope → gamemoderun → game. A missing
-  `gamescope` or `gamemoderun` is skipped with a visible warning.
+## Licence
 
-### umu-launcher
-
-umu runs a Windows game with Proton without Steam and without its own copy of Proton. In the
-game settings, **Lancer via umu-launcher** switches the launch to:
-
-```sh
-WINEPREFIX=<prefix> GAMEID=<id|0> [PROTONPATH=<runtime>] umu-run <exe> <args>
-```
-
-`GAMEID` is the game's ProtonDB/Steam AppID (it drives ProtonDB reports and per-game fixes);
-`0` is fine for an unknown game. With a Proton runtime selected, its folder is passed as
-`PROTONPATH`; otherwise umu uses its own build. If `umu-run` is not in `PATH`, Quark refuses
-the launch and says so instead of failing silently.
-
-## Notification icon
-
-When **Settings → Appearance → Zone de notification** is enabled, closing the window really
-closes Quark: the window and its task-bar entry disappear, playtime is saved, and the icon
-keeps living in the notification area (a
-[StatusNotifierItem](https://www.freedesktop.org/wiki/Specifications/StatusNotifierItem/)).
-
-The icon is held by a separate process, `quark --tray`, which Quark starts by itself and
-which stays behind after the window is gone:
-
-- one click on the icon / *Ouvrir Quark* → a new Quark window starts;
-- *Quitter Quark* → the icon process exits (and stops a running window).
-
-Why a second process instead of a hidden window: hiding is impossible to do reliably —
-`Window::set_visible` is *unsupported on Wayland*, so the window would have stayed open and
-kept its task-bar entry, which is exactly the bug this replaces. With a separate process the
-behaviour is the same on X11 and Wayland, and a single-instance lock stops a second window
-from writing `config.json` at the same time.
-
-The icon is drawn by Quark itself (no icon theme needed). If your desktop exposes no
-StatusNotifier watcher — GNOME without the AppIndicator extension, a bare session — the
-settings page shows the D-Bus error and the close button simply quits, so you can never get
-stuck with an icon that does nothing.
-
-## Rendering check (no screen, no GPU)
-
-Quark can render its own interface off-screen and write a PNG of it: egui tessellates the
-UI in memory and Quark rasterises the triangles in software. That is how the interface is
-checked after every change, including on a machine without a display server.
-
-```bash
-target/release/quark --ui preview.png                        # 1360x860, current config
-target/release/quark --ui grid.png --view grid --demo        # built-in demo library
-target/release/quark --ui grid660.png --demo --demo-count 660 --view grid  # large library
-target/release/quark --ui hover.png --demo --hover 160,340   # pointer over a row
-target/release/quark --ui anim.png --demo --frames 3         # mid-transition frame
-target/release/quark --ui home.png --demo --home             # home page and carousel
-target/release/quark --ui dialog.png --demo --dialog settings
-target/release/quark --ui logs.png --demo --dialog logs
-```
-
-Options: `--size WxH`, `--scale N`, `--frames N`, `--view list|grid`, `--tab library|store|my-games`,
-`--theme amoled|graphite`, `--select <game>`, `--info`, `--running`,
-`--dialog none|add|artwork|exe|scan|settings|settings-defaults|settings-env|settings-proton|settings-providers|settings-artworks|settings-stats|settings-disk|settings-about|game|logs|customize|remove|updates|steam|overlay|install|site-search`, `--hover X,Y`,
-`--click X,Y`, `--button left|right`, `--key up|down|left|right|enter|escape`, `--marked`,
-`--home`, `--demo`, `--demo-count N`.
-
-`--click` and `--key` send real input events, so a render also checks the interactions:
-`--key down` really moves the selection, `--click X,Y` really presses a button.
-
-`--demo` builds a library of fake games with generated artwork (complete games, partial ones
-and games with no image at all), plus a fake ProtonDB rating and a fake session log, so every
-fallback gets rendered. Without `--demo` the real configuration is read; nothing is ever
-written, only the PNG is produced.
-
-The rasteriser is an approximation (gamma-space compositing, no sRGB framebuffer), so
-antialiased edges can differ very slightly from the OpenGL backend used on screen — the
-layout, texts, colours and animations are the same.
-
-## Command-line diagnostics (no screen)
-
-```bash
-target/release/quark --doctor          # folders, detected Proton runtimes, game status
-target/release/quark --search portal   # Steam + SteamGridDB results and artwork plan
-target/release/quark --fetch portal    # actually downloads the artwork into /tmp
-target/release/quark --scan ~/Games    # games detected in a folder
-target/release/quark --news portal     # latest Steam news for a game (appid or title)
-target/release/quark --update          # latest GitHub release (and downloads the archive)
-```
-
-## Code structure
-
-```
-src/main.rs         entry point + CLI (--doctor/--search/--fetch/--news/--scan/--ui)
-src/app.rs          application state, egui loop, launching, playtime, toasts, ProtonDB
-src/ui_home.rs      Home page: recent-games carousel, Continue, sorted library grid
-src/ui_library.rs   Library tab: list/grid column + game pane (banner, Play, news, ProtonDB)
-src/ui_my_games.rs  Mes jeux: per-store tabs and grid, downloads panel, uninstall, duplicate merge, save folders
-src/overlay.rs      in-game HUD, X11 F12 shortcut, screenshots, chime and desktop notifications
-src/ui_store.rs     Store tab: specials, search, local recommendations, price display, multi-site results
-src/game_search.rs  five download-site adapters and their JSON/HTML parsers
-src/steam_store.rs  Steam Store catalogue, regional prices, local cache, recommendation ranking
-src/providers/      provider model, Steam/Epic/GOG adapters, playtime, achievements, managed tools, installs
-src/saves/          Ludusavi: isolated config merge, preview, backup, inventory, restore
-src/ui_dialogs.rs   adding a game, global settings, game settings, session log, pickers
-src/config.rs       data model, persistence (JSON), labels (playtime, dates, monogram)
-src/artwork.rs      Steam/SteamGridDB search + artwork download and cache
-src/scan.rs         game discovery inside a folder (batch adding)
-src/news.rs         per-game news (public Steam feed) and opening links
-src/protondb.rs     ProtonDB rating (public API), tier colours and labels
-src/session.rs      launching, stdout/stderr capture, Stop (wineserver), log tail
-src/stats.rs        session history: hours per week, heat-map calendar, streak, top games
-src/disk.rs         disk usage of prefixes, artwork, logs, updates and game folders
-src/steamlib.rs     installed Steam library import (appmanifest_*.acf)
-src/icon.rs         embedded Quark icon (window and executable)
-src/fonts.rs        embedded Archivo and Lucide fonts for the interface
-src/tray.rs         notification-area icon (StatusNotifierItem via ksni) + `quark --tray`
-src/images.rs       texture cache, rounded/cropped drawing, accent and luminance analysis
-src/proton.rs       Proton runtime detection + launch command (options, umu, anti-cheat)
-src/update.rs       latest GitHub release, version comparison, archive download + SHA-256
-src/net.rs          bounded HTTP body reads (JSON, images, logs)
-src/process.rs      spawned helper reaping
-src/theme.rs        AMOLED/Graphite palette, gradients, monogram colours
-src/widgets.rs      Lucide icon glyphs, buttons and reusable chrome
-src/snapshot.rs     off-screen software renderer (--ui), for visual checks
-```
-
-## Possible next steps
-
-- Cloud saves, but only once a per-store source can be verified.
-- Steam achievements (no local API without owning the client session).
-- Favourites on the home page.
-- A time-range selector on the statistics page (7 days, 30 days, this year).
-- A “verify prefix” action.
+Quark is distributed under the MIT licence. The embedded Archivo font is under
+the SIL Open Font License; the Lucide icon font is under the ISC licence. See
+`assets/fonts/` and the release notes for the exact files.

@@ -226,9 +226,8 @@ impl QuarkApp {
                                             .unwrap_or(0);
                                         ui.horizontal_wrapped(|ui| {
                                             for (index, url) in urls.iter().enumerate() {
-                                                let preview = plan
-                                                    .preview(kind, index)
-                                                    .unwrap_or(url);
+                                                let preview =
+                                                    plan.preview(kind, index).unwrap_or(url);
                                                 if artwork_choice(
                                                     ui,
                                                     &pal,
@@ -537,46 +536,61 @@ impl QuarkApp {
         let mut open_url: Option<String> = None;
 
         // La page défile dans l'espace qui reste dans la fenêtre, une fois
-        // l'en-tête, les onglets et le bouton Fermer retirés (~250 px). Plus
-        // grand, le pied de page débordait et recouvrait le contenu ; une
-        // hauteur calculée sur la place restante ne marchait pas non plus, la
-        // fenêtre se dimensionnant elle-même sur son contenu.
-        let page_height = (ctx.screen_rect().height() - 250.0).max(200.0);
+        // l'en-tête et le pied de page retirés. La barre latérale garde les
+        // catégories visibles en permanence : plus besoin de faire défiler des
+        // onglets pour trouver un réglage.
+        let page_height = (ctx.screen_rect().height() - 300.0).max(220.0);
         let modal = egui::Modal::new(egui::Id::new("quark_settings")).show(ctx, |ui| {
-            ui.set_min_width(860.0);
+            ui.set_min_width(980.0);
+            ui.set_max_width(980.0);
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Paramètres").size(17.0).color(pal.text));
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("Paramètres").size(20.0).color(pal.text));
                     ui.label(
-                        RichText::new("enregistrés automatiquement")
+                        RichText::new("Réglages de Quark, enregistrés automatiquement")
+                            .size(11.0)
+                            .color(pal.text_faint),
+                    );
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if widgets::icon_button(ui, 28.0, Icon::Close, &pal, "Fermer").clicked() {
+                        close_requested = true;
+                    }
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new("Les modifications sont appliquées immédiatement")
                             .size(10.5)
                             .color(pal.text_faint),
                     );
                 });
             });
-            ui.add_space(12.0);
-
-            // Une page par famille de réglages (les onglets passent à la ligne
-            // sur une fenêtre étroite).
-            ui.horizontal_wrapped(|ui| {
-                for (tab, label) in SettingsTab::ALL {
-                    if widgets::tab(ui, label, self.settings_tab == tab, &pal).clicked() {
-                        self.settings_tab = tab;
-                    }
-                }
-            });
-            ui.add_space(8.0);
+            ui.add_space(14.0);
             ui.separator();
-            ui.add_space(6.0);
-            // Une phrase par page : elle évite d'ouvrir les sept onglets pour
-            // trouver le bon réglage.
-            ui.label(
-                RichText::new(self.settings_tab.hint())
-                    .size(11.5)
-                    .color(pal.text_faint),
-            );
-            ui.add_space(2.0);
+            ui.add_space(14.0);
 
+            ui.horizontal_top(|ui| {
+                let mut next_tab = None;
+                ui.allocate_ui_with_layout(
+                    Vec2::new(190.0, page_height),
+                    Layout::top_down(Align::Min),
+                    |ui| {
+                        next_tab = settings_sidebar(ui, &pal, self.settings_tab);
+                    },
+                );
+                ui.add_space(20.0);
+                ui.allocate_ui_with_layout(
+                    Vec2::new(ui.available_width(), page_height),
+                    Layout::top_down(Align::Min),
+                    |ui| {
+                        ui.label(
+                            RichText::new(self.settings_tab.hint())
+                                .size(12.0)
+                                .color(pal.text_dim),
+                        );
+                        ui.add_space(12.0);
+                        // Le contenu est limité en largeur : les lignes de
+                        // réglages restent lisibles même sur un écran large.
+                        ui.set_max_width(700.0);
             egui::ScrollArea::vertical()
                 .id_salt("quark_settings_scroll")
                 .max_height(page_height)
@@ -652,59 +666,6 @@ impl QuarkApp {
                                  Quark. L'exécutable est cherché dans le dossier de chaque jeu.",
                             );
                         });
-
-                        section(ui, "EN JEU", &pal);
-                        if widgets::setting_toggle(
-                            ui,
-                            &pal,
-                            "Overlay et captures",
-                            Some(
-                                "Affiche un panneau au-dessus du jeu, prend une capture avec la \
-                                 touche choisie et notifie les succès Epic/GOG avec un son.",
-                            ),
-                            &mut self.lib.settings.overlay,
-                            "overlay_enabled",
-                        )
-                        .changed()
-                        {
-                            self.touch();
-                        }
-                        if self.lib.settings.overlay {
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    RichText::new("Touche de capture")
-                                        .size(12.0)
-                                        .color(pal.text_dim),
-                                );
-                                let changed = ui
-                                    .add_sized(
-                                        Vec2::new(80.0, 26.0),
-                                        egui::TextEdit::singleline(
-                                            &mut self.lib.settings.screenshot_key,
-                                        )
-                                        .hint_text("F12")
-                                        .font(egui::FontId::monospace(12.0)),
-                                    )
-                                    .changed();
-                                if changed {
-                                    let key = self.lib.settings.screenshot_key.trim().to_string();
-                                    self.lib.settings.screenshot_key = if key.is_empty() {
-                                        "F12".to_string()
-                                    } else {
-                                        key
-                                    };
-                                    self.touch();
-                                }
-                                ui.label(
-                                    RichText::new(
-                                        "F1–F12, Print… · appliquée au prochain lancement",
-                                    )
-                                    .size(10.5)
-                                    .color(pal.text_faint),
-                                );
-                            });
-                        }
-                        ui.add_space(6.0);
 
                         section(ui, "ACCUEIL", &pal);
                         if widgets::setting_toggle(
@@ -805,6 +766,170 @@ impl QuarkApp {
                                 (None, None) => {}
                             }
                         }
+                    }
+                    SettingsTab::InGame => {
+                        section_hint(
+                            ui,
+                            "OVERLAY",
+                            &pal,
+                            "L'overlay est une fenêtre au-dessus du jeu. Il reste fermé par \
+                             défaut : Maj+Retour arrière l'ouvre et le referme, sans quitter la \
+                             partie.",
+                        );
+                        if widgets::setting_toggle(
+                            ui,
+                            &pal,
+                            "Activer l'overlay",
+                            Some("Captures d'écran, succès et notifications en jeu."),
+                            &mut self.lib.settings.overlay,
+                            "overlay_enabled",
+                        )
+                        .changed()
+                        {
+                            self.touch();
+                        }
+                        if self.lib.settings.overlay {
+                            ui.add_space(6.0);
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new("Raccourci d'ouverture")
+                                        .size(12.0)
+                                        .color(pal.text_dim),
+                                );
+                                let changed = ui
+                                    .add_sized(
+                                        Vec2::new(170.0, 26.0),
+                                        egui::TextEdit::singleline(
+                                            &mut self.lib.settings.overlay_hotkey,
+                                        )
+                                        .hint_text("Shift+BackSpace")
+                                        .font(egui::FontId::monospace(12.0)),
+                                    )
+                                    .changed();
+                                if changed {
+                                    let key = self.lib.settings.overlay_hotkey.trim().to_string();
+                                    self.lib.settings.overlay_hotkey = if key.is_empty() {
+                                        "Shift+BackSpace".to_string()
+                                    } else {
+                                        key
+                                    };
+                                    self.touch();
+                                }
+                                widgets::info_button(
+                                    ui,
+                                    &pal,
+                                    "Format X11 : Shift, Ctrl, Alt ou Super, puis le nom de la \
+                                     touche. Maj+Retour arrière s'écrit Shift+BackSpace.",
+                                );
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new("Touche de capture")
+                                        .size(12.0)
+                                        .color(pal.text_dim),
+                                );
+                                let changed = ui
+                                    .add_sized(
+                                        Vec2::new(80.0, 26.0),
+                                        egui::TextEdit::singleline(
+                                            &mut self.lib.settings.screenshot_key,
+                                        )
+                                        .hint_text("F12")
+                                        .font(egui::FontId::monospace(12.0)),
+                                    )
+                                    .changed();
+                                if changed {
+                                    let key = self.lib.settings.screenshot_key.trim().to_string();
+                                    self.lib.settings.screenshot_key = if key.is_empty() {
+                                        "F12".to_string()
+                                    } else {
+                                        key
+                                    };
+                                    self.touch();
+                                }
+                                ui.label(
+                                    RichText::new("F1–F12, Print… · appliquée au prochain lancement")
+                                        .size(10.5)
+                                        .color(pal.text_faint),
+                                );
+                            });
+                        }
+
+                        section_hint(
+                            ui,
+                            "SUCCÈS",
+                            &pal,
+                            "Choisis ce que l'overlay affiche. Le tri reste celui de la fiche : \
+                             les succès les plus rares d'abord.",
+                        );
+                        if widgets::setting_toggle(
+                            ui,
+                            &pal,
+                            "Afficher les succès verrouillés",
+                            Some("Décoche pour ne voir que les succès déjà obtenus."),
+                            &mut self.lib.settings.overlay_show_locked,
+                            "overlay_locked",
+                        )
+                        .changed()
+                        {
+                            self.touch();
+                        }
+                        if widgets::setting_toggle(
+                            ui,
+                            &pal,
+                            "Version compacte",
+                            Some("Lignes plus courtes, sans description."),
+                            &mut self.lib.settings.overlay_compact,
+                            "overlay_compact",
+                        )
+                        .changed()
+                        {
+                            self.touch();
+                        }
+                        if widgets::setting_toggle(
+                            ui,
+                            &pal,
+                            "Afficher progression et rareté",
+                            Some("Pourcentage de progression et part des joueurs."),
+                            &mut self.lib.settings.overlay_show_progress,
+                            "overlay_progress",
+                        )
+                        .changed()
+                        {
+                            self.touch();
+                        }
+
+                        section_hint(
+                            ui,
+                            "SAUVEGARDES CLOUD",
+                            &pal,
+                            "Epic utilise legendary sync-saves ; GOG utilise gogdl save-sync. La \
+                             sauvegarde la plus récente gagne, et le dossier GOG se choisit dans la \
+                             fiche du jeu.",
+                        );
+                        if widgets::setting_toggle(
+                            ui,
+                            &pal,
+                            "Synchroniser après installation et après une partie",
+                            Some(
+                                "Récupère la sauvegarde du compte à l'installation, puis envoie \
+                                 celle du jeu à la fermeture.",
+                            ),
+                            &mut self.lib.settings.cloud_saves,
+                            "cloud_saves",
+                        )
+                        .changed()
+                        {
+                            self.touch();
+                        }
+                        ui.label(
+                            RichText::new(
+                                "Steam Cloud reste géré par le client Steam : Quark ne \
+                                 l'interroge pas.",
+                            )
+                            .size(10.5)
+                            .color(pal.text_faint),
+                        );
                     }
                     SettingsTab::Defaults => {
                         section_hint(
@@ -1378,14 +1503,26 @@ impl QuarkApp {
                     }
                     }
                 });
+                    },
+                );
+                if let Some(tab) = next_tab {
+                    self.settings_tab = tab;
+                }
+            });
 
-            ui.add_space(16.0);
+            ui.add_space(12.0);
             ui.horizontal(|ui| {
                 if widgets::accent_button(ui, Vec2::new(140.0, 34.0), "Fermer", &pal, true, Icon::None)
                     .clicked()
                 {
                     close_requested = true;
                 }
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new("Échap ferme cette fenêtre")
+                        .size(10.5)
+                        .color(pal.text_faint),
+                );
             });
         });
         if modal.should_close() {
@@ -2252,9 +2389,7 @@ impl QuarkApp {
             game.sgdb_id = hit.sgdb_id;
             self.game_link_results.clear();
             self.game_link_warnings.clear();
-            self.toast_info(
-                "Jeu lié : enregistre les paramètres pour récupérer les images",
-            );
+            self.toast_info("Jeu lié : enregistre les paramètres pour récupérer les images");
         }
         if unlink {
             game.steam_app_id = None;
@@ -2286,9 +2421,7 @@ impl QuarkApp {
             let id = game.id.clone();
             let ids_changed =
                 game.steam_app_id != original_app_id || game.sgdb_id != original_sgdb_id;
-            let hit = if ids_changed
-                && (game.steam_app_id.is_some() || game.sgdb_id.is_some())
-            {
+            let hit = if ids_changed && (game.steam_app_id.is_some() || game.sgdb_id.is_some()) {
                 Some(crate::artwork::SearchHit {
                     source: if game.steam_app_id.is_some() {
                         crate::artwork::Source::Steam
@@ -2515,9 +2648,8 @@ impl QuarkApp {
                                 } else {
                                     ui.horizontal_wrapped(|ui| {
                                         for (index, url) in urls.iter().enumerate() {
-                                            let preview = plan
-                                                .preview(*asset, index)
-                                                .unwrap_or(url);
+                                            let preview =
+                                                plan.preview(*asset, index).unwrap_or(url);
                                             if artwork_choice(ui, &pal, preview, false).clicked() {
                                                 pick = Some((*asset, index));
                                             }
@@ -3107,6 +3239,55 @@ fn tags_editor(ui: &mut egui::Ui, pal: &Palette, tags: &mut Vec<String>) {
         }
     });
     ui.data_mut(|data| data.insert_temp(buffer_id, buffer));
+}
+
+/// Barre latérale des réglages : catégories fixes, libellés courts et une
+/// sélection lisible. Elle remplace la rangée d'onglets qui devenait difficile
+/// à parcourir avec huit pages.
+fn settings_sidebar(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    current: crate::app::SettingsTab,
+) -> Option<crate::app::SettingsTab> {
+    use crate::app::SettingsTab;
+    let mut chosen = None;
+    let groups: [(&str, &[SettingsTab]); 5] = [
+        ("INTERFACE", &[SettingsTab::Appearance, SettingsTab::InGame]),
+        (
+            "BIBLIOTHÈQUE",
+            &[SettingsTab::Defaults, SettingsTab::Artworks],
+        ),
+        ("COMPTES", &[SettingsTab::Providers]),
+        ("DONNÉES", &[SettingsTab::Stats, SettingsTab::Disk]),
+        ("QUARK", &[SettingsTab::About]),
+    ];
+    for (title, tabs) in groups {
+        ui.add_space(4.0);
+        ui.label(RichText::new(title).size(9.5).color(pal.text_faint));
+        ui.add_space(2.0);
+        for tab in tabs {
+            let selected = current == *tab;
+            let label = SettingsTab::ALL
+                .iter()
+                .find(|(candidate, _)| candidate == tab)
+                .map(|(_, label)| *label)
+                .unwrap_or("");
+            let response = ui.add_sized(
+                Vec2::new(180.0, 30.0),
+                egui::Button::new(RichText::new(label).size(12.5).color(if selected {
+                    pal.text
+                } else {
+                    pal.text_dim
+                }))
+                .selected(selected)
+                .frame(false),
+            );
+            if response.clicked() {
+                chosen = Some(*tab);
+            }
+        }
+    }
+    chosen
 }
 
 fn section(ui: &mut egui::Ui, title: &str, pal: &Palette) {

@@ -181,9 +181,7 @@ impl QuarkApp {
                                         cover,
                                         texture,
                                         10.0,
-                                        Color32::from_white_alpha(
-                                            (appear * 255.0).round() as u8
-                                        ),
+                                        Color32::from_white_alpha((appear * 255.0).round() as u8),
                                     );
                                 }
                                 None => {
@@ -1270,6 +1268,88 @@ impl QuarkApp {
                         });
                     }
 
+                    if !game.installations.is_empty() {
+                        let provider_record = self.provider_record_for_game(&game.id).cloned();
+                        ui.horizontal(|ui| {
+                            ui.add_space(32.0);
+                            ui.vertical(|ui| {
+                                ui.set_max_width((width - 64.0).max(200.0));
+                                ui.label(
+                                    RichText::new("INSTALLATIONS")
+                                        .size(11.0)
+                                        .color(pal.text_faint),
+                                );
+                                for installation in &game.installations {
+                                    let active = game
+                                        .active_installation
+                                        .as_deref()
+                                        .map(|id| id == installation.id)
+                                        .unwrap_or(false);
+                                    let source = installation.source_label();
+                                    if ui
+                                        .selectable_label(
+                                            active,
+                                            format!("{source} · {}", installation.label),
+                                        )
+                                        .on_hover_text(
+                                            installation
+                                                .path
+                                                .clone()
+                                                .unwrap_or_else(|| "Chemin inconnu".to_string()),
+                                        )
+                                        .clicked()
+                                    {
+                                        if let Some(stored) = self.lib.get_mut(&game.id) {
+                                            stored.activate_installation(&installation.id);
+                                        }
+                                        self.touch();
+                                    }
+                                }
+                                if let Some(record) = &provider_record {
+                                    let key = &record.key;
+                                    if key.provider != crate::providers::Provider::Steam {
+                                        ui.add_space(4.0);
+                                        if key.provider == crate::providers::Provider::Gog
+                                            && crate::providers::cloud_saves::save_path_for(
+                                                Some(&game),
+                                                record,
+                                            )
+                                            .is_none()
+                                        {
+                                            if widgets::ghost_button(
+                                                ui,
+                                                "Dossier de sauvegarde…",
+                                                &pal,
+                                                Icon::Folder,
+                                            )
+                                            .clicked()
+                                            {
+                                                self.choose_save_folder(ui.ctx(), key);
+                                            }
+                                        } else if widgets::ghost_button(
+                                            ui,
+                                            "Synchroniser les sauvegardes cloud",
+                                            &pal,
+                                            Icon::Refresh,
+                                        )
+                                        .clicked()
+                                        {
+                                            self.sync_cloud_saves(ui.ctx(), &game.id);
+                                        }
+                                        if let Some(status) = self.cloud_sync_status.get(key) {
+                                            ui.label(
+                                                RichText::new(status)
+                                                    .size(10.5)
+                                                    .color(pal.text_faint),
+                                            );
+                                        }
+                                    }
+                                }
+                                ui.add_space(8.0);
+                            });
+                        });
+                    }
+
                     if !game.description.is_empty() {
                         ui.horizontal(|ui| {
                             ui.add_space(32.0);
@@ -1606,11 +1686,7 @@ impl QuarkApp {
                                     RichText::new(&row.name)
                                         .size(12.5)
                                         .strong()
-                                        .color(if row.unlocked {
-                                            pal.text
-                                        } else {
-                                            pal.text_dim
-                                        }),
+                                        .color(if row.unlocked { pal.text } else { pal.text_dim }),
                                 );
                                 if row.session {
                                     ui.label(

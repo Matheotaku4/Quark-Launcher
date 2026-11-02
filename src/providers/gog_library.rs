@@ -1073,7 +1073,8 @@ pub fn to_games(entries: &[OwnedGame], fetched_at: i64) -> Vec<ProviderGame> {
             quark_game_id: None,
             capabilities: GameCapabilities {
                 achievements: CapabilityState::Supported,
-                cloud_saves: CapabilityState::Unknown,
+                // `gogdl save-sync` est disponible avec la session GOG.
+                cloud_saves: CapabilityState::Supported,
             },
             last_synced: Some(fetched_at),
         })
@@ -1318,7 +1319,10 @@ mod tests {
 
     #[test]
     fn les_doublons_amazon_prime_sont_nettoyes_et_fusionnes() {
-        assert_eq!(clean_gog_title("Call of Juarez Amazon Prime"), "Call of Juarez");
+        assert_eq!(
+            clean_gog_title("Call of Juarez Amazon Prime"),
+            "Call of Juarez"
+        );
         assert_eq!(
             clean_gog_title("Call of Juarez + Amazon Prime"),
             "Call of Juarez"

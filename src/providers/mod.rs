@@ -4,6 +4,7 @@
 //! séparés ; ces types ne contiennent aucune donnée d'authentification.
 
 pub mod achievements;
+pub mod cloud_saves;
 pub mod covers;
 pub mod credentials;
 pub mod gog;
@@ -17,6 +18,7 @@ pub mod steam;
 pub mod tools;
 
 pub use achievements::{AchievementInfo, AchievementRow, SessionUnlock};
+pub use cloud_saves::SyncReport as CloudSaveReport;
 pub use model::{
     CapabilityState, GameCapabilities, InstallState, Provider, ProviderGame, ProviderGameKey,
     ProviderLibrary,
