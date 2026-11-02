@@ -173,6 +173,129 @@ impl LegendaryAdapter {
         vec!["sync-saves".into(), app_name.into()]
     }
 
+    /// Paramètres de lancement calculés par Legendary, sans lancer le jeu.
+    /// `--json` les renvoie avant l'exécution ; ils contiennent le jeton Epic
+    /// éphémère et l'identité du compte, que Quark ne peut pas inventer.
+    pub fn launch_parameters_args(app_name: &str) -> Vec<String> {
+        vec![
+            "launch".into(),
+            app_name.into(),
+            "--json".into(),
+            "--skip-version-check".into(),
+        ]
+    }
+
+    pub fn launch_parameters(&self, app_name: &str) -> Result<EpicLaunchParameters, String> {
+        if !self.executable.is_file() {
+            return Err("Legendary n'est pas installé".to_string());
+        }
+        if !Self::is_logged_in() {
+            return Err("session Epic absente : connecte ton compte dans Paramètres".to_string());
+        }
+        // Le lancement ne doit pas rester bloqué sur une requête Epic lente :
+        // quelques secondes suffisent pour obtenir le jeton et les arguments.
+        let output = super::runner::run(
+            self.command(Self::launch_parameters_args(app_name)),
+            Duration::from_secs(20),
+            None,
+        )?;
+        if output.exit_code != Some(0) {
+            // La sortie peut contenir le jeton de session : elle n'est jamais
+            // recopiée dans un message d'erreur.
+            return Err("Legendary n'a pas pu préparer le lancement Epic".to_string());
+        }
+        parse_launch_parameters(&output.stdout)
+    }
+
+    /// L'overlay EOS est un téléchargement Epic distinct du jeu. Il s'installe
+    /// une fois, puis s'active dans le préfixe de chaque jeu (comme Heroic).
+    pub fn eos_overlay_default_path() -> PathBuf {
+        crate::config::data_dir().join("tools").join("eos_overlay")
+    }
+
+    /// Dossier de l'overlay déjà installé, lu dans l'état que Legendary écrit
+    /// à côté de sa configuration.
+    pub fn eos_overlay_installed_path() -> Option<PathBuf> {
+        #[derive(serde::Deserialize)]
+        struct OverlayInstall {
+            install_path: PathBuf,
+        }
+        let config = config_dir().join("overlay_install.json");
+        if let Ok(bytes) = std::fs::read(&config)
+            && let Ok(state) = serde_json::from_slice::<OverlayInstall>(&bytes)
+            && state.install_path.is_dir()
+        {
+            return Some(state.install_path);
+        }
+        let fallback = Self::eos_overlay_default_path();
+        fallback.is_dir().then_some(fallback)
+    }
+
+    pub fn eos_overlay_install_args(path: &std::path::Path) -> Vec<String> {
+        vec![
+            "-y".into(),
+            "eos-overlay".into(),
+            "install".into(),
+            "--path".into(),
+            path.display().to_string(),
+        ]
+    }
+
+    pub fn eos_overlay_enable_args(prefix: &std::path::Path) -> Vec<String> {
+        vec![
+            "eos-overlay".into(),
+            "enable".into(),
+            "--prefix".into(),
+            prefix.display().to_string(),
+        ]
+    }
+
+    pub fn install_eos_overlay_streaming(
+        &self,
+        progress: std::sync::Arc<std::sync::Mutex<super::runner::InstallProgress>>,
+        cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Result<PathBuf, String> {
+        if !self.executable.is_file() {
+            return Err("Legendary n'est pas installé".to_string());
+        }
+        if !Self::is_logged_in() {
+            return Err("session Epic absente : connecte ton compte dans Paramètres".to_string());
+        }
+        let path = Self::eos_overlay_default_path();
+        std::fs::create_dir_all(&path)
+            .map_err(|_| "dossier de l'overlay Epic inaccessible".to_string())?;
+        let output = super::runner::run_streaming(
+            self.command(Self::eos_overlay_install_args(&path)),
+            Duration::from_secs(30 * 60),
+            cancellation,
+            progress,
+        )?;
+        if output.exit_code != Some(0) {
+            return Err(format!(
+                "téléchargement de l'overlay Epic impossible ({})",
+                super::runner::failure_hint(&output)
+            ));
+        }
+        Ok(path)
+    }
+
+    pub fn enable_eos_overlay(&self, wine_prefix: &std::path::Path) -> Result<(), String> {
+        if Self::eos_overlay_installed_path().is_none() {
+            return Err("overlay Epic non installé".to_string());
+        }
+        if !wine_prefix.join("user.reg").is_file() {
+            return Err("préfixe Wine pas encore initialisé".to_string());
+        }
+        let output = self.run(Self::eos_overlay_enable_args(wine_prefix), None)?;
+        if output.exit_code != Some(0) {
+            return Err(format!(
+                "activation de l'overlay Epic impossible ({})",
+                super::runner::failure_hint(&output)
+            ));
+        }
+        Ok(())
+    }
+
     pub fn owned_listing(
         &self,
         output: &CommandOutput,
@@ -213,6 +336,50 @@ impl Default for LegendaryAdapter {
     fn default() -> Self {
         Self::new()
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EpicLaunchParameters {
+    /// Arguments fournis par le jeu dans les métadonnées Epic.
+    pub game_parameters: Vec<String>,
+    /// Arguments d'authentification Epic : jeton éphémère, application,
+    /// sandbox et `-EpicPortal`. Sans eux, un jeu lancé directement ne peut pas
+    /// se connecter au compte Epic.
+    pub egl_parameters: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct RawLaunchParameters {
+    #[serde(default)]
+    game_parameters: Vec<String>,
+    #[serde(default)]
+    egl_parameters: Vec<String>,
+}
+
+/// Lit la sortie de `legendary launch --json`. Les lignes de journal peuvent
+/// entourer le JSON : on isole le premier objet `{…}` complet.
+pub fn parse_launch_parameters(stdout: &str) -> Result<EpicLaunchParameters, String> {
+    let start = stdout
+        .find('{')
+        .ok_or_else(|| "réponse de lancement Epic illisible (aucun JSON)".to_string())?;
+    let end = stdout
+        .rfind('}')
+        .filter(|end| *end >= start)
+        .ok_or_else(|| "réponse de lancement Epic illisible (aucun JSON)".to_string())?;
+    let raw: RawLaunchParameters = serde_json::from_str(&stdout[start..=end])
+        .map_err(|_| "réponse de lancement Epic illisible".to_string())?;
+    if raw.egl_parameters.is_empty() {
+        return Err("Legendary n'a renvoyé aucun paramètre d'authentification Epic".to_string());
+    }
+    for argument in raw.game_parameters.iter().chain(&raw.egl_parameters) {
+        if argument.contains('\n') || argument.contains('\0') {
+            return Err("paramètre de lancement Epic invalide".to_string());
+        }
+    }
+    Ok(EpicLaunchParameters {
+        game_parameters: raw.game_parameters,
+        egl_parameters: raw.egl_parameters,
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -387,6 +554,11 @@ pub fn parse_installed_json(json: &str, fetched_at: i64) -> Result<Vec<ProviderG
         /// Chemin relatif au dossier installé, publié par Legendary.
         #[serde(default)]
         executable: Option<String>,
+        /// Dossier de sauvegarde accepté par `legendary sync-saves`. Il sert
+        /// aussi de dossier personnalisé à Ludusavi, y compris pour les jeux
+        /// absents de son manifeste.
+        #[serde(default)]
+        save_path: Option<PathBuf>,
     }
     let entries: Vec<InstalledTitle> = serde_json::from_str(json)
         .map_err(|_| "sortie JSON d'installations Legendary invalide".to_string())?;
@@ -412,6 +584,11 @@ pub fn parse_installed_json(json: &str, fetched_at: i64) -> Result<Vec<ProviderG
             .filter(|executable| !executable.is_empty())
             .map(|executable| entry.install_path.join(executable))
             .filter(|path| path.is_file());
+        let save_paths = entry
+            .save_path
+            .filter(|path| path.is_absolute())
+            .into_iter()
+            .collect();
         games.push(ProviderGame {
             key: ProviderGameKey {
                 provider: Provider::Epic,
@@ -424,7 +601,7 @@ pub fn parse_installed_json(json: &str, fetched_at: i64) -> Result<Vec<ProviderG
                 .parent()
                 .map(std::path::Path::to_path_buf),
             install_path: Some(entry.install_path),
-            custom_save_paths: Vec::new(),
+            custom_save_paths: save_paths,
             cover_url: None,
             install_exe: executable,
             install_state: InstallState::Installed,
@@ -1027,7 +1204,12 @@ pub fn merge_epic_with_verified_installs(
             .iter_mut()
             .find(|previous| previous.key == installed.key)
         {
-            let custom_paths = previous.custom_save_paths.clone();
+            let mut custom_paths = previous.custom_save_paths.clone();
+            for path in &installed.custom_save_paths {
+                if !custom_paths.contains(path) {
+                    custom_paths.push(path.clone());
+                }
+            }
             let quark_game_id = previous.quark_game_id.clone();
             *previous = installed.clone();
             previous.custom_save_paths = custom_paths;
@@ -1257,6 +1439,9 @@ Empty,,1.0,False\n";
             Some(install_path.as_path())
         );
         assert_eq!(games[0].install_state, InstallState::Installed);
+        // Le dossier accepté par `sync-saves` devient aussi le dossier
+        // personnalisé de Ludusavi, même si le titre manque à son manifeste.
+        assert_eq!(games[0].custom_save_paths, vec![install_path.join("save")]);
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1551,5 +1736,39 @@ Empty,,1.0,False\n";
             parse_achievements(object).unwrap().rows[0].rarity,
             Some(3.75)
         );
+    }
+
+    #[test]
+    fn les_parametres_de_lancement_epic_sont_lus_meme_entoures_de_logs() {
+        let output = "[cli] INFO: Logging in...\n{\"game_parameters\":[\"-windowed\"],\"egl_parameters\":[\"-AUTH_LOGIN=unused\",\"-AUTH_PASSWORD=jeton\",\"-AUTH_TYPE=exchangecode\",\"-epicapp=Anemone\",\"-EpicPortal\"],\"launch_command\":[\"wine\"]}\n[cli] INFO: Not launching\n";
+        let params = parse_launch_parameters(output).unwrap();
+        assert_eq!(params.game_parameters, vec!["-windowed"]);
+        assert!(params.egl_parameters.iter().any(|arg| arg == "-EpicPortal"));
+        assert!(
+            params
+                .egl_parameters
+                .iter()
+                .any(|arg| arg == "-epicapp=Anemone")
+        );
+        assert!(parse_launch_parameters("pas de json").is_err());
+        assert!(
+            parse_launch_parameters(r#"{"game_parameters":[]}"#).is_err(),
+            "sans paramètres d'authentification, le lancement direct resterait déconnecté"
+        );
+    }
+
+    #[test]
+    fn l_overlay_epic_est_installe_puis_active_par_prefixe() {
+        let install =
+            LegendaryAdapter::eos_overlay_install_args(std::path::Path::new("/tmp/quark-eos"));
+        assert_eq!(install[0], "-y");
+        assert_eq!(install[1], "eos-overlay");
+        assert_eq!(install[2], "install");
+        assert_eq!(install[4], "/tmp/quark-eos");
+        let enable =
+            LegendaryAdapter::eos_overlay_enable_args(std::path::Path::new("/tmp/prefix/pfx"));
+        assert_eq!(enable[0], "eos-overlay");
+        assert_eq!(enable[1], "enable");
+        assert_eq!(enable[3], "/tmp/prefix/pfx");
     }
 }

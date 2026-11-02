@@ -536,10 +536,8 @@ impl QuarkApp {
         let mut open_url: Option<String> = None;
 
         // La page défile dans l'espace qui reste dans la fenêtre, une fois
-        // l'en-tête et le pied de page retirés. La barre latérale garde les
-        // catégories visibles en permanence : plus besoin de faire défiler des
-        // onglets pour trouver un réglage.
-        let page_height = (ctx.screen_rect().height() - 300.0).max(220.0);
+        // l'en-tête, les onglets et le pied de page retirés.
+        let page_height = (ctx.screen_rect().height() - 360.0).max(220.0);
         let modal = egui::Modal::new(egui::Id::new("quark_settings")).show(ctx, |ui| {
             ui.set_min_width(980.0);
             ui.set_max_width(980.0);
@@ -568,29 +566,29 @@ impl QuarkApp {
             ui.separator();
             ui.add_space(14.0);
 
-            ui.horizontal_top(|ui| {
+            ui.vertical(|ui| {
                 let mut next_tab = None;
-                ui.allocate_ui_with_layout(
-                    Vec2::new(190.0, page_height),
-                    Layout::top_down(Align::Min),
-                    |ui| {
-                        next_tab = settings_sidebar(ui, &pal, self.settings_tab);
-                    },
+                // Onglets horizontaux en haut de la fenêtre : toutes les pages
+                // restent visibles d'un coup d'œil, sans colonne latérale.
+                ui.horizontal_wrapped(|ui| {
+                    for (tab, label) in SettingsTab::ALL {
+                        if widgets::tab(ui, label, self.settings_tab == tab, &pal).clicked() {
+                            next_tab = Some(tab);
+                        }
+                    }
+                });
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(self.settings_tab.hint())
+                        .size(12.0)
+                        .color(pal.text_dim),
                 );
-                ui.add_space(20.0);
-                ui.allocate_ui_with_layout(
-                    Vec2::new(ui.available_width(), page_height),
-                    Layout::top_down(Align::Min),
-                    |ui| {
-                        ui.label(
-                            RichText::new(self.settings_tab.hint())
-                                .size(12.0)
-                                .color(pal.text_dim),
-                        );
-                        ui.add_space(12.0);
-                        // Le contenu est limité en largeur : les lignes de
-                        // réglages restent lisibles même sur un écran large.
-                        ui.set_max_width(700.0);
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(10.0);
+                // Le contenu est limité en largeur : les lignes de réglages
+                // restent lisibles même sur un écran large.
+                ui.set_max_width(760.0);
             egui::ScrollArea::vertical()
                 .id_salt("quark_settings_scroll")
                 .max_height(page_height)
@@ -1327,6 +1325,46 @@ impl QuarkApp {
                                 .size(11.0)
                                 .color(pal.text_faint),
                         );
+
+                        ui.add_space(10.0);
+                        section(ui, "OVERLAY EPIC (EOS)", &pal);
+                        if let Some(job) = &self.eos_overlay_job {
+                            let label = job
+                                .progress
+                                .lock()
+                                .map(|progress| progress.label())
+                                .unwrap_or_else(|_| "Overlay Epic · installation…".to_string());
+                            ui.label(RichText::new(label).size(12.0).color(pal.text_dim));
+                        } else if let Some(path) =
+                            crate::providers::legendary::LegendaryAdapter::eos_overlay_installed_path()
+                        {
+                            ui.label(
+                                RichText::new(format!("Installé · {}", path.display()))
+                                    .size(11.5)
+                                    .color(pal.text_dim),
+                            );
+                            ui.label(
+                                RichText::new("Activé automatiquement dans le préfixe de chaque jeu Epic au lancement.")
+                                    .size(11.0)
+                                    .color(pal.text_faint),
+                            );
+                        } else {
+                            ui.label(
+                                RichText::new("Comme Heroic : télécharge l'overlay Epic une fois, puis l'active dans le préfixe du jeu. Maj+F3 ouvre l'overlay Epic en jeu.")
+                                    .size(11.5)
+                                    .color(pal.text_dim),
+                            );
+                            if widgets::ghost_button(
+                                ui,
+                                "Installer l'overlay Epic (EOS)",
+                                &pal,
+                                Icon::Download,
+                            )
+                            .clicked()
+                            {
+                                self.install_eos_overlay_global(ctx);
+                            }
+                        }
                     }
                     SettingsTab::About => {
                         section(ui, "VERSION", &pal);
@@ -1503,8 +1541,6 @@ impl QuarkApp {
                     }
                     }
                 });
-                    },
-                );
                 if let Some(tab) = next_tab {
                     self.settings_tab = tab;
                 }
@@ -3239,55 +3275,6 @@ fn tags_editor(ui: &mut egui::Ui, pal: &Palette, tags: &mut Vec<String>) {
         }
     });
     ui.data_mut(|data| data.insert_temp(buffer_id, buffer));
-}
-
-/// Barre latérale des réglages : catégories fixes, libellés courts et une
-/// sélection lisible. Elle remplace la rangée d'onglets qui devenait difficile
-/// à parcourir avec huit pages.
-fn settings_sidebar(
-    ui: &mut egui::Ui,
-    pal: &Palette,
-    current: crate::app::SettingsTab,
-) -> Option<crate::app::SettingsTab> {
-    use crate::app::SettingsTab;
-    let mut chosen = None;
-    let groups: [(&str, &[SettingsTab]); 5] = [
-        ("INTERFACE", &[SettingsTab::Appearance, SettingsTab::InGame]),
-        (
-            "BIBLIOTHÈQUE",
-            &[SettingsTab::Defaults, SettingsTab::Artworks],
-        ),
-        ("COMPTES", &[SettingsTab::Providers]),
-        ("DONNÉES", &[SettingsTab::Stats, SettingsTab::Disk]),
-        ("QUARK", &[SettingsTab::About]),
-    ];
-    for (title, tabs) in groups {
-        ui.add_space(4.0);
-        ui.label(RichText::new(title).size(9.5).color(pal.text_faint));
-        ui.add_space(2.0);
-        for tab in tabs {
-            let selected = current == *tab;
-            let label = SettingsTab::ALL
-                .iter()
-                .find(|(candidate, _)| candidate == tab)
-                .map(|(_, label)| *label)
-                .unwrap_or("");
-            let response = ui.add_sized(
-                Vec2::new(180.0, 30.0),
-                egui::Button::new(RichText::new(label).size(12.5).color(if selected {
-                    pal.text
-                } else {
-                    pal.text_dim
-                }))
-                .selected(selected)
-                .frame(false),
-            );
-            if response.clicked() {
-                chosen = Some(*tab);
-            }
-        }
-    }
-    chosen
 }
 
 fn section(ui: &mut egui::Ui, title: &str, pal: &Palette) {

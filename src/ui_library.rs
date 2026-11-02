@@ -1307,26 +1307,66 @@ impl QuarkApp {
                                 }
                                 if let Some(record) = &provider_record {
                                     let key = &record.key;
-                                    if key.provider != crate::providers::Provider::Steam {
-                                        ui.add_space(4.0);
-                                        if key.provider == crate::providers::Provider::Gog
-                                            && crate::providers::cloud_saves::save_path_for(
-                                                Some(&game),
-                                                record,
-                                            )
-                                            .is_none()
-                                        {
+                                    if key.provider == crate::providers::Provider::Epic {
+                                        ui.add_space(6.0);
+                                        if let Some(job) = &self.eos_overlay_job {
+                                            let label = job
+                                                .progress
+                                                .lock()
+                                                .map(|progress| progress.label())
+                                                .unwrap_or_else(|_| {
+                                                    "Overlay Epic · installation…".to_string()
+                                                });
+                                            ui.label(
+                                                RichText::new(label)
+                                                    .size(10.5)
+                                                    .color(pal.text_faint),
+                                            );
+                                        } else {
+                                            let installed = crate::providers::legendary::LegendaryAdapter::eos_overlay_installed_path()
+                                                .is_some();
+                                            let action = if installed {
+                                                "Activer l'overlay Epic pour ce jeu"
+                                            } else {
+                                                "Installer l'overlay Epic (EOS)"
+                                            };
                                             if widgets::ghost_button(
                                                 ui,
-                                                "Dossier de sauvegarde…",
+                                                action,
                                                 &pal,
-                                                Icon::Folder,
+                                                Icon::Download,
+                                            )
+                                            .on_hover_text(
+                                                "Comme Heroic : l'overlay EOS est téléchargé une fois, puis activé dans le préfixe de ce jeu. Il affiche l'overlay Epic en jeu (Maj+F3).",
                                             )
                                             .clicked()
                                             {
-                                                self.choose_save_folder(ui.ctx(), key);
+                                                self.install_eos_overlay(ui.ctx(), &game.id);
                                             }
-                                        } else if widgets::ghost_button(
+                                        }
+                                    }
+                                    if key.provider != crate::providers::Provider::Steam {
+                                        ui.add_space(4.0);
+                                        // Ludusavi a besoin d'un dossier explicite
+                                        // pour les jeux absents de son manifeste.
+                                        if widgets::ghost_button(
+                                            ui,
+                                            "Dossier de sauvegarde local…",
+                                            &pal,
+                                            Icon::Folder,
+                                        )
+                                        .clicked()
+                                        {
+                                            self.choose_save_folder(ui.ctx(), key);
+                                        }
+                                        for path in &record.custom_save_paths {
+                                            ui.label(
+                                                RichText::new(path.display().to_string())
+                                                    .size(10.0)
+                                                    .color(pal.text_faint),
+                                            );
+                                        }
+                                        if widgets::ghost_button(
                                             ui,
                                             "Synchroniser les sauvegardes cloud",
                                             &pal,

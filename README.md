@@ -6,7 +6,7 @@ own, launches Windows games through Proton (or umu-launcher), and stays out of
 the way with an AMOLED interface, a store page, save snapshots and an in-game
 overlay.
 
-This is the 1.1.0 documentation. Older release notes are kept on the GitHub
+This is the 1.1.1 documentation. Older release notes are kept on the GitHub
 releases page; `docs/release-notes.md` only describes the release currently
 being published.
 
@@ -64,8 +64,8 @@ Download `quark-<version>-linux-x86_64.tar.gz` and its `.sha256` file from the
 then verify and unpack it:
 
 ```bash
-sha256sum -c quark-1.1.0-linux-x86_64.tar.gz.sha256
-tar -xzf quark-1.1.0-linux-x86_64.tar.gz
+sha256sum -c quark-1.1.1-linux-x86_64.tar.gz.sha256
+tar -xzf quark-1.1.1-linux-x86_64.tar.gz
 ./quark/quark
 ```
 
@@ -152,7 +152,7 @@ lists every transfer.
 
 ## One game, several installations
 
-Quark 1.1.0 introduces a `Game → Installations` model. A `Game` carries the
+Quark 1.1 introduces a `Game → Installations` model. A `Game` carries the
 shared data (name, artwork, notes, tags, status, playtime, sessions); each
 `Installation` carries one edition:
 

@@ -540,12 +540,34 @@ pub fn resolve(
     resolve_with(game, settings, runtimes, Tools::detect())
 }
 
+/// Comme [`resolve`], avec des paramètres fournis par la boutique (Epic).
+/// Ils sont placés après les arguments du jeu, donc à l'intérieur des wrappers
+/// et de `gamescope`/`gamemoderun`, comme le fait Steam.
+pub fn resolve_with_parameters(
+    game: &Game,
+    settings: &Settings,
+    runtimes: &[ProtonRuntime],
+    parameters: &[String],
+) -> Result<Resolved, String> {
+    resolve_with_extra(game, settings, runtimes, Tools::detect(), parameters)
+}
+
 /// Même chose avec des outils imposés (les tests n'ont pas gamescope installé).
 pub fn resolve_with(
     game: &Game,
     settings: &Settings,
     runtimes: &[ProtonRuntime],
     tools: Tools,
+) -> Result<Resolved, String> {
+    resolve_with_extra(game, settings, runtimes, tools, &[])
+}
+
+fn resolve_with_extra(
+    game: &Game,
+    settings: &Settings,
+    runtimes: &[ProtonRuntime],
+    tools: Tools,
+    store_parameters: &[String],
 ) -> Result<Resolved, String> {
     if game.exe.trim().is_empty() {
         return Err("Aucun exécutable défini pour ce jeu.".to_string());
@@ -554,7 +576,8 @@ pub fn resolve_with(
     if !exe.exists() {
         return Err(format!("Exécutable introuvable : {}", exe.display()));
     }
-    let extra = split_args(&game.args);
+    let mut extra = split_args(&game.args);
+    extra.extend(store_parameters.iter().cloned());
     let want_proton = match &game.proton {
         ProtonMode::Native => false,
         ProtonMode::Runtime(_) => true,
@@ -886,6 +909,30 @@ mod tests {
     }
 
     #[test]
+    fn les_parametres_de_boutique_entrent_dans_la_commande_du_jeu_meme_avec_un_wrapper() {
+        let dir = dossier("parametres-boutique");
+        let mut game = jeu_binaire(&dir);
+        game.launch.wrapper = "env FOO=1 %command%".to_string();
+        let resolu = resolve_with_extra(
+            &game,
+            &Settings::default(),
+            &[],
+            Tools::default(),
+            &[
+                "-AUTH_PASSWORD=jeton".to_string(),
+                "-EpicPortal".to_string(),
+            ],
+        )
+        .unwrap();
+        // La ligne du wrapper est un seul argument de `sh -c` : les paramètres
+        // doivent être dedans, pas après le shell.
+        let commande = resolu.spec.args[1].to_string_lossy();
+        assert!(commande.contains("-AUTH_PASSWORD=jeton"));
+        assert!(commande.contains("-EpicPortal"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn une_case_cochee_sans_outil_est_ignoree_et_signalee() {
         let dir = dossier("outils-absents");
         let mut game = jeu_binaire(&dir);
@@ -1186,9 +1233,7 @@ mod tests {
     #[test]
     fn un_chemin_non_utf8_reste_intact_sans_wrapper() {
         use std::os::unix::ffi::OsStringExt as _;
-        let program = PathBuf::from(OsString::from_vec(
-            b"/tmp/jeu-\xff/bin/game".to_vec(),
-        ));
+        let program = PathBuf::from(OsString::from_vec(b"/tmp/jeu-\xff/bin/game".to_vec()));
         let mut extras = Vec::new();
         let mut warnings = Vec::new();
         let spec = finalize(
@@ -1203,5 +1248,4 @@ mod tests {
         assert_eq!(spec.program, program);
         assert!(spec.args.is_empty());
     }
-
 }

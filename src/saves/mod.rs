@@ -22,6 +22,10 @@ pub enum BackupPhase {
 pub struct SaveIdentity {
     pub provider_key: ProviderGameKey,
     pub install_path: Option<PathBuf>,
+    /// Préfixe Wine/Proton du jeu. Sans lui, Ludusavi lit les chemins
+    /// `<winDocuments>`/`<winLocalAppData>` dans le mauvais préfixe et ne
+    /// trouve aucune sauvegarde.
+    pub wine_prefix: Option<PathBuf>,
     pub ludusavi_title: String,
     pub custom_paths: Vec<PathBuf>,
 }
@@ -214,8 +218,11 @@ impl SaveManager {
                 MAX_FULL_BACKUPS.to_string(),
                 "--differential-limit".into(),
                 "0".into(),
-                identity.ludusavi_title.clone(),
-            ],
+            ]
+            .into_iter()
+            .chain(wine_prefix_args(identity))
+            .chain(std::iter::once(identity.ludusavi_title.clone()))
+            .collect::<Vec<_>>(),
         ))
     }
 
@@ -305,8 +312,11 @@ impl SaveManager {
                 MAX_FULL_BACKUPS.to_string(),
                 "--differential-limit".into(),
                 "0".into(),
-                identity.ludusavi_title.clone(),
-            ],
+            ]
+            .into_iter()
+            .chain(wine_prefix_args(identity))
+            .chain(std::iter::once(identity.ludusavi_title.clone()))
+            .collect::<Vec<_>>(),
         ))
     }
 
@@ -318,8 +328,46 @@ impl SaveManager {
         crate::providers::runner::run(command, self.timeout, cancellation)
     }
 
+    /// Le nom exact du manifeste Ludusavi ne correspond pas toujours au titre
+    /// de la boutique (« Dying Light: Enhanced Edition », par exemple).
+    /// `find --normalized` donne le titre canonique ; sans lui, Ludusavi
+    /// abandonne la sauvegarde en disant que le jeu est inconnu.
+    fn resolved_identity(&self, identity: &SaveIdentity) -> SaveIdentity {
+        if !identity.custom_paths.is_empty() || !self.executable.is_file() {
+            return identity.clone();
+        }
+        let query = strip_install_suffix(&identity.ludusavi_title);
+        let Ok(output) = self.run(self.find_command(query), None) else {
+            return identity.clone();
+        };
+        if output.exit_code != Some(0) {
+            return identity.clone();
+        }
+        let Some(title) = parse_find_title(&output.stdout, &identity.ludusavi_title) else {
+            return identity.clone();
+        };
+        let mut resolved = identity.clone();
+        resolved.ludusavi_title = title;
+        resolved
+    }
+
+    fn find_command(&self, title: &str) -> ProviderCommand {
+        ludusavi_command(
+            &self.executable,
+            [
+                "--config".to_string(),
+                self.config.display().to_string(),
+                "find".into(),
+                "--api".into(),
+                "--normalized".into(),
+                title.to_string(),
+            ],
+        )
+    }
+
     pub fn preview(&self, identity: &SaveIdentity) -> Result<BackupPreview, String> {
-        let output = self.run(self.preview_command(identity)?, None)?;
+        let identity = self.resolved_identity(identity);
+        let output = self.run(self.preview_command(&identity)?, None)?;
         ensure_success(&output)?;
         parse_preview(&output.stdout, &identity.ludusavi_title)
     }
@@ -330,6 +378,7 @@ impl SaveManager {
         phase: BackupPhase,
         confirmed: bool,
     ) -> Result<BackupRecord, String> {
+        let identity = &self.resolved_identity(identity);
         let output = self.run(self.backup_command(identity, confirmed)?, None)?;
         ensure_success(&output)?;
         let preview = parse_preview(&output.stdout, &identity.ludusavi_title)?;
@@ -372,7 +421,8 @@ impl SaveManager {
     }
 
     pub fn backups(&self, identity: &SaveIdentity) -> Result<Vec<BackupInfo>, String> {
-        let output = self.run(self.backups_command(identity)?, None)?;
+        let identity = self.resolved_identity(identity);
+        let output = self.run(self.backups_command(&identity)?, None)?;
         ensure_success(&output)?;
         parse_backups(&output.stdout, &identity.ludusavi_title)
     }
@@ -382,13 +432,14 @@ impl SaveManager {
         identity: &SaveIdentity,
         backup_id: &str,
     ) -> Result<BackupPreview, String> {
-        let backups = self.backups(identity)?;
+        let identity = self.resolved_identity(identity);
+        let backups = self.backups(&identity)?;
         validate_backup_id_in_inventory(&backups, backup_id)?;
-        let command = self.restore_preview_command(identity, backup_id)?;
+        let command = self.restore_preview_command(&identity, backup_id)?;
         let output = self.run(command, None)?;
         ensure_success(&output)?;
         let preview = parse_preview(&output.stdout, &identity.ludusavi_title)?;
-        validate_restore_preview_paths(identity, &preview, &crate::config::home_dir())?;
+        validate_restore_preview_paths(&identity, &preview, &crate::config::home_dir())?;
         Ok(preview)
     }
 
@@ -402,10 +453,11 @@ impl SaveManager {
         if !confirmed {
             return Err("restauration non exécutée sans confirmation explicite".into());
         }
-        let backups = self.backups(identity)?;
+        let identity = self.resolved_identity(identity);
+        let backups = self.backups(&identity)?;
         validate_backup_id_in_inventory(&backups, backup_id)?;
-        let preview = self.restore_preview(identity, backup_id)?;
-        validate_restore_preview_paths(identity, &preview, &crate::config::home_dir())?;
+        let preview = self.restore_preview(&identity, backup_id)?;
+        validate_restore_preview_paths(&identity, &preview, &crate::config::home_dir())?;
         let mut current_paths: Vec<String> =
             preview.files.iter().map(|file| file.path.clone()).collect();
         let mut approved_paths = expected_paths.to_vec();
@@ -417,7 +469,7 @@ impl SaveManager {
                     .into(),
             );
         }
-        let command = self.confirmed_restore_command(identity, backup_id)?;
+        let command = self.confirmed_restore_command(&identity, backup_id)?;
         let output = self.run(command, None)?;
         ensure_success(&output)?;
         let result = parse_preview(&output.stdout, &identity.ludusavi_title)?;
@@ -453,10 +505,7 @@ fn read_ludusavi_config(path: &Path) -> Result<serde_yaml_ng::Value, String> {
 
 /// Retire les chemins gérés par Quark quand l'utilisateur a détaché le dernier
 /// dossier. L'entrée et ses autres clés (registry, integration…) sont gardées.
-fn remove_custom_game_files(
-    config: &mut serde_yaml_ng::Value,
-    title: &str,
-) -> Result<(), String> {
+fn remove_custom_game_files(config: &mut serde_yaml_ng::Value, title: &str) -> Result<(), String> {
     let Some(games) = config
         .as_mapping_mut()
         .and_then(|mapping| mapping.get_mut(serde_yaml_ng::Value::from("customGames")))
@@ -464,9 +513,10 @@ fn remove_custom_game_files(
     else {
         return Ok(());
     };
-    let Some(entry) = games.iter_mut().find(|entry| {
-        entry.get("name").and_then(serde_yaml_ng::Value::as_str) == Some(title)
-    }) else {
+    let Some(entry) = games
+        .iter_mut()
+        .find(|entry| entry.get("name").and_then(serde_yaml_ng::Value::as_str) == Some(title))
+    else {
         return Ok(());
     };
     let Some(mapping) = entry.as_mapping_mut() else {
@@ -562,6 +612,17 @@ fn write_config_atomic(path: &Path, contents: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+/// `backup --wine-prefix` accepte plusieurs préfixes ; Quark en fournit un seul,
+/// celui du jeu. Le chemin doit contenir `drive_c`.
+fn wine_prefix_args(identity: &SaveIdentity) -> Vec<String> {
+    identity
+        .wine_prefix
+        .as_ref()
+        .filter(|prefix| prefix.join("drive_c").is_dir())
+        .map(|prefix| vec!["--wine-prefix".to_string(), prefix.display().to_string()])
+        .unwrap_or_default()
+}
+
 fn ludusavi_command(executable: &Path, args: impl IntoIterator<Item = String>) -> ProviderCommand {
     ProviderCommand {
         program: executable.to_path_buf(),
@@ -639,9 +700,7 @@ pub fn validate_restore_preview_paths(
         let lexical_root = allowed_roots
             .iter()
             .find(|root| path.starts_with(root))
-            .ok_or_else(|| {
-                "destination de restauration hors des dossiers autorisés".to_string()
-            })?;
+            .ok_or_else(|| "destination de restauration hors des dossiers autorisés".to_string())?;
         let resolved_allowed = canonical_roots
             .iter()
             .any(|root| canonical_ancestor.starts_with(root));
@@ -676,6 +735,45 @@ fn ensure_success(output: &CommandOutput) -> Result<(), String> {
     } else {
         Err("commande Ludusavi échouée".into())
     }
+}
+
+/// Quark suffixe le titre Ludusavi des installations en double
+/// (`Titre [epic:AppName]`) pour ne pas partager `customGames`. Ce suffixe
+/// n'existe pas dans le manifeste : on l'enlève pour la recherche.
+fn strip_install_suffix(title: &str) -> &str {
+    let Some(index) = title.rfind(" [") else {
+        return title;
+    };
+    let suffix = &title[index + 2..];
+    if title.ends_with(']')
+        && ["steam:", "epic:", "gog:"]
+            .iter()
+            .any(|prefix| suffix.starts_with(prefix))
+    {
+        title[..index].trim_end()
+    } else {
+        title
+    }
+}
+
+/// `ludusavi find --api --normalized` renvoie les titres canoniques du
+/// manifeste. On ne retient le résultat que s'il est sans ambiguïté : le titre
+/// exact, ou l'unique jeu trouvé. Une correspondance floue pourrait sauvegarder
+/// les fichiers d'un autre jeu.
+pub fn parse_find_title(json: &str, wanted: &str) -> Option<String> {
+    let root: serde_json::Value = serde_json::from_str(json).ok()?;
+    let games = root.get("games")?.as_object()?;
+    if games.contains_key(wanted) {
+        return Some(wanted.to_string());
+    }
+    if games.len() == 1 {
+        return games.keys().next().cloned();
+    }
+    let normalized = wanted.trim().to_lowercase();
+    games
+        .keys()
+        .find(|title| title.trim().to_lowercase() == normalized)
+        .cloned()
 }
 
 pub fn parse_backups(json: &str, title: &str) -> Result<Vec<BackupInfo>, String> {
@@ -722,9 +820,12 @@ pub fn parse_preview(json: &str, title: &str) -> Result<BackupPreview, String> {
         .get("games")
         .and_then(serde_json::Value::as_object)
         .ok_or_else(|| "sortie Ludusavi sans objet games".to_string())?;
-    let game = games
-        .get(title)
-        .ok_or_else(|| format!("jeu non reconnu par Ludusavi : {title}"))?;
+    let game = games.get(title).ok_or_else(|| {
+        format!(
+            "jeu absent du manifeste Ludusavi ({title}) : choisis un dossier de sauvegarde \
+             dans la fiche du jeu"
+        )
+    })?;
     let mut files = Vec::new();
     {
         if let Some(by_path) = game.get("files").and_then(serde_json::Value::as_object) {
@@ -820,6 +921,7 @@ mod tests {
                 product_id: id.into(),
             },
             install_path: None,
+            wine_prefix: None,
             ludusavi_title: title.into(),
             custom_paths: vec![],
         }
@@ -880,6 +982,39 @@ mod tests {
     }
 
     #[test]
+    fn le_titre_ludusavi_est_resolu_sans_deviner_quand_plusieurs_jeux_correspondent() {
+        // Titre exact : rien à changer.
+        assert_eq!(
+            parse_find_title(r#"{"games":{"Celeste":{}}}"#, "Celeste"),
+            Some("Celeste".to_string())
+        );
+        // Édition Epic : le manifeste ne connaît que le titre de base.
+        assert_eq!(
+            parse_find_title(
+                r#"{"games":{"Dying Light":{"score":0.98}}}"#,
+                "Dying Light: Enhanced Edition"
+            ),
+            Some("Dying Light".to_string())
+        );
+        // Plusieurs résultats : on refuse de choisir à la place de l'utilisateur.
+        assert_eq!(
+            parse_find_title(r#"{"games":{"Game A":{},"Game B":{}}}"#, "Game"),
+            None
+        );
+        assert_eq!(parse_find_title("pas du json", "Game"), None);
+    }
+
+    #[test]
+    fn le_suffixe_d_installation_est_retire_pour_la_recherche_ludusavi() {
+        assert_eq!(
+            strip_install_suffix("Midnight Ghost Hunt [epic:Anemone]"),
+            "Midnight Ghost Hunt"
+        );
+        assert_eq!(strip_install_suffix("Celeste"), "Celeste");
+        assert_eq!(strip_install_suffix("Titre [édition]"), "Titre [édition]");
+    }
+
+    #[test]
     fn backup_retention_limits_full_and_differential_snapshots() {
         let manager = TestManager::new();
         let game = identity(Provider::Steam, "620", "Portal 2");
@@ -896,6 +1031,34 @@ mod tests {
             args.windows(2)
                 .any(|pair| pair == ["--differential-limit", "0"])
         );
+    }
+
+    #[test]
+    fn le_prefixe_proton_est_transmis_a_ludusavi_pour_trouver_les_sauvegardes() {
+        let manager = TestManager::new();
+        let prefix = manager.root.join("prefix/pfx");
+        std::fs::create_dir_all(prefix.join("drive_c")).unwrap();
+        let game = SaveIdentity {
+            wine_prefix: Some(prefix.clone()),
+            ..identity(Provider::Epic, "Anemone", "Midnight Ghost Hunt")
+        };
+        for command in [
+            manager.manager.preview_command(&game).unwrap(),
+            manager.manager.backup_command(&game, true).unwrap(),
+        ] {
+            let args: Vec<String> = command
+                .args
+                .into_iter()
+                .map(|arg| arg.into_string().unwrap())
+                .collect();
+            assert!(
+                args.windows(2)
+                    .any(|pair| pair == ["--wine-prefix", prefix.to_str().unwrap()]),
+                "Ludusavi doit lire le préfixe du jeu : {args:?}"
+            );
+            // Le titre reste le dernier argument, après les options.
+            assert_eq!(args.last().unwrap(), "Midnight Ghost Hunt");
+        }
     }
 
     #[test]

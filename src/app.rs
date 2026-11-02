@@ -304,6 +304,14 @@ pub struct ProviderInstallJob {
     )>,
 }
 
+/// Téléchargement de l'overlay Epic Online Services (EOS), puis activation
+/// dans le préfixe du jeu. L'overlay est global à Epic mais activé par préfixe.
+pub struct EosOverlayJob {
+    pub progress: Arc<Mutex<crate::providers::runner::InstallProgress>>,
+    pub cancel: Arc<AtomicBool>,
+    pub rx: Receiver<Result<(PathBuf, Option<PathBuf>), String>>,
+}
+
 /// Confirmation d'installation d'un jeu Epic/GOG : taille annoncée et dossier
 /// choisi avant de lancer le téléchargement. La taille est lue en arrière-plan
 /// par `legendary info` / `gogdl info`, jamais inventée.
@@ -623,6 +631,8 @@ pub struct QuarkApp {
     )>,
     pub save_restore_rx: Option<Receiver<Result<(), String>>>,
     pub save_background_jobs: Vec<SaveBackgroundJob>,
+    /// Téléchargement de l'overlay Epic (EOS) en cours, s'il y en a un.
+    pub eos_overlay_job: Option<EosOverlayJob>,
     /// Synchronisation des sauvegardes cloud Epic/GOG en cours.
     pub cloud_sync: Option<CloudSyncJob>,
     pub cloud_sync_status: HashMap<crate::providers::ProviderGameKey, String>,
@@ -895,6 +905,7 @@ impl QuarkApp {
             save_restore_confirm: None,
             save_restore_rx: None,
             save_background_jobs: Vec::new(),
+            eos_overlay_job: None,
             cloud_sync: None,
             cloud_sync_status: HashMap::new(),
             tray_error: None,
@@ -1059,6 +1070,7 @@ impl QuarkApp {
         self.ensure_provider_playtime(ctx);
         self.poll_save_jobs(ctx);
         self.poll_save_background_jobs(ctx);
+        self.poll_eos_overlay(ctx);
         self.poll_cloud_sync(ctx);
         self.poll_store(ctx);
         self.poll_site_search(ctx);
@@ -2294,7 +2306,41 @@ impl QuarkApp {
             ));
             return;
         }
-        match proton::resolve(&game, &self.lib.settings, &self.runtimes) {
+        // Un jeu Epic lancé directement par son exécutable n'a ni le jeton de
+        // session ni les arguments `-epicapp`/`-EpicPortal`. Legendary les
+        // calcule sans lancer le jeu (`launch --json`) ; sans eux, Epic répond
+        // « impossible de se connecter ». Les paramètres entrent dans la
+        // commande avant les wrappers, comme le fait Steam.
+        let mut store_parameters: Vec<String> = Vec::new();
+        if provider_record
+            .as_ref()
+            .is_some_and(|record| record.key.provider == crate::providers::Provider::Epic)
+        {
+            let adapter = crate::providers::legendary::LegendaryAdapter::new();
+            let app_name = provider_record
+                .as_ref()
+                .map(|record| record.key.product_id.as_str())
+                .unwrap_or_default();
+            match adapter.launch_parameters(app_name) {
+                Ok(parameters) => {
+                    store_parameters = parameters
+                        .game_parameters
+                        .into_iter()
+                        .chain(parameters.egl_parameters)
+                        .collect();
+                }
+                Err(error) => self.toast_error(format!(
+                    "{} : authentification Epic indisponible ({error})",
+                    game.name
+                )),
+            }
+        }
+        match proton::resolve_with_parameters(
+            &game,
+            &self.lib.settings,
+            &self.runtimes,
+            &store_parameters,
+        ) {
             Ok(mut resolved) => {
                 // Une option demandée mais impossible (gamescope absent) ne
                 // bloque pas le jeu : elle est ignorée, et dite ici.
@@ -2310,6 +2356,35 @@ impl QuarkApp {
                 // Pont des succès : adresse et jeton propres à ce lancement.
                 for (name, value) in self.bridge_env(ctx, id) {
                     resolved.spec.env.push((name, value));
+                }
+                // Un jeu Epic lancé directement par son exécutable n'a ni le
+                // jeton de session ni les arguments `-epicapp`/`-EpicPortal`.
+                // Legendary les calcule sans lancer le jeu (`launch --json`) ;
+                // sans eux, Epic répond « impossible de se connecter ».
+                if provider_record
+                    .as_ref()
+                    .is_some_and(|record| record.key.provider == crate::providers::Provider::Epic)
+                {
+                    let adapter = crate::providers::legendary::LegendaryAdapter::new();
+                    // L'overlay EOS est activé par préfixe : on le réactive au
+                    // lancement si l'utilisateur l'a déjà installé.
+                    if let Some(prefix) = resolved.prefix.as_ref() {
+                        let wine_prefix = prefix.join("pfx");
+                        if wine_prefix.join("user.reg").is_file()
+                            && crate::providers::legendary::LegendaryAdapter::eos_overlay_installed_path()
+                                .is_some()
+                        {
+                            match adapter.enable_eos_overlay(&wine_prefix) {
+                                Ok(()) => resolved.extras.push("overlay EOS".to_string()),
+                                Err(error) => {
+                                    self.toast_error(format!("Overlay Epic : {error}"));
+                                }
+                            }
+                        }
+                    }
+                    if !store_parameters.is_empty() {
+                        resolved.extras.push("authentification Epic".to_string());
+                    }
                 }
                 // La sauvegarde « avant lancement » démarre *avant* le
                 // processus du jeu : lancée après le spawn, elle
@@ -3815,6 +3890,118 @@ impl QuarkApp {
         }
     }
 
+    /// Télécharge l'overlay Epic (EOS) une fois, puis l'active dans le préfixe
+    /// Proton du jeu. L'opération est longue (plusieurs centaines de Mo), donc
+    /// elle tourne en arrière-plan et l'interface suit son avancement.
+    pub fn install_eos_overlay(&mut self, ctx: &egui::Context, game_id: &str) {
+        if self.eos_overlay_job.is_some() {
+            self.toast_info("L'overlay Epic est déjà en cours d'installation");
+            return;
+        }
+        let Some(game) = self.lib.get(game_id).cloned() else {
+            return;
+        };
+        let Some(record) = self.provider_record_for_game(game_id).cloned() else {
+            self.toast_error("Overlay Epic : jeu de boutique requis");
+            return;
+        };
+        if record.key.provider != crate::providers::Provider::Epic {
+            self.toast_error("L'overlay EOS ne concerne que les jeux Epic");
+            return;
+        }
+        let wine_prefix = game.prefix_path(&self.lib.settings).join("pfx");
+        self.start_eos_overlay_job(ctx, Some(wine_prefix));
+    }
+
+    /// Installation globale, sans préfixe : l'activation se fera au prochain
+    /// lancement d'un jeu Epic. Utile depuis les paramètres.
+    pub fn install_eos_overlay_global(&mut self, ctx: &egui::Context) {
+        self.start_eos_overlay_job(ctx, None);
+    }
+
+    fn start_eos_overlay_job(&mut self, ctx: &egui::Context, wine_prefix: Option<PathBuf>) {
+        if self.eos_overlay_job.is_some() {
+            self.toast_info("L'overlay Epic est déjà en cours d'installation");
+            return;
+        }
+        let progress = Arc::new(Mutex::new(crate::providers::runner::InstallProgress {
+            stage: "Overlay Epic · préparation…".to_string(),
+            ..Default::default()
+        }));
+        let job_progress = progress.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let job_cancel = cancel.clone();
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let adapter = crate::providers::legendary::LegendaryAdapter::new();
+            let result = (|| {
+                let installed =
+                    match crate::providers::legendary::LegendaryAdapter::eos_overlay_installed_path(
+                    ) {
+                        Some(path) => path,
+                        None => adapter.install_eos_overlay_streaming(
+                            job_progress.clone(),
+                            Some(job_cancel),
+                        )?,
+                    };
+                let enabled = wine_prefix.and_then(|wine_prefix| {
+                    if wine_prefix.join("user.reg").is_file() {
+                        adapter
+                            .enable_eos_overlay(&wine_prefix)
+                            .ok()
+                            .map(|_| wine_prefix)
+                    } else {
+                        None
+                    }
+                });
+                Ok((installed, enabled))
+            })();
+            let _ = tx.send(result);
+            repaint.request_repaint();
+        });
+        self.eos_overlay_job = Some(EosOverlayJob {
+            progress,
+            cancel,
+            rx,
+        });
+        self.toast_info("Téléchargement de l'overlay Epic (EOS)…");
+        ctx.request_repaint_after(Duration::from_millis(120));
+    }
+
+    fn poll_eos_overlay(&mut self, ctx: &egui::Context) {
+        let Some(result) = self.eos_overlay_job.as_ref().map(|job| job.rx.try_recv()) else {
+            return;
+        };
+        match result {
+            Ok(Ok((installed, enabled))) => {
+                self.eos_overlay_job = None;
+                let suffix = enabled
+                    .as_ref()
+                    .map(|prefix| format!(" · activé dans {}", prefix.display()))
+                    .unwrap_or_else(|| {
+                        " · sera activé au prochain lancement, une fois le préfixe initialisé"
+                            .to_string()
+                    });
+                self.toast_info(format!(
+                    "Overlay Epic installé dans {}{suffix}",
+                    installed.display()
+                ));
+            }
+            Ok(Err(error)) => {
+                self.eos_overlay_job = None;
+                self.toast_error(format!("Overlay Epic : {error}"));
+            }
+            Err(TryRecvError::Disconnected) => {
+                self.eos_overlay_job = None;
+                self.toast_error("Overlay Epic : installation interrompue");
+            }
+            Err(TryRecvError::Empty) => {
+                ctx.request_repaint_after(Duration::from_millis(160));
+            }
+        }
+    }
+
     fn save_identity_for_key(
         &self,
         key: &crate::providers::ProviderGameKey,
@@ -3834,9 +4021,16 @@ impl QuarkApp {
             .clone()
             .filter(|path| path.is_dir())
             .ok_or_else(|| "chemin d'installation introuvable".to_string())?;
+        let wine_prefix = game
+            .quark_game_id
+            .as_deref()
+            .and_then(|game_id| self.lib.get(game_id))
+            .map(|linked| linked.prefix_path(&self.lib.settings).join("pfx"))
+            .filter(|prefix| prefix.join("drive_c").is_dir());
         Ok(crate::saves::SaveIdentity {
             provider_key: game.key.clone(),
             install_path: Some(install_path),
+            wine_prefix,
             ludusavi_title: self.ludusavi_title(&game.key, title),
             custom_paths: game.custom_save_paths.clone(),
         })
@@ -4082,9 +4276,15 @@ impl QuarkApp {
                     .as_ref()
                     .is_some_and(|path| path.is_dir())
         })?;
+        let wine_prefix = self
+            .lib
+            .get(game_id)
+            .map(|linked| linked.prefix_path(&self.lib.settings).join("pfx"))
+            .filter(|prefix| prefix.join("drive_c").is_dir());
         Some(crate::saves::SaveIdentity {
             provider_key: provider.key.clone(),
             install_path: provider.install_path.clone(),
+            wine_prefix,
             ludusavi_title: self.ludusavi_title(&provider.key, &provider.title),
             custom_paths: provider.custom_save_paths.clone(),
         })
