@@ -94,7 +94,7 @@ pub const HELP: &str = "\
       settings-ingame|settings-env|settings-artworks|settings-stats|\n\
       settings-disk|\n\
       settings-about|game|logs|updates|customize|remove|steam|overlay|install|\n\
-      site-search]\n\
+      site-search|command|command-search|history]\n\
       [--hover X,Y] [--click X,Y] [--button left|right]\n\
       [--key up|down|left|right|enter|escape] [--demo] [--demo-count N]\n\
       --demo : bibliothèque de démonstration avec artworks factices (la\n\
@@ -578,6 +578,18 @@ fn pick_game(app: &QuarkApp, needle: &str) -> Result<String, String> {
 fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
     match dialog {
         "none" => {}
+        "command" => {
+            app.command_palette_open = true;
+            app.command_query.clear();
+        }
+        "command-search" => {
+            app.command_palette_open = true;
+            app.command_query = "witcher".to_string();
+        }
+        "history" => {
+            app.home = false;
+            app.detail_tab = crate::app::DetailTab::History;
+        }
         "settings" => app.settings_open = true,
         "settings-ingame" => {
             app.settings_open = true;

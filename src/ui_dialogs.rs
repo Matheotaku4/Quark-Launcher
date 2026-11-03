@@ -3084,7 +3084,7 @@ fn metric(ui: &mut egui::Ui, pal: &Palette, label: &str, value: &str) {
 }
 
 /// Histogramme des douze dernières semaines.
-fn week_chart(ui: &mut egui::Ui, pal: &Palette, sessions: &[config::PlaySession]) {
+pub(crate) fn week_chart(ui: &mut egui::Ui, pal: &Palette, sessions: &[config::PlaySession]) {
     let weeks = stats::weeks(sessions, 12);
     let max = weeks
         .iter()

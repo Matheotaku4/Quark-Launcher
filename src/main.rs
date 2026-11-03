@@ -30,6 +30,7 @@ mod steam_store;
 mod steamlib;
 mod theme;
 mod tray;
+mod ui_command;
 mod ui_dialogs;
 mod ui_home;
 mod ui_library;

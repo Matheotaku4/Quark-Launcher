@@ -84,6 +84,9 @@ jobs:
             "settings-stats:--dialog settings-stats" \
             "settings-disk:--dialog settings-disk" \
             "dialog-steam:--dialog steam" \
+            "palette:--dialog command" \
+            "palette-search:--dialog command-search" \
+            "history:--dialog history" \
             "wide:--size 2560x900 --view list" \
             "small:--size 1024x640 --view list"; do
             name="${spec%%:*}"

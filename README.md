@@ -6,7 +6,7 @@ own, launches Windows games through Proton (or umu-launcher), and stays out of
 the way with an AMOLED interface, a store page, save snapshots and an in-game
 overlay.
 
-This is the 1.1.4 documentation. Older release notes are kept on the GitHub
+This is the 1.1.5 documentation. Older release notes are kept on the GitHub
 releases page; `docs/release-notes.md` only describes the release currently
 being published.
 
@@ -48,8 +48,8 @@ being published.
 - **Local save snapshots.** Ludusavi creates verified snapshots before a launch
   and after a session, with preview, inventory and restore.
 - **A sober interface.** AMOLED black or Graphite, list or grid, a home
-  carousel, status columns, tags, filters and an embedded Archivo font with
-  Lucide icons.
+  carousel, status columns, tags, filters, a Ctrl+K command palette and an
+  embedded Archivo font with Lucide icons.
 
 Quark is not a store: it never buys anything, and it never downloads or
 extracts games from third-party download sites. Store search results open in
@@ -64,8 +64,8 @@ Download `quark-<version>-linux-x86_64.tar.gz` and its `.sha256` file from the
 then verify and unpack it:
 
 ```bash
-sha256sum -c quark-1.1.4-linux-x86_64.tar.gz.sha256
-tar -xzf quark-1.1.4-linux-x86_64.tar.gz
+sha256sum -c quark-1.1.5-linux-x86_64.tar.gz.sha256
+tar -xzf quark-1.1.5-linux-x86_64.tar.gz
 ./quark/quark
 ```
 
@@ -135,13 +135,17 @@ launch, customize, settings and remove; `Ctrl+click` marks several games for a
 batch removal.
 
 Keyboard shortcuts: arrows navigate, `Enter` launches, `Ctrl+F` or `/` focuses
-the search field, `Esc` clears it and `Ctrl+Q` really quits Quark.
+the search field, `Esc` clears it and `Ctrl+Q` really quits Quark. `Ctrl+K`
+opens the command palette from any tab: type to fuzzy-search pages, actions and
+games, use `↑`/`↓` to move, `Enter` to open and `Esc` to close.
 
 ### Game page
 
 The page shows the hero banner, ProtonDB/native badges, the **Play** button with
-playtime, news and achievements tabs, and the action buttons for logs,
-information, customization and per-game settings. **Customize** replaces or
+playtime, news, achievements and history tabs, and the action buttons for logs,
+information, customization and per-game settings. **History** summarises the
+game's sessions, shows the last twelve weeks and lists its latest play sessions.
+**Customize** replaces or
 removes the cover, hero, logo and icon; images can come from SteamGridDB,
 Steam, the store itself, or a local file.
 
@@ -343,7 +347,8 @@ executable in place and relaunches itself. It keeps the previous executable
 next to the new one until the next successful start. The automatic path is
 skipped for development builds and read-only installs; a game running in Quark
 blocks the install. Use **Check for updates** to do it manually. The first
-1.1.4 install is necessarily manual: 1.1.3 has no updater yet.
+1.1.4 install was necessarily manual; 1.1.4 and later install subsequent
+releases automatically.
 
 ## Command line
 
@@ -390,6 +395,7 @@ does not send telemetry.
 src/
   app.rs              application state, jobs and background workers
   config.rs           library, settings, Game and Installation models
+  ui_command.rs       Ctrl+K command palette
   ui_home.rs          home carousel
   ui_library.rs       library, game page and installation selector
   ui_my_games.rs      owned/installed store games and install actions

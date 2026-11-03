@@ -7,6 +7,7 @@ use crate::images::{
 };
 use crate::news;
 use crate::proton::{self, LaunchKind};
+use crate::stats;
 use crate::theme::{self, Palette};
 use crate::ui_home::linux_chip;
 use crate::widgets::{self, Icon};
@@ -1170,11 +1171,25 @@ impl QuarkApp {
                     {
                         self.detail_tab = crate::app::DetailTab::Achievements;
                     }
+                    ui.add_space(2.0);
+                    if widgets::tab(
+                        ui,
+                        "Historique",
+                        self.detail_tab == crate::app::DetailTab::History,
+                        &pal,
+                    )
+                    .clicked()
+                    {
+                        self.detail_tab = crate::app::DetailTab::History;
+                    }
                 });
                 match self.detail_tab {
                     crate::app::DetailTab::News => self.news_section(ui, &game, &pal, width),
                     crate::app::DetailTab::Achievements => {
                         self.achievements_section(ui, store_record.as_ref(), &pal, width);
+                    }
+                    crate::app::DetailTab::History => {
+                        self.history_section(ui, &game, &pal, width);
                     }
                 }
 
@@ -1533,6 +1548,127 @@ impl QuarkApp {
                 self.open_add_dialog();
             }
         });
+    }
+
+    /// Historique du jeu : résumé, douze dernières semaines et sessions
+    /// récentes, dans la fiche. Même source que les statistiques globales.
+    fn history_section(&mut self, ui: &mut egui::Ui, game: &Game, pal: &Palette, width: f32) {
+        ui.add_space(27.0);
+        let sessions = game.sessions.as_slice();
+        let inner = (width - 64.0).max(200.0);
+        if sessions.is_empty() {
+            ui.horizontal(|ui| {
+                ui.add_space(32.0);
+                ui.vertical(|ui| {
+                    ui.set_max_width(inner);
+                    ui.label(
+                        RichText::new(
+                            "Aucune session enregistrée pour ce jeu. Lance-le une fois pour \
+                             remplir son historique.",
+                        )
+                        .size(11.5)
+                        .color(pal.text_dim),
+                    );
+                });
+            });
+            return;
+        }
+
+        let total: u64 = sessions.iter().map(|session| session.secs).sum();
+        let days = stats::per_day(sessions).len();
+        let week_start = stats::week_start(stats::day_of(config::now_ts()));
+        let this_week: u64 = sessions
+            .iter()
+            .filter(|session| stats::day_of(session.start) >= week_start)
+            .map(|session| session.secs)
+            .sum();
+        let average = total / sessions.len().max(1) as u64;
+
+        ui.horizontal(|ui| {
+            ui.add_space(32.0);
+            ui.vertical(|ui| {
+                ui.set_max_width(inner);
+                ui.label(RichText::new("HISTORIQUE").size(11.0).color(pal.text_faint));
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(format!(
+                        "{} session{} · {} jour{} joué{}",
+                        sessions.len(),
+                        if sessions.len() > 1 { "s" } else { "" },
+                        days,
+                        if days > 1 { "s" } else { "" },
+                        if days > 1 { "s" } else { "" }
+                    ))
+                    .size(15.0)
+                    .strong()
+                    .color(pal.text),
+                );
+            });
+        });
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            ui.add_space(32.0);
+            history_metric(ui, pal, "Temps enregistré", &config::human_playtime(total));
+            ui.add_space(24.0);
+            history_metric(ui, pal, "Cette semaine", &config::human_playtime(this_week));
+            ui.add_space(24.0);
+            history_metric(ui, pal, "Session moyenne", &stats::human(average));
+        });
+
+        ui.add_space(24.0);
+        ui.horizontal(|ui| {
+            ui.add_space(32.0);
+            ui.label(
+                RichText::new("DOUZE DERNIÈRES SEMAINES")
+                    .size(10.5)
+                    .color(pal.text_faint),
+            );
+        });
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.add_space(32.0);
+            ui.vertical(|ui| {
+                ui.set_width(inner);
+                crate::ui_dialogs::week_chart(ui, pal, sessions);
+            });
+        });
+
+        ui.add_space(16.0);
+        ui.horizontal(|ui| {
+            ui.add_space(32.0);
+            ui.label(
+                RichText::new("DERNIÈRES SESSIONS")
+                    .size(10.5)
+                    .color(pal.text_faint),
+            );
+        });
+        ui.add_space(6.0);
+        for session in sessions.iter().rev().take(8) {
+            ui.horizontal(|ui| {
+                ui.add_space(32.0);
+                ui.label(
+                    RichText::new(stats::date_label(stats::day_of(session.start)))
+                        .size(11.5)
+                        .color(pal.text),
+                );
+                ui.add_space(10.0);
+                ui.label(
+                    RichText::new(config::human_ago(session.start))
+                        .size(10.5)
+                        .color(pal.text_faint),
+                );
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.add_space(32.0);
+                    ui.label(
+                        RichText::new(stats::human(session.secs))
+                            .size(11.5)
+                            .color(pal.text_dim),
+                    );
+                });
+            });
+            ui.add_space(3.0);
+        }
+        ui.add_space(6.0);
     }
 
     /// Succès du jeu, dans la fiche et non dans une fenêtre : même source que
@@ -2499,4 +2635,12 @@ pub(crate) fn protondb_badge(
     )
     .on_hover_text(tip)
     .clicked()
+}
+
+/// Chiffre compact de l'onglet Historique (libellé + valeur).
+fn history_metric(ui: &mut egui::Ui, pal: &Palette, label: &str, value: &str) {
+    ui.vertical(|ui| {
+        ui.label(RichText::new(label).size(10.0).color(pal.text_faint));
+        ui.label(RichText::new(value).size(15.0).strong().color(pal.text));
+    });
 }

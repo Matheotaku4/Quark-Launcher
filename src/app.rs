@@ -493,6 +493,8 @@ pub struct SaveBackgroundJob {
 pub enum DetailTab {
     News,
     Achievements,
+    /// Sessions et heures de jeu du jeu affiché.
+    History,
 }
 
 /// Succès d'un jeu de boutique, lus à la demande.
@@ -522,6 +524,11 @@ pub struct QuarkApp {
     /// du clavier suivent la mise en page réelle (2 à 8 colonnes).
     pub grid_columns: usize,
     pub filter: String,
+    /// Palette de commandes (Ctrl+K) : ouverte, requête et ligne sélectionnée.
+    pub command_palette_open: bool,
+    pub command_query: String,
+    pub command_selected: usize,
+    pub command_last_query: String,
     pub store_query: String,
     /// Recherche multi-sites ouverte depuis une carte de la boutique.
     pub site_search: Option<SiteSearchJob>,
@@ -847,6 +854,10 @@ impl QuarkApp {
             pal,
             tab: Tab::Library,
             filter: String::new(),
+            command_palette_open: false,
+            command_query: String::new(),
+            command_selected: 0,
+            command_last_query: String::new(),
             store_query: String::new(),
             site_search: None,
             store_snapshot,
@@ -2715,6 +2726,18 @@ impl QuarkApp {
                             self.settings_open = true;
                         }
                         ui.add_space(6.0);
+                        if widgets::icon_button(
+                            ui,
+                            32.0,
+                            Icon::Search,
+                            &pal,
+                            "Palette de commandes · Ctrl+K",
+                        )
+                        .clicked()
+                        {
+                            self.open_command_palette(ctx);
+                        }
+                        ui.add_space(6.0);
                         // Téléchargements : le même panneau, accessible depuis
                         // tous les onglets, avec le nombre de transferts actifs.
                         let response =
@@ -3007,6 +3030,7 @@ impl QuarkApp {
         self.achievements_dialog(ctx);
         self.save_backup_dialog(ctx);
         self.toasts_ui(ctx);
+        self.command_palette(ctx);
         // Dernière étape : une fenêtre séparée, au-dessus du jeu. Elle n'existe
         // que si un jeu tourne et si le réglage est actif.
         if self.lib.settings.overlay && !self.running.is_empty() {
@@ -3022,6 +3046,18 @@ impl QuarkApp {
         let quit = ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Q));
         if quit {
             self.quit(ctx);
+            return;
+        }
+        let palette = ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::K));
+        if palette {
+            if self.command_palette_open {
+                self.close_command_palette(ctx);
+            } else {
+                self.open_command_palette(ctx);
+            }
+            return;
+        }
+        if self.command_palette_open {
             return;
         }
         if self.add.open

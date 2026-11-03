@@ -1,19 +1,29 @@
-## Quark 1.1.4 — automatic updates at startup
+## Quark 1.1.5 — command palette and play history
 
-### Updates install themselves
+### Everything is one shortcut away
 
-- Quark can now check the latest GitHub release when it starts, download the
-  verified archive, replace the executable it was launched from and relaunch
-  itself. The option is enabled by default and can be turned off under
-  **Settings → About**.
-- Before replacing anything, Quark verifies the published SHA-256, extracts
-  only `quark/quark`, checks that it is an x86_64 ELF binary and confirms its
-  `--help` version matches the release tag.
-- The previous executable is renamed next to the new one, so a failed `exec`
-  restores it automatically. The backup is removed after the next successful
-  start. Read-only installs, development builds and `QUARK_NO_AUTO_UPDATE=1`
-  never update automatically, and a running game blocks the install.
-- The About page now describes the manual update flow and the automatic
-  startup option; the archive remains available for a manual fallback.
-- This first 1.1.4 install is still manual: 1.1.3 and earlier do not contain
-  the updater. Once 1.1.4 is running, later releases install automatically.
+- Press **Ctrl+K** anywhere in Quark to open a command palette. It searches
+  pages, settings, actions and the whole library from the same field.
+- Matching ignores accents and accepts letters in the middle of a word:
+  `parametres`, `biblio` and `witcher` all find the expected entry.
+- Recent games appear when the field is empty; typing searches every game.
+  Arrow keys move the selection, **Enter** opens it, **Esc** closes the panel.
+- The palette can jump to Home, Library, Store, My games, the grid or list,
+  downloads, settings, statistics, disk space and updates. It can also add a
+  game, check for updates or switch between the AMOLED and Graphite themes.
+- A search button in the top bar opens the same palette for mouse users.
+
+### A history for every game
+
+- The game page has a new **History** tab with its own summary: sessions,
+  distinct play days, total recorded time, this week and the average session.
+- A twelve-week bar chart shows when the game was played, followed by the eight
+  most recent sessions with their date, relative age and duration.
+- The history uses the sessions already stored by Quark, so imported playtime
+  and local sessions remain clearly separated. The global statistics page is
+  unchanged.
+
+### Updates
+
+- 1.1.4 installs this release automatically on its next start. The manual
+  archive remains available as a fallback for read-only installs.
