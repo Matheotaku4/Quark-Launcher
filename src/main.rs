@@ -37,6 +37,7 @@ mod ui_library;
 mod ui_my_games;
 mod ui_providers;
 mod ui_store;
+mod ui_views;
 mod update;
 mod widgets;
 
@@ -249,6 +250,19 @@ fn cli(args: &[String]) -> Option<i32> {
                             Some("grid") => Some(config::ViewMode::Grid),
                             _ => {
                                 eprintln!("--view attend list ou grid");
+                                return Some(2);
+                            }
+                        }
+                    }
+                    "--group" => {
+                        opts.group = match value.as_deref() {
+                            Some("status") => Some(config::GroupBy::Status),
+                            Some("store") => Some(config::GroupBy::Store),
+                            Some("genre") => Some(config::GroupBy::Genre),
+                            Some("year") => Some(config::GroupBy::Year),
+                            Some("none") => Some(config::GroupBy::None),
+                            _ => {
+                                eprintln!("--group attend status, store, genre, year ou none");
                                 return Some(2);
                             }
                         }

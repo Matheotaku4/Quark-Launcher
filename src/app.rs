@@ -2,7 +2,7 @@
 
 use crate::artwork::{self, AssetPlan, GameMetadata, SearchHit, SearchOutcome};
 use crate::config::{
-    Artwork, AssetKind, Game, Library, ProtonMode, ThemeMode, ViewMode, human_playtime,
+    Artwork, AssetKind, Game, Library, ProtonMode, StartPage, ThemeMode, ViewMode, human_playtime,
 };
 use crate::disk::{self, DiskReport};
 use crate::news::{self, NewsItem};
@@ -24,11 +24,22 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     Store,
     Library,
     MyGames,
+}
+
+/// Traduit la page d'ouverture en onglet et en état d'accueil. L'accueil est
+/// une page de la bibliothèque, pas un quatrième onglet.
+fn startup_route(page: StartPage) -> (Tab, bool) {
+    match page {
+        StartPage::Home => (Tab::Library, true),
+        StartPage::Library => (Tab::Library, false),
+        StartPage::Store => (Tab::Store, false),
+        StartPage::MyGames => (Tab::MyGames, false),
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -368,7 +379,7 @@ impl SettingsTab {
     pub fn hint(self) -> &'static str {
         match self {
             SettingsTab::Appearance => {
-                "Thème, affichage de la bibliothèque, accueil et notifications."
+                "Thème, page d'ouverture, affichage de la bibliothèque, accueil et notifications."
             }
             SettingsTab::InGame => {
                 "Overlay, captures, succès et synchronisation des sauvegardes cloud."
@@ -529,6 +540,10 @@ pub struct QuarkApp {
     pub command_query: String,
     pub command_selected: usize,
     pub command_last_query: String,
+    /// Fenêtre « Vues enregistrées » : nom en cours de saisie et erreur.
+    pub saved_views_open: bool,
+    pub saved_view_name: String,
+    pub saved_view_error: Option<String>,
     pub store_query: String,
     /// Recherche multi-sites ouverte depuis une carte de la boutique.
     pub site_search: Option<SiteSearchJob>,
@@ -838,6 +853,9 @@ impl QuarkApp {
             };
         let runtimes = proton::detect_runtimes();
         let selected = lib.games.first().map(|g| g.id.clone());
+        // La page d'ouverture est lue une seule fois : changer le réglage
+        // n'arrache pas l'utilisateur de la page où il se trouve.
+        let (start_tab, start_home) = startup_route(lib.settings.start_page);
         theme::apply(ctx, lib.settings.theme);
         let pal = theme::palette(lib.settings.theme);
         let (store_recommendations, store_recommendation_source) =
@@ -852,12 +870,15 @@ impl QuarkApp {
             tools: proton::Tools::detect(),
             lib,
             pal,
-            tab: Tab::Library,
+            tab: start_tab,
             filter: String::new(),
             command_palette_open: false,
             command_query: String::new(),
             command_selected: 0,
             command_last_query: String::new(),
+            saved_views_open: false,
+            saved_view_name: String::new(),
+            saved_view_error: None,
             store_query: String::new(),
             site_search: None,
             store_snapshot,
@@ -930,7 +951,7 @@ impl QuarkApp {
             cloud_sync: None,
             cloud_sync_status: HashMap::new(),
             tray_error: None,
-            home: false,
+            home: start_home,
             carousel: 0,
             carousel_at: Instant::now(),
             home_at: Instant::now(),
@@ -2856,36 +2877,20 @@ impl QuarkApp {
     /// Jeux affichés dans la colonne de gauche : filtre de recherche, de
     /// genre, de tag et de statut, comme les catégories Steam.
     pub fn display_ids(&self) -> Vec<String> {
-        let needle = self.filter.trim().to_lowercase();
         let settings = &self.lib.settings;
         self.lib
-            .sorted_ids()
+            .sorted_ids_by(settings.library_sort)
             .into_iter()
             .filter(|id| {
                 let Some(game) = self.lib.get(id) else {
                     return false;
                 };
-                if !self.lib.matches(
+                self.lib.matches(
                     game,
                     &settings.home_genre,
                     &settings.home_tag,
                     settings.home_status,
-                ) {
-                    return false;
-                }
-                if needle.is_empty() {
-                    return true;
-                }
-                game.name.to_lowercase().contains(&needle)
-                    || game.developer.to_lowercase().contains(&needle)
-                    || game
-                        .tags
-                        .iter()
-                        .any(|tag| tag.to_lowercase().contains(&needle))
-                    || game
-                        .genres
-                        .iter()
-                        .any(|genre| genre.to_lowercase().contains(&needle))
+                ) && game.matches_query(&self.filter)
             })
             .collect()
     }
@@ -3019,6 +3024,7 @@ impl QuarkApp {
         self.poll_game_link_search();
         self.downloads_panel(ctx);
         self.add_dialog(ctx);
+        self.saved_views_dialog(ctx);
         self.settings_dialog(ctx);
         self.steam_import_dialog(ctx);
         self.customize_dialog(ctx);
@@ -3062,6 +3068,7 @@ impl QuarkApp {
         }
         if self.add.open
             || self.settings_open
+            || self.saved_views_open
             || self.editing.is_some()
             || self.customize.is_some()
             || self.logs.is_some()
@@ -6684,7 +6691,15 @@ impl QuarkApp {
 
 #[cfg(test)]
 mod tests {
-    use super::removal_targets;
+    use super::{StartPage, Tab, removal_targets, startup_route};
+
+    #[test]
+    fn la_page_d_ouverture_choisit_le_bon_onglet_et_l_accueil() {
+        assert_eq!(startup_route(StartPage::Home), (Tab::Library, true));
+        assert_eq!(startup_route(StartPage::Library), (Tab::Library, false));
+        assert_eq!(startup_route(StartPage::Store), (Tab::Store, false));
+        assert_eq!(startup_route(StartPage::MyGames), (Tab::MyGames, false));
+    }
 
     #[test]
     fn la_suppression_suit_la_selection_multiple() {

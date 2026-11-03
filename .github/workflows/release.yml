@@ -87,6 +87,8 @@ jobs:
             "palette:--dialog command" \
             "palette-search:--dialog command-search" \
             "history:--dialog history" \
+            "views:--view list --dialog saved-views" \
+            "group-genre:--view list --group genre" \
             "wide:--size 2560x900 --view list" \
             "small:--size 1024x640 --view list"; do
             name="${spec%%:*}"

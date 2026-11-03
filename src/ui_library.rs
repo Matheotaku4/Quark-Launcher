@@ -370,6 +370,7 @@ impl QuarkApp {
                 });
             });
         }
+        self.library_view_bar(ui);
         self.quick_filters(ui);
         ui.add_space(8.0);
 
@@ -413,12 +414,22 @@ impl QuarkApp {
                         // Comme les colonnes de Steam : une section par statut,
                         // avec son titre et son nombre de jeux. Un clic sur le
                         // titre replie la section.
-                        let groups = self.status_groups(&ids);
-                        for (position, (status, group)) in groups.iter().enumerate() {
-                            if !status_section(ui, &pal, *status, group.len(), position == 0) {
+                        let groups = self.lib.grouped_ids(&ids, self.lib.settings.group_by);
+                        for (position, group) in groups.iter().enumerate() {
+                            if !group.label.is_empty()
+                                && !library_section(
+                                    ui,
+                                    &pal,
+                                    &group.key,
+                                    &group.label,
+                                    group.ids.len(),
+                                    position == 0,
+                                    group.color.map(|(r, g, b)| Color32::from_rgb(r, g, b)),
+                                )
+                            {
                                 continue;
                             }
-                            for id in group {
+                            for id in &group.ids {
                                 self.sidebar_row(ui, id);
                             }
                         }
@@ -596,29 +607,6 @@ impl QuarkApp {
                 }
             }
         }
-    }
-
-    /// Jeux affichés, répartis en sections par statut (ordre `COLUMNS`).
-    fn status_groups(&self, ids: &[String]) -> Vec<(GameStatus, Vec<String>)> {
-        let mut groups: Vec<(GameStatus, Vec<String>)> = GameStatus::COLUMNS
-            .iter()
-            .map(|status| (*status, Vec::new()))
-            .collect();
-        for id in ids {
-            let status = self
-                .lib
-                .get(id)
-                .map(|game| game.status)
-                .unwrap_or(GameStatus::None);
-            if let Some(slot) = groups
-                .iter_mut()
-                .find(|(candidate, _)| *candidate == status)
-            {
-                slot.1.push(id.clone());
-            }
-        }
-        groups.retain(|(_, group)| !group.is_empty());
-        groups
     }
 
     /// Filtres rapides de la colonne : statut puis tags personnels, comme les
@@ -2184,19 +2172,21 @@ fn game_context_menu(response: &egui::Response, bulk: usize, pal: &Palette) -> O
     action
 }
 
-/// Titre de section de la vue liste (« En cours », « À jouer »…), avec sa
-/// pastille de couleur et le nombre de jeux, comme les colonnes Steam.
+/// Titre d'un groupe de la vue liste (« En cours », « Steam », « 2024 »…).
 ///
-/// Renvoie vrai si la section est dépliée ; un clic sur le titre la replie, et
-/// l'état est mémorisé pour toute la session. Un filet sépare les sections.
-fn status_section(
+/// Renvoie vrai si le groupe est déplié ; un clic sur le titre le replie. Le
+/// même composant sert à tous les regroupements, pour que leur apparence et
+/// leur comportement restent identiques.
+fn library_section(
     ui: &mut egui::Ui,
     pal: &Palette,
-    status: GameStatus,
+    key: &str,
+    label: &str,
     count: usize,
     first: bool,
+    color: Option<Color32>,
 ) -> bool {
-    let state_id = egui::Id::new(("quark_status_open", status.label()));
+    let state_id = egui::Id::new(("quark_group_open", key));
     let open = ui.data(|data| data.get_temp::<bool>(state_id).unwrap_or(true));
     ui.add_space(if first { 4.0 } else { 12.0 });
     if !first {
@@ -2220,8 +2210,6 @@ fn status_section(
         if hover > 0.0 {
             painter.rect_filled(rect, 4.0, pal.surface_hover.gamma_multiply(hover));
         }
-        // Chevron : vers le bas quand la section est ouverte, vers la droite
-        // quand elle est repliée.
         let c = Pos2::new(rect.left() + 9.0, rect.center().y);
         let points = if open {
             vec![
@@ -2241,25 +2229,16 @@ fn status_section(
             pal.text_faint,
             egui::Stroke::NONE,
         ));
-        if let Some((r, g, b)) = status_color(status) {
-            painter.circle_filled(
-                Pos2::new(rect.left() + 22.0, rect.center().y),
-                3.5,
-                Color32::from_rgb(r, g, b),
-            );
+        if let Some(color) = color {
+            painter.circle_filled(Pos2::new(rect.left() + 22.0, rect.center().y), 3.5, color);
         }
         painter.text(
             Pos2::new(
-                rect.left()
-                    + if status == GameStatus::None {
-                        22.0
-                    } else {
-                        32.0
-                    },
+                rect.left() + if color.is_some() { 32.0 } else { 22.0 },
                 rect.center().y,
             ),
             Align2::LEFT_CENTER,
-            status.column_label().to_uppercase(),
+            label.to_uppercase(),
             FontId::proportional(10.5),
             pal.text_dim,
         );

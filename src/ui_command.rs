@@ -4,7 +4,7 @@
 //! launchers modernes.
 
 use crate::app::{QuarkApp, SettingsTab, Tab};
-use crate::config::ViewMode;
+use crate::config::{ViewMode, fold_char};
 use crate::widgets::{self, Icon};
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, RichText, Sense, Stroke, Vec2};
 
@@ -66,28 +66,10 @@ impl Entry {
     }
 }
 
-/// Ramène les lettres accentuées à leur forme simple : « paramètres » doit
-/// répondre à « parametres ».
-fn fold(ch: char) -> char {
-    match ch {
-        'à' | 'á' | 'â' | 'ä' | 'ã' | 'å' => 'a',
-        'ç' => 'c',
-        'è' | 'é' | 'ê' | 'ë' => 'e',
-        'ì' | 'í' | 'î' | 'ï' => 'i',
-        'ñ' => 'n',
-        'ò' | 'ó' | 'ô' | 'ö' | 'õ' => 'o',
-        'ù' | 'ú' | 'û' | 'ü' => 'u',
-        'ý' | 'ÿ' => 'y',
-        'œ' => 'o',
-        'æ' => 'a',
-        _ => ch,
-    }
-}
-
 fn normalized(text: &str) -> Vec<char> {
     text.chars()
         .flat_map(|ch| ch.to_lowercase())
-        .map(fold)
+        .map(fold_char)
         .collect()
 }
 

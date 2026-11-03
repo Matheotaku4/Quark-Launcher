@@ -3,7 +3,9 @@
 //! (XDG Desktop Portal), ouverts via `QuarkApp::pick_file` / `pick_directory`.
 
 use crate::app::{AddStep, PickerTarget, QuarkApp, SearchState, SettingsTab, UpdateState};
-use crate::config::{self, AssetKind, EnvVar, GameStatus, ProtonMode, ThemeMode, ViewMode};
+use crate::config::{
+    self, AssetKind, EnvVar, GameStatus, ProtonMode, StartPage, ThemeMode, ViewMode,
+};
 use crate::disk;
 use crate::proton::{self, ProtonRuntime, RuntimeKind};
 use crate::stats;
@@ -621,6 +623,33 @@ impl QuarkApp {
                                 &pal,
                                 "AMOLED est noir pur (#000000) ; Graphite adoucit les noirs sur \
                                  les écrans qui ne sont pas OLED.",
+                            );
+                        });
+
+                        section(ui, "DÉMARRAGE", &pal);
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(
+                                RichText::new("Page d'ouverture").size(12.5).color(pal.text_dim),
+                            );
+                            ui.add_space(10.0);
+                            for page in StartPage::ALL {
+                                if ui
+                                    .radio_value(
+                                        &mut self.lib.settings.start_page,
+                                        page,
+                                        page.label(),
+                                    )
+                                    .changed()
+                                {
+                                    self.touch();
+                                }
+                            }
+                            widgets::info_button(
+                                ui,
+                                &pal,
+                                "Quark ouvre cette page au prochain lancement. L'accueil reste \
+                                 la valeur par défaut ; le choix est enregistré avec la \
+                                 bibliothèque.",
                             );
                         });
 

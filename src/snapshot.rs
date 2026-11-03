@@ -14,7 +14,9 @@
 
 use crate::app::{AddStep, NewsState, QuarkApp, ScanCandidate, SearchState, Tab};
 use crate::artwork::{AssetPlan, SearchHit, Source};
-use crate::config::{Artwork, AssetKind, Game, Library, ThemeMode, ViewMode, now_ts};
+use crate::config::{
+    Artwork, AssetKind, Game, GameStatus, GroupBy, Library, SavedView, ThemeMode, ViewMode, now_ts,
+};
 use crate::news::NewsItem;
 use crate::proton::{ProtonRuntime, RuntimeKind};
 use eframe::egui::epaint::textures::TexturesDelta;
@@ -36,6 +38,7 @@ pub struct SnapshotOptions {
     pub hover: Option<Pos2>,
     pub click: Option<Pos2>,
     pub view: Option<ViewMode>,
+    pub group: Option<GroupBy>,
     pub tab: Option<Tab>,
     pub select: Option<String>,
     pub theme: Option<ThemeMode>,
@@ -67,6 +70,7 @@ impl Default for SnapshotOptions {
             hover: None,
             click: None,
             view: None,
+            group: None,
             tab: None,
             select: None,
             theme: None,
@@ -88,13 +92,14 @@ impl Default for SnapshotOptions {
 pub const HELP: &str = "\
   quark --ui <fichier.png>  Rend l'interface hors écran dans un PNG (sans écran)\n\
       [--size 1360x860] [--scale 1.5] [--frames 16]\n\
-      [--view list|grid] [--tab library|store] [--theme amoled|graphite]\n\
+      [--view list|grid] [--group status|store|genre|year|none]\n\
+      [--tab library|store] [--theme amoled|graphite]\n\
       [--select <jeu>] [--info] [--running] [--marked] [--home]\n\
       [--dialog none|add|artwork|exe|scan|settings|settings-defaults|\n\
       settings-ingame|settings-env|settings-artworks|settings-stats|\n\
       settings-disk|\n\
       settings-about|game|logs|updates|customize|remove|steam|overlay|install|\n\
-      site-search|command|command-search|history]\n\
+      site-search|command|command-search|history|saved-views]\n\
       [--hover X,Y] [--click X,Y] [--button left|right]\n\
       [--key up|down|left|right|enter|escape] [--demo] [--demo-count N]\n\
       --demo : bibliothèque de démonstration avec artworks factices (la\n\
@@ -130,6 +135,10 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
     crate::fonts::install(&ctx);
 
     let mut app = QuarkApp::new(&ctx);
+    // Les rendus hors écran partent toujours de la bibliothèque : la page
+    // d'ouverture de la configuration réelle ne doit pas changer une capture.
+    app.tab = crate::app::Tab::Library;
+    app.home = false;
     if opts.demo {
         app.snapshot_mode = true;
         app.lib = demo_library()?;
@@ -384,6 +393,9 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
     if let Some(view) = opts.view {
         app.lib.settings.view = view;
     }
+    if let Some(group) = opts.group {
+        app.lib.settings.group_by = group;
+    }
     if let Some(theme) = opts.theme {
         app.lib.settings.theme = theme;
     }
@@ -589,6 +601,29 @@ fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
         "history" => {
             app.home = false;
             app.detail_tab = crate::app::DetailTab::History;
+        }
+        "saved-views" => {
+            app.home = false;
+            app.saved_views_open = true;
+            app.saved_view_name.clear();
+            app.saved_view_error = None;
+            app.lib.settings.saved_views = vec![
+                SavedView {
+                    name: "Coop du soir".to_string(),
+                    tag: "coop".to_string(),
+                    group_by: GroupBy::Status,
+                    view: ViewMode::List,
+                    ..Default::default()
+                },
+                SavedView {
+                    name: "Année 2024".to_string(),
+                    status: GameStatus::Playing,
+                    group_by: GroupBy::Year,
+                    view: ViewMode::List,
+                    sort: crate::config::LibrarySort::Recent,
+                    ..Default::default()
+                },
+            ];
         }
         "settings" => app.settings_open = true,
         "settings-ingame" => {

@@ -6,7 +6,7 @@ own, launches Windows games through Proton (or umu-launcher), and stays out of
 the way with an AMOLED interface, a store page, save snapshots and an in-game
 overlay.
 
-This is the 1.1.5 documentation. Older release notes are kept on the GitHub
+This is the 1.1.6 documentation. Older release notes are kept on the GitHub
 releases page; `docs/release-notes.md` only describes the release currently
 being published.
 
@@ -64,8 +64,8 @@ Download `quark-<version>-linux-x86_64.tar.gz` and its `.sha256` file from the
 then verify and unpack it:
 
 ```bash
-sha256sum -c quark-1.1.5-linux-x86_64.tar.gz.sha256
-tar -xzf quark-1.1.5-linux-x86_64.tar.gz
+sha256sum -c quark-1.1.6-linux-x86_64.tar.gz.sha256
+tar -xzf quark-1.1.6-linux-x86_64.tar.gz
 ./quark/quark
 ```
 
@@ -126,6 +126,11 @@ last session, date added or hours played, and filter it by status, Steam genre
 or personal tag. The carousel can advance automatically; the delay is set in
 **Settings → Appearance**.
 
+**Startup page.** Settings → Appearance → **Page d’ouverture** decides what Quark
+opens at launch: **Home** (the default), **Library**, **Store** or **My games**.
+The choice is applied once when the window opens and is saved with the library;
+an older configuration without the setting starts on Home.
+
 ### Library
 
 The list shows one row per game with a square icon, a status dot and a blue
@@ -133,6 +138,14 @@ selection marker. The grid shows covers and opens the game page as an overlay.
 Games with a missing executable are highlighted in red. Right-click a game for
 launch, customize, settings and remove; `Ctrl+click` marks several games for a
 batch removal.
+
+The **Views** menu stores the current search, filters, sort and grouping under
+a name; apply or delete a view from the same menu. Three starter views (**À jouer**,
+**En cours** and **Terminés**) are added once, then behave like any
+other view. Group the list by status, store, genre or release year, or show a
+continuous list; group headers can be collapsed. Sort by name, last session,
+date added or play time. Library search now ignores accents and compares the
+title, developer, tags and genres separately, like the command palette.
 
 Keyboard shortcuts: arrows navigate, `Enter` launches, `Ctrl+F` or `/` focuses
 the search field, `Esc` clears it and `Ctrl+Q` really quits Quark. `Ctrl+K`
@@ -327,8 +340,8 @@ purpose:
 - **Data:** Statistics, Disk space.
 - **Quark:** About.
 
-**Appearance** contains the theme, default view, home carousel and notification
-icon. **In game** contains the overlay shortcut, screenshot key, achievement
+**Appearance** contains the startup page, theme, default view, home carousel
+and notification icon. **In game** contains the overlay shortcut, screenshot key, achievement
 display and cloud-save toggle. **New games** contains the values copied into
 each newly added game (prefix, install folder, arguments, runtime, anti-cheat,
 launch options, environment variables). These are defaults, not global
@@ -364,9 +377,10 @@ quark --ui <file.png>     Render the interface off-screen (no display needed)
 quark --tray              Run the notification-icon process
 ```
 
-`--ui` accepts `--demo`, `--view`, `--tab`, `--dialog`, `--select`, `--size`,
-`--frames`, `--hover`, `--click` and `--key`; `--demo` uses a temporary
-configuration and never reads or writes the real library.
+`--ui` accepts `--demo`, `--view`, `--group`, `--tab`, `--dialog`, `--select`,
+`--size`, `--frames`, `--hover`, `--click` and `--key`; `--demo` uses a
+temporary configuration and never reads or writes the real library.
+`--group` accepts `status`, `store`, `genre`, `year` or `none`.
 
 ## Files, data and privacy
 

@@ -4,7 +4,8 @@
 //!   * `~/.config/quark/config.json`      -> réglages + jeux (lisible/éditable à la main)
 //!   * `~/.local/share/quark/`            -> artworks mis en cache + préfixes Proton par défaut
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -16,6 +17,35 @@ pub fn now_ts() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+/// Ramène une lettre accentuée à sa forme simple. Partagé par la recherche
+/// de la bibliothèque et la palette : les deux doivent répondre à « parametres »
+/// comme à « paramètres ».
+pub fn fold_char(ch: char) -> char {
+    match ch {
+        'à' | 'á' | 'â' | 'ä' | 'ã' | 'å' => 'a',
+        'ç' => 'c',
+        'è' | 'é' | 'ê' | 'ë' => 'e',
+        'ì' | 'í' | 'î' | 'ï' => 'i',
+        'ñ' => 'n',
+        'ò' | 'ó' | 'ô' | 'ö' | 'õ' => 'o',
+        'ù' | 'ú' | 'û' | 'ü' => 'u',
+        'ý' | 'ÿ' => 'y',
+        'œ' => 'o',
+        'æ' => 'a',
+        _ => ch,
+    }
+}
+
+/// Forme comparable d'un texte : minuscules, sans accents. Les champs sont
+/// comparés séparément par `Game::matches_query`, pour éviter qu'une recherche
+/// se disperse entre le titre et les mots-clés.
+pub fn normalized_search(text: &str) -> String {
+    text.chars()
+        .flat_map(char::to_lowercase)
+        .map(fold_char)
+        .collect()
 }
 
 pub fn home_dir() -> PathBuf {
@@ -307,6 +337,238 @@ impl HomeSort {
     }
 }
 
+/// Page affichée au lancement de Quark.
+///
+/// L'accueil reste la valeur par défaut, y compris pour les configurations
+/// existantes qui ne connaissent pas encore ce champ. Une valeur inconnue
+/// écrite à la main retombe sur l'accueil au lieu d'empêcher le chargement de
+/// toute la bibliothèque.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum StartPage {
+    #[default]
+    Home,
+    Library,
+    Store,
+    MyGames,
+}
+
+impl StartPage {
+    pub const ALL: [StartPage; 4] = [
+        StartPage::Home,
+        StartPage::Library,
+        StartPage::Store,
+        StartPage::MyGames,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            StartPage::Home => "Accueil",
+            StartPage::Library => "Bibliothèque",
+            StartPage::Store => "Boutique",
+            StartPage::MyGames => "Mes jeux",
+        }
+    }
+
+    fn from_key(key: &str) -> Self {
+        match key.trim().to_ascii_lowercase().as_str() {
+            "library" | "bibliotheque" | "bibliothèque" => StartPage::Library,
+            "store" | "boutique" => StartPage::Store,
+            "my_games" | "my-games" | "mes_jeux" | "mes-jeux" => StartPage::MyGames,
+            _ => StartPage::Home,
+        }
+    }
+}
+
+fn deserialize_start_page<'de, D>(deserializer: D) -> Result<StartPage, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    Ok(StartPage::from_key(&value))
+}
+
+/// Regroupement de la vue liste. `Status` reproduit les colonnes Steam
+/// historiques de Quark ; `None` montre une liste continue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum GroupBy {
+    #[default]
+    Status,
+    Store,
+    Genre,
+    Year,
+    None,
+}
+
+impl GroupBy {
+    pub const ALL: [GroupBy; 5] = [
+        GroupBy::Status,
+        GroupBy::Store,
+        GroupBy::Genre,
+        GroupBy::Year,
+        GroupBy::None,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GroupBy::Status => "Statut",
+            GroupBy::Store => "Boutique",
+            GroupBy::Genre => "Genre",
+            GroupBy::Year => "Année",
+            GroupBy::None => "Aucun",
+        }
+    }
+
+    fn from_key(key: &str) -> Self {
+        match key.trim().to_ascii_lowercase().as_str() {
+            "store" | "boutique" => GroupBy::Store,
+            "genre" => GroupBy::Genre,
+            "year" | "annee" | "année" => GroupBy::Year,
+            "none" | "aucun" => GroupBy::None,
+            _ => GroupBy::Status,
+        }
+    }
+}
+
+fn deserialize_group_by<'de, D>(deserializer: D) -> Result<GroupBy, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    Ok(GroupBy::from_key(&value))
+}
+
+/// Ordre de la liste et de la grille de la bibliothèque. Le nom reste l'ordre
+/// historique ; les autres choix sont enregistrés dans les vues.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LibrarySort {
+    #[default]
+    Name,
+    Recent,
+    Added,
+    Playtime,
+}
+
+impl LibrarySort {
+    pub const ALL: [LibrarySort; 4] = [
+        LibrarySort::Name,
+        LibrarySort::Recent,
+        LibrarySort::Added,
+        LibrarySort::Playtime,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            LibrarySort::Name => "Nom",
+            LibrarySort::Recent => "Dernière session",
+            LibrarySort::Added => "Ajout récent",
+            LibrarySort::Playtime => "Temps joué",
+        }
+    }
+
+    fn from_key(key: &str) -> Self {
+        match key.trim().to_ascii_lowercase().as_str() {
+            "recent" => LibrarySort::Recent,
+            "added" => LibrarySort::Added,
+            "playtime" => LibrarySort::Playtime,
+            _ => LibrarySort::Name,
+        }
+    }
+}
+
+fn deserialize_library_sort<'de, D>(deserializer: D) -> Result<LibrarySort, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    Ok(LibrarySort::from_key(&value))
+}
+
+/// Une vue nommée de la bibliothèque : filtres, recherche, ordre et
+/// regroupement. Elle ne contient aucun chemin ni état d'interface volatile.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct SavedView {
+    pub name: String,
+    pub status: GameStatus,
+    pub tag: String,
+    pub genre: String,
+    pub query: String,
+    #[serde(deserialize_with = "deserialize_group_by")]
+    pub group_by: GroupBy,
+    pub view: ViewMode,
+    #[serde(deserialize_with = "deserialize_library_sort")]
+    pub sort: LibrarySort,
+}
+
+impl SavedView {
+    pub const MAX_NAME_CHARS: usize = 48;
+
+    pub fn capture(name: &str, settings: &Settings, query: &str) -> Self {
+        Self {
+            name: name.trim().chars().take(Self::MAX_NAME_CHARS).collect(),
+            status: settings.home_status,
+            tag: settings.home_tag.trim().to_string(),
+            genre: settings.home_genre.trim().to_string(),
+            query: query.trim().chars().take(120).collect(),
+            group_by: settings.group_by,
+            view: settings.view,
+            sort: settings.library_sort,
+        }
+    }
+
+    /// Nettoie une vue lue sur le disque. Une vue sans nom est inutilisable :
+    /// elle est ignorée plutôt que de créer une entrée vide dans le menu.
+    pub fn normalized(mut self) -> Option<Self> {
+        self.name = self
+            .name
+            .trim()
+            .chars()
+            .take(Self::MAX_NAME_CHARS)
+            .collect();
+        if self.name.is_empty() {
+            return None;
+        }
+        self.tag = self.tag.trim().to_string();
+        self.genre = self.genre.trim().to_string();
+        self.query = self.query.trim().chars().take(120).collect();
+        Some(self)
+    }
+
+    pub fn apply_to(&self, settings: &mut Settings) {
+        settings.home_status = self.status;
+        settings.home_tag = self.tag.clone();
+        settings.home_genre = self.genre.clone();
+        settings.group_by = self.group_by;
+        settings.view = self.view;
+        settings.library_sort = self.sort;
+    }
+
+    pub fn matches(&self, settings: &Settings, query: &str) -> bool {
+        self.status == settings.home_status
+            && self.tag.eq_ignore_ascii_case(settings.home_tag.trim())
+            && self.genre.eq_ignore_ascii_case(settings.home_genre.trim())
+            && self.query.eq_ignore_ascii_case(query.trim())
+            && self.group_by == settings.group_by
+            && self.view == settings.view
+            && self.sort == settings.library_sort
+    }
+}
+
+/// Un groupe de la vue liste : un titre, une couleur éventuelle et les jeux
+/// dans l'ordre déjà trié. Les vues sans regroupement ont un seul groupe au
+/// titre vide.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GameGroup {
+    pub key: String,
+    pub label: String,
+    pub color: Option<(u8, u8, u8)>,
+    pub ids: Vec<String>,
+    rank: i32,
+}
+
 /// Statut personnel d'un jeu, comme les colonnes de la bibliothèque Steam.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -538,6 +800,20 @@ pub struct Settings {
     pub home_tag: String,
     /// Filtre de statut (`None` = tous).
     pub home_status: GameStatus,
+    /// Page ouverte au prochain démarrage.
+    #[serde(deserialize_with = "deserialize_start_page")]
+    pub start_page: StartPage,
+    /// Regroupement de la vue liste.
+    #[serde(deserialize_with = "deserialize_group_by")]
+    pub group_by: GroupBy,
+    /// Ordre de la liste et de la grille de la bibliothèque.
+    #[serde(deserialize_with = "deserialize_library_sort")]
+    pub library_sort: LibrarySort,
+    /// Vues nommées, enregistrées avec la bibliothèque.
+    pub saved_views: Vec<SavedView>,
+    /// Les vues de départ ont déjà été proposées une fois. Le drapeau évite
+    /// de les recréer après que l'utilisateur les a supprimées.
+    pub saved_views_seeded: bool,
 }
 
 impl Default for Settings {
@@ -574,6 +850,11 @@ impl Default for Settings {
             home_genre: String::new(),
             home_tag: String::new(),
             home_status: GameStatus::None,
+            start_page: StartPage::Home,
+            group_by: GroupBy::Status,
+            library_sort: LibrarySort::Name,
+            saved_views: Vec::new(),
+            saved_views_seeded: false,
         }
     }
 }
@@ -838,6 +1119,24 @@ impl Game {
             exe: exe.into(),
             ..Default::default()
         }
+    }
+
+    /// Recherche libre de la bibliothèque : accents ignorés, chaque champ
+    /// comparé séparément (titre, développeur, tags, genres). Une recherche
+    /// vide correspond à tout.
+    pub fn matches_query(&self, query: &str) -> bool {
+        let needle = normalized_search(query.trim());
+        if needle.is_empty() {
+            return true;
+        }
+        [self.name.as_str(), self.developer.as_str()]
+            .iter()
+            .any(|field| normalized_search(field).contains(&needle))
+            || self
+                .tags
+                .iter()
+                .chain(self.genres.iter())
+                .any(|field| normalized_search(field).contains(&needle))
     }
 
     pub fn exe_path(&self) -> PathBuf {
@@ -1204,7 +1503,9 @@ impl Library {
         let text = match std::fs::read_to_string(&path) {
             Ok(text) => text,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Self::default();
+                let mut library = Self::default();
+                library.seed_saved_views();
+                return library;
             }
             Err(error) => {
                 let message = format!(
@@ -1248,6 +1549,7 @@ impl Library {
             return Err(error.clone());
         }
         self.migrate_installations();
+        self.prune_saved_views();
         std::fs::create_dir_all(config_dir()).map_err(|e| e.to_string())?;
         let text = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
         let tmp = config_dir().join(format!(
@@ -1283,6 +1585,8 @@ impl Library {
     /// des jeux existants ne change pas.
     pub fn migrate_defaults(&mut self) {
         self.migrate_installations();
+        self.prune_saved_views();
+        self.seed_saved_views();
         // Le préfixe par défaut était appliqué à la volée à tous les jeux qui
         // n'en avaient pas : changer le réglage déplaçait donc leurs saves.
         // On le recopie une seule fois dans ces jeux ; ensuite le réglage ne
@@ -1493,9 +1797,174 @@ impl Library {
 
     /// Jeux triés comme dans Steam : ordre alphabétique insensible à la casse.
     pub fn sorted_ids(&self) -> Vec<String> {
+        self.sorted_ids_by(LibrarySort::Name)
+    }
+
+    /// Jeux triés selon la vue choisie. Contrairement à `home_ids`, cet ordre
+    /// sert aussi à la liste et à la grille de la bibliothèque.
+    pub fn sorted_ids_by(&self, sort: LibrarySort) -> Vec<String> {
         let mut games: Vec<&Game> = self.games.iter().collect();
-        games.sort_by_key(|g| g.name.to_lowercase());
-        games.into_iter().map(|g| g.id.clone()).collect()
+        match sort {
+            LibrarySort::Name => games.sort_by_key(|game| game.name.to_lowercase()),
+            LibrarySort::Recent => games.sort_by(|a, b| {
+                b.last_played
+                    .unwrap_or(0)
+                    .cmp(&a.last_played.unwrap_or(0))
+                    .then_with(|| b.added_at.cmp(&a.added_at))
+            }),
+            LibrarySort::Added => games.sort_by(|a, b| b.added_at.cmp(&a.added_at)),
+            LibrarySort::Playtime => games.sort_by(|a, b| b.playtime_secs.cmp(&a.playtime_secs)),
+        }
+        games.into_iter().map(|game| game.id.clone()).collect()
+    }
+
+    /// Nettoie les vues enregistrées après un chargement ou avant une
+    /// sauvegarde. Les doublons de nom, les entrées vides et les filtres qui
+    /// ne correspondent plus à aucun tag ou genre sont retirés : une vue ne
+    /// doit jamais ouvrir une bibliothèque vide à cause d'une ancienne donnée.
+    pub fn prune_saved_views(&mut self) {
+        let tags: HashSet<String> = self
+            .all_tags()
+            .into_iter()
+            .map(|(name, _)| name.to_lowercase())
+            .collect();
+        let genres: HashSet<String> = self
+            .all_genres()
+            .into_iter()
+            .map(|(name, _)| name.to_lowercase())
+            .collect();
+        let mut seen = HashSet::new();
+        let mut cleaned = Vec::new();
+        for view in self.settings.saved_views.drain(..) {
+            let Some(mut view) = view.normalized() else {
+                continue;
+            };
+            if !view.tag.is_empty() && !tags.contains(&view.tag.to_lowercase()) {
+                view.tag.clear();
+            }
+            if !view.genre.is_empty() && !genres.contains(&view.genre.to_lowercase()) {
+                view.genre.clear();
+            }
+            if seen.insert(view.name.to_lowercase()) {
+                cleaned.push(view);
+            }
+        }
+        cleaned.truncate(32);
+        self.settings.saved_views = cleaned;
+    }
+
+    /// Ajoute une fois les vues de départ (« À jouer », « En cours »,
+    /// « Terminés »). Heronite fait de même avec ses presets : la fonction est
+    /// visible dès l'installation, puis reste supprimable comme les autres.
+    pub fn seed_saved_views(&mut self) {
+        if self.settings.saved_views_seeded {
+            return;
+        }
+        for (name, status) in [
+            ("À jouer", GameStatus::Backlog),
+            ("En cours", GameStatus::Playing),
+            ("Terminés", GameStatus::Finished),
+        ] {
+            if self
+                .settings
+                .saved_views
+                .iter()
+                .any(|view| view.name.eq_ignore_ascii_case(name))
+            {
+                continue;
+            }
+            self.settings.saved_views.push(SavedView {
+                name: name.to_string(),
+                status,
+                group_by: GroupBy::Status,
+                view: ViewMode::List,
+                sort: LibrarySort::Name,
+                ..Default::default()
+            });
+        }
+        self.settings.saved_views_seeded = true;
+    }
+
+    /// Répartit des identifiants déjà triés en groupes affichables.
+    pub fn grouped_ids(&self, ids: &[String], group_by: GroupBy) -> Vec<GameGroup> {
+        if group_by == GroupBy::None {
+            return vec![GameGroup {
+                key: "all".to_string(),
+                label: String::new(),
+                color: None,
+                ids: ids.to_vec(),
+                rank: 0,
+            }];
+        }
+        let mut groups: Vec<GameGroup> = Vec::new();
+        for id in ids {
+            let Some(game) = self.get(id) else {
+                continue;
+            };
+            let (key, label, color, rank) = match group_by {
+                GroupBy::None => unreachable!(),
+                GroupBy::Status => {
+                    let rank = GameStatus::COLUMNS
+                        .iter()
+                        .position(|status| *status == game.status)
+                        .unwrap_or(GameStatus::COLUMNS.len()) as i32;
+                    (
+                        format!("status-{}", game.status.label()),
+                        game.status.column_label().to_string(),
+                        (game.status != GameStatus::None).then(|| game.status.color()),
+                        rank,
+                    )
+                }
+                GroupBy::Store => {
+                    let (label, color, rank) = store_group(game);
+                    (format!("store-{label}"), label.to_string(), color, rank)
+                }
+                GroupBy::Genre => {
+                    let label = game
+                        .genres
+                        .iter()
+                        .map(|genre| genre.trim())
+                        .find(|genre| !genre.is_empty())
+                        .unwrap_or("Sans genre");
+                    let rank = if label == "Sans genre" { 1 } else { 0 };
+                    (format!("genre-{label}"), label.to_string(), None, rank)
+                }
+                GroupBy::Year => {
+                    let year = game
+                        .released
+                        .trim()
+                        .get(0..4)
+                        .and_then(|text| text.parse::<i32>().ok())
+                        .filter(|year| (1900..=2100).contains(year));
+                    match year {
+                        Some(year) => (format!("year-{year}"), year.to_string(), None, -year),
+                        None => (
+                            "year-unknown".to_string(),
+                            "Année inconnue".to_string(),
+                            None,
+                            i32::MAX,
+                        ),
+                    }
+                }
+            };
+            if let Some(group) = groups.iter_mut().find(|group| group.key == key) {
+                group.ids.push(id.clone());
+            } else {
+                groups.push(GameGroup {
+                    key,
+                    label,
+                    color,
+                    ids: vec![id.clone()],
+                    rank,
+                });
+            }
+        }
+        groups.sort_by(|a, b| {
+            a.rank
+                .cmp(&b.rank)
+                .then_with(|| a.label.to_lowercase().cmp(&b.label.to_lowercase()))
+        });
+        groups
     }
 
     /// Jeux du carrousel : les dernières sessions, de la plus récente à la
@@ -1596,6 +2065,35 @@ impl Library {
         }
         games.into_iter().map(|g| g.id.clone()).collect()
     }
+}
+
+/// Groupe « boutique » d'un jeu : une édition locale, une seule boutique, ou
+/// « Plusieurs » quand le même jeu possède des éditions d'origines différentes.
+fn store_group(game: &Game) -> (&'static str, Option<(u8, u8, u8)>, i32) {
+    let mut sources = HashSet::new();
+    for installation in &game.installations {
+        sources.insert(installation.source_label());
+    }
+    let label = match sources.len() {
+        0 => "Locale",
+        1 => sources.into_iter().next().unwrap_or("Locale"),
+        _ => "Plusieurs",
+    };
+    let color = match label {
+        "Steam" => Some((0x1B, 0x6B, 0x93)),
+        "Epic Games" => Some((0x8A, 0x8F, 0x98)),
+        "GOG" => Some((0x8B, 0x5C, 0xF6)),
+        "Plusieurs" => Some((0xB8, 0x8A, 0x3E)),
+        _ => Some((0x6A, 0x70, 0x76)),
+    };
+    let rank = match label {
+        "Locale" => 0,
+        "Steam" => 1,
+        "Epic Games" => 2,
+        "GOG" => 3,
+        _ => 4,
+    };
+    (label, color, rank)
 }
 
 #[cfg(test)]
@@ -2034,5 +2532,213 @@ mod tests {
         let mut library = Library::default();
         library.load_error = Some("config.json illisible".to_string());
         assert!(library.save().is_err());
+    }
+
+    #[test]
+    fn les_nouveaux_reglages_sont_compatibles_avec_les_anciennes_configurations() {
+        let missing: Library = serde_json::from_str(r#"{"settings":{}}"#).unwrap();
+        assert_eq!(missing.settings.start_page, StartPage::Home);
+        assert_eq!(missing.settings.group_by, GroupBy::Status);
+        assert_eq!(missing.settings.library_sort, LibrarySort::Name);
+        assert!(missing.settings.saved_views.is_empty());
+
+        // Une valeur inconnue écrite à la main ne doit pas rendre toute la
+        // bibliothèque illisible : chaque nouveau réglage retombe sur son défaut.
+        let unknown: Library = serde_json::from_str(
+            r#"{"settings":{"start_page":"demain","group_by":"univers","library_sort":"prix"}}"#,
+        )
+        .unwrap();
+        assert_eq!(unknown.settings.start_page, StartPage::Home);
+        assert_eq!(unknown.settings.group_by, GroupBy::Status);
+        assert_eq!(unknown.settings.library_sort, LibrarySort::Name);
+    }
+
+    #[test]
+    fn les_vues_de_depart_ne_sont_creees_qu_une_fois() {
+        let mut lib = Library::default();
+        lib.seed_saved_views();
+        let names: Vec<&str> = lib
+            .settings
+            .saved_views
+            .iter()
+            .map(|view| view.name.as_str())
+            .collect();
+        assert_eq!(names, ["À jouer", "En cours", "Terminés"]);
+        assert_eq!(lib.settings.saved_views[1].status, GameStatus::Playing);
+        lib.seed_saved_views();
+        assert_eq!(lib.settings.saved_views.len(), 3);
+
+        lib.settings.saved_views.remove(0);
+        lib.seed_saved_views();
+        assert_eq!(lib.settings.saved_views.len(), 2);
+    }
+
+    #[test]
+    fn une_vue_garde_les_filtres_le_tri_et_le_regroupement() {
+        let mut settings = Settings::default();
+        settings.home_status = GameStatus::Playing;
+        settings.home_tag = "Coop".to_string();
+        settings.home_genre = "RPG".to_string();
+        settings.group_by = GroupBy::Genre;
+        settings.view = ViewMode::Grid;
+        settings.library_sort = LibrarySort::Recent;
+
+        let view = SavedView::capture("  Soir  ", &settings, "  zelda ");
+        assert_eq!(view.name, "Soir");
+        assert_eq!(view.query, "zelda");
+        assert!(view.matches(&settings, "zelda"));
+
+        let encoded = serde_json::to_string(&view).unwrap();
+        let restored: SavedView = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(restored, view);
+
+        let mut target = Settings::default();
+        restored.apply_to(&mut target);
+        assert_eq!(target.home_status, GameStatus::Playing);
+        assert_eq!(target.home_tag, "Coop");
+        assert_eq!(target.home_genre, "RPG");
+        assert_eq!(target.group_by, GroupBy::Genre);
+        assert_eq!(target.view, ViewMode::Grid);
+        assert_eq!(target.library_sort, LibrarySort::Recent);
+    }
+
+    #[test]
+    fn les_vues_sont_nettoyees_sans_perdre_les_filtres_valides() {
+        let mut lib = Library::default();
+        let mut game = game("a");
+        game.tags = vec!["Coop".to_string()];
+        game.genres = vec!["RPG".to_string()];
+        lib.games.push(game);
+        lib.settings.saved_views = vec![
+            SavedView {
+                name: "   ".to_string(),
+                ..Default::default()
+            },
+            SavedView {
+                name: "Coop".to_string(),
+                status: GameStatus::Playing,
+                tag: "coop".to_string(),
+                genre: "RPG".to_string(),
+                ..Default::default()
+            },
+            SavedView {
+                name: "coop".to_string(),
+                tag: "coop".to_string(),
+                ..Default::default()
+            },
+            SavedView {
+                name: "Ancienne".to_string(),
+                tag: "disparu".to_string(),
+                genre: "RPG".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        lib.prune_saved_views();
+        assert_eq!(lib.settings.saved_views.len(), 2);
+        assert_eq!(lib.settings.saved_views[0].name, "Coop");
+        assert_eq!(lib.settings.saved_views[1].name, "Ancienne");
+        // Le tag qui n'existe plus est retiré, le genre encore présent reste.
+        assert!(lib.settings.saved_views[1].tag.is_empty());
+        assert_eq!(lib.settings.saved_views[1].genre, "RPG");
+    }
+
+    #[test]
+    fn le_regroupement_suit_l_ordre_des_statuts_et_les_annees_recentes() {
+        let mut lib = Library::default();
+        let mut a = game("a");
+        a.name = "A".to_string();
+        a.status = GameStatus::Playing;
+        a.genres = vec!["RPG".to_string()];
+        a.released = "2024-05-01".to_string();
+        a.playtime_secs = 300;
+        let mut b = game("b");
+        b.name = "B".to_string();
+        b.status = GameStatus::Finished;
+        b.released = String::new();
+        let mut c = game("c");
+        c.name = "C".to_string();
+        c.status = GameStatus::Playing;
+        c.genres = vec!["Action".to_string()];
+        c.released = "2020-01-01".to_string();
+        c.playtime_secs = 900;
+        let mut d = game("d");
+        d.name = "D".to_string();
+        d.genres = vec!["RPG".to_string()];
+        d.released = "2024-02-02".to_string();
+        lib.games = vec![a, b, c, d];
+        let ids = lib.sorted_ids();
+
+        let by_status = lib.grouped_ids(&ids, GroupBy::Status);
+        let labels: Vec<&str> = by_status.iter().map(|group| group.label.as_str()).collect();
+        assert_eq!(labels, ["En cours", "Terminé", "Sans statut"]);
+        assert_eq!(by_status[0].ids, ["a", "c"]);
+        assert_eq!(by_status[2].ids, ["d"]);
+
+        let by_genre = lib.grouped_ids(&ids, GroupBy::Genre);
+        let labels: Vec<&str> = by_genre.iter().map(|group| group.label.as_str()).collect();
+        assert_eq!(labels, ["Action", "RPG", "Sans genre"]);
+        assert_eq!(by_genre[1].ids, ["a", "d"]);
+
+        let by_year = lib.grouped_ids(&ids, GroupBy::Year);
+        let labels: Vec<&str> = by_year.iter().map(|group| group.label.as_str()).collect();
+        assert_eq!(labels, ["2024", "2020", "Année inconnue"]);
+
+        let none = lib.grouped_ids(&ids, GroupBy::None);
+        assert_eq!(none.len(), 1);
+        assert!(none[0].label.is_empty());
+        assert_eq!(none[0].ids, ids);
+
+        assert_eq!(
+            lib.sorted_ids_by(LibrarySort::Playtime),
+            ["c", "a", "b", "d"]
+        );
+    }
+
+    #[test]
+    fn la_recherche_de_la_bibliotheque_ignore_les_accents_sans_melanger_les_champs() {
+        let mut game = game("a");
+        game.name = "Paramètres avancés".to_string();
+        game.developer = "Éditeur indépendant".to_string();
+        game.tags = vec!["Détente".to_string()];
+        assert!(game.matches_query("parametres"));
+        assert!(game.matches_query("PARAMÈTRES"));
+        assert!(game.matches_query("editeur"));
+        assert!(game.matches_query("detente"));
+
+        // « witcher » ne doit pas se disperser entre le titre et les autres
+        // champs : c'est le même piège que dans la palette.
+        game.name = "Hollow Knight".to_string();
+        game.developer = "Team Cherry".to_string();
+        game.tags.clear();
+        assert!(!game.matches_query("witcher"));
+        assert!(game.matches_query(""));
+    }
+
+    #[test]
+    fn le_regroupement_par_boutique_distingue_locale_steam_et_plusieurs() {
+        let mut lib = Library::default();
+        let local = game("local");
+        let mut steam = game("steam");
+        steam.installations.push(Installation {
+            provider: Some(crate::providers::Provider::Steam),
+            ..Installation::default()
+        });
+        let mut mixed = game("mixed");
+        mixed.installations.push(Installation {
+            provider: Some(crate::providers::Provider::Steam),
+            ..Installation::default()
+        });
+        mixed.installations.push(Installation {
+            provider: Some(crate::providers::Provider::Gog),
+            ..Installation::default()
+        });
+        lib.games = vec![local, steam, mixed];
+        let ids = lib.sorted_ids();
+        let groups = lib.grouped_ids(&ids, GroupBy::Store);
+        let labels: Vec<&str> = groups.iter().map(|group| group.label.as_str()).collect();
+        assert_eq!(labels, ["Locale", "Steam", "Plusieurs"]);
+        assert_eq!(groups[1].ids, ["steam"]);
+        assert_eq!(groups[2].ids, ["mixed"]);
     }
 }
