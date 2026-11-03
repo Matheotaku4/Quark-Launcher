@@ -6,7 +6,7 @@ own, launches Windows games through Proton (or umu-launcher), and stays out of
 the way with an AMOLED interface, a store page, save snapshots and an in-game
 overlay.
 
-This is the 1.1.3 documentation. Older release notes are kept on the GitHub
+This is the 1.1.4 documentation. Older release notes are kept on the GitHub
 releases page; `docs/release-notes.md` only describes the release currently
 being published.
 
@@ -64,8 +64,8 @@ Download `quark-<version>-linux-x86_64.tar.gz` and its `.sha256` file from the
 then verify and unpack it:
 
 ```bash
-sha256sum -c quark-1.1.3-linux-x86_64.tar.gz.sha256
-tar -xzf quark-1.1.3-linux-x86_64.tar.gz
+sha256sum -c quark-1.1.4-linux-x86_64.tar.gz.sha256
+tar -xzf quark-1.1.4-linux-x86_64.tar.gz
 ./quark/quark
 ```
 
@@ -336,6 +336,15 @@ shows total playtime, the week, the streak, twelve weeks of bars, a 26-week
 heat map and the most played games. **Disk space** measures prefixes, artwork,
 logs, updates and game folders in a background thread.
 
+**About** contains the installed version and update settings. On startup,
+Quark checks the latest GitHub release when **Install updates at startup** is
+enabled (the default), verifies the SHA-256 and the new binary, replaces the
+executable in place and relaunches itself. It keeps the previous executable
+next to the new one until the next successful start. The automatic path is
+skipped for development builds and read-only installs; a game running in Quark
+blocks the install. Use **Check for updates** to do it manually. The first
+1.1.4 install is necessarily manual: 1.1.3 has no updater yet.
+
 ## Command line
 
 ```text
@@ -345,7 +354,7 @@ quark --search <query>    Search Steam / SteamGridDB without opening the UI
 quark --fetch <name>      Search a title and download its artwork
 quark --news <appid|name> Read the Steam news feed
 quark --scan <folder>     Scan a folder for games
-quark --update            Check and download the latest release
+quark --update            Check and download the latest release archive
 quark --ui <file.png>     Render the interface off-screen (no display needed)
 quark --tray              Run the notification-icon process
 ```

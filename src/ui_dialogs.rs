@@ -1368,6 +1368,25 @@ impl QuarkApp {
                         }
                     }
                     SettingsTab::About => {
+                        section(ui, "MISES À JOUR", &pal);
+                        if widgets::setting_toggle(
+                            ui,
+                            &pal,
+                            "Installer les mises à jour au démarrage",
+                            Some(
+                                "Quark vérifie la dernière release, remplace son binaire et se \
+                                 relance. Les binaires de développement et les dossiers en \
+                                 lecture seule sont ignorés ; désactive cette option pour \
+                                 garder la vérification manuelle.",
+                            ),
+                            &mut self.lib.settings.auto_update,
+                            "auto_update",
+                        )
+                        .changed()
+                        {
+                            self.touch();
+                        }
+
                         section(ui, "VERSION", &pal);
                         ui.horizontal(|ui| {
                             ui.label(
@@ -1421,9 +1440,9 @@ impl QuarkApp {
                                         .map(|asset| asset.size as f64 / 1_048_576.0)
                                         .unwrap_or(0.0);
                                     let label = if size > 0.0 {
-                                        format!("Télécharger ({size:.1} Mo)")
+                                        format!("Installer {} ({size:.1} Mo)", release.tag_name)
                                     } else {
-                                        "Télécharger".to_string()
+                                        format!("Installer {}", release.tag_name)
                                     };
                                     if widgets::ghost_button(ui, &label, &pal, Icon::Plus).clicked() {
                                         download_update = true;
@@ -1444,20 +1463,20 @@ impl QuarkApp {
                                     ui.spinner();
                                     ui.label(
                                         RichText::new(format!(
-                                            "téléchargement de {}",
+                                            "téléchargement et vérification de {}",
                                             release.tag_name
                                         ))
                                         .size(12.0)
                                         .color(pal.text_dim),
                                     );
                                 }
-                                UpdateState::Downloaded(path) => {
+                                UpdateState::Installing(tag) => {
+                                    ui.spinner();
                                     ui.label(
                                         RichText::new(format!(
-                                            "téléchargée : {}",
-                                            path.display()
+                                            "installation de {tag} et redémarrage\u{2026}"
                                         ))
-                                        .size(11.5)
+                                        .size(12.0)
                                         .color(pal.text_dim),
                                     );
                                 }
@@ -1473,9 +1492,11 @@ impl QuarkApp {
                         });
                         ui.label(
                             RichText::new(
-                                "L'archive est enregistrée dans ~/.local/share/quark/updates/ : \
-                                 décompresse-la et remplace le binaire pour installer la \
-                                 nouvelle version.",
+                                "Quark vérifie le SHA-256, l'architecture x86_64 et la version du \
+                                 binaire avant de remplacer l'exécutable, puis se relance. \
+                                 L'ancien binaire reste sauvegardé à côté jusqu'au prochain \
+                                 démarrage réussi. Si le dossier est en lecture seule, utilise \
+                                 l'archive de la release.",
                             )
                             .size(11.0)
                             .color(pal.text_faint),
@@ -1575,10 +1596,10 @@ impl QuarkApp {
             self.touch();
         }
         if check_updates {
-            self.check_updates(ctx);
+            self.check_updates(ctx, false);
         }
         if download_update {
-            self.download_update(ctx);
+            self.install_update(ctx);
         }
         if let Some(url) = open_url {
             if let Err(err) = crate::news::open_in_browser(&url) {

@@ -506,6 +506,10 @@ pub struct Settings {
     /// Migration du préfixe par défaut : il a été recopié une fois dans les
     /// jeux qui n'avaient encore ni préfixe propre ni préfixe d'installation.
     pub prefix_defaults_migrated: bool,
+    /// Vérifie et installe automatiquement les mises à jour au démarrage.
+    /// Désactivable dans « À propos » ; les binaires de développement et les
+    /// installations en lecture seule sont ignorés.
+    pub auto_update: bool,
     /// Garde Quark dans la zone de notification : la croix ne quitte plus
     /// l'application, elle la range dans l'icône.
     pub tray_icon: bool,
@@ -556,6 +560,7 @@ impl Default for Settings {
             default_env: Vec::new(),
             defaults_migrated: false,
             prefix_defaults_migrated: false,
+            auto_update: true,
             tray_icon: true,
             overlay: true,
             screenshot_key: "F12".to_string(),

@@ -245,15 +245,15 @@ pub enum UpdateState {
     /// Une version plus récente est disponible.
     Available(Release),
     Downloading(Release),
-    /// Archive téléchargée (jamais installée à notre place).
-    Downloaded(PathBuf),
+    /// Archive téléchargée et vérifiée ; le binaire va être remplacé.
+    Installing(String),
     Failed(String),
 }
 
 /// Réponse d'un contrôle de mise à jour ou d'un téléchargement.
 pub enum UpdateMessage {
     Checked(Result<Release, String>),
-    Downloaded(String, Result<PathBuf, String>),
+    Staged(String, Result<update::StagedUpdate, String>),
 }
 
 /// Ce qu'un téléchargement d'artworks doit récupérer.
@@ -602,6 +602,10 @@ pub struct QuarkApp {
     /// État de la vérification des mises à jour.
     pub update: UpdateState,
     pub update_rx: Option<Receiver<UpdateMessage>>,
+    /// Le contrôle courant vient du démarrage : ses erreurs restent discrètes.
+    pub update_auto: bool,
+    /// Le contrôle automatique du démarrage a déjà été tenté.
+    pub startup_update_done: bool,
     /// Notes ProtonDB, une recherche par appid.
     pub protondb: HashMap<u32, ProtonDbState>,
     pub protondb_job: Option<ProtonDbJob>,
@@ -897,6 +901,8 @@ impl QuarkApp {
             news_job: None,
             update: UpdateState::Idle,
             update_rx: None,
+            update_auto: false,
+            startup_update_done: false,
             protondb: HashMap::new(),
             protondb_job: None,
             logs: None,
@@ -2592,6 +2598,10 @@ impl QuarkApp {
     /// écran (`quark --ui`), qui ne doivent démarrer aucun processus.
     pub fn startup(&mut self) {
         tray::write_gui_pid();
+        // Une mise à jour interrompue peut avoir laissé une sauvegarde ou un
+        // binaire préparé à côté de l'exécutable ; le nouveau processus les
+        // nettoie une fois qu'il a démarré correctement.
+        update::cleanup_stale();
         if self.lib.settings.tray_icon {
             self.tray_error = tray::ensure_helper().err();
         }
@@ -3580,14 +3590,39 @@ impl QuarkApp {
     // Mises à jour (releases GitHub)
     // -----------------------------------------------------------------------
 
+    /// Vérifie au démarrage si une release plus récente doit être installée.
+    fn maybe_startup_update(&mut self, ctx: &egui::Context) {
+        if self.startup_update_done {
+            return;
+        }
+        self.startup_update_done = true;
+        if !self.lib.settings.auto_update || self.snapshot_mode {
+            return;
+        }
+        if !update::automatic_update_allowed() {
+            return;
+        }
+        let Ok(exe) = std::env::current_exe() else {
+            return;
+        };
+        // Dossier en lecture seule (paquet système) : ne télécharge pas 11 Mo
+        // pour échouer ensuite. L'utilisateur peut toujours vérifier à la main.
+        if update::can_replace(&exe).is_err() {
+            return;
+        }
+        self.update_auto = true;
+        self.check_updates(ctx, true);
+    }
+
     /// Interroge la dernière release publiée (non bloquant).
-    pub fn check_updates(&mut self, ctx: &egui::Context) {
+    pub fn check_updates(&mut self, ctx: &egui::Context, auto: bool) {
         if matches!(
             self.update,
-            UpdateState::Checking | UpdateState::Downloading(_)
+            UpdateState::Checking | UpdateState::Downloading(_) | UpdateState::Installing(_)
         ) {
             return;
         }
+        self.update_auto = auto;
         self.update = UpdateState::Checking;
         let (tx, rx) = channel();
         let ctx = ctx.clone();
@@ -3599,14 +3634,29 @@ impl QuarkApp {
         self.update_rx = Some(rx);
     }
 
-    /// Télécharge l'archive de la release proposée (jamais installée à notre
-    /// place : le binaire courant n'est pas remplacé).
-    pub fn download_update(&mut self, ctx: &egui::Context) {
+    /// Télécharge, vérifie et prépare la release proposée, puis remplace le
+    /// binaire courant et relance Quark.
+    pub fn install_update(&mut self, ctx: &egui::Context) {
         let UpdateState::Available(release) = self.update.clone() else {
             return;
         };
+        if !self.running.is_empty() {
+            self.update = UpdateState::Failed(
+                "ferme le jeu en cours avant d'installer la mise à jour".to_string(),
+            );
+            self.update_auto = false;
+            return;
+        }
+        if let Ok(exe) = std::env::current_exe()
+            && let Err(err) = update::can_replace(&exe)
+        {
+            self.update = UpdateState::Failed(err);
+            self.update_auto = false;
+            return;
+        }
         let Some(asset) = release.archive().cloned() else {
             self.update = UpdateState::Failed("aucune archive dans cette release".to_string());
+            self.update_auto = false;
             return;
         };
         let tag = release.tag_name.clone();
@@ -3617,8 +3667,19 @@ impl QuarkApp {
         let dir = crate::config::data_dir().join("updates");
         std::thread::spawn(move || {
             let client = artwork::http();
-            let result = update::download(&client, &download_release, &asset, &dir);
-            let _ = tx.send(UpdateMessage::Downloaded(tag, result));
+            let target = match std::env::current_exe() {
+                Ok(target) => target,
+                Err(err) => {
+                    let _ = tx.send(UpdateMessage::Staged(
+                        tag,
+                        Err(format!("chemin du binaire : {err}")),
+                    ));
+                    ctx.request_repaint();
+                    return;
+                }
+            };
+            let result = update::stage(&client, &download_release, &asset, &dir, &target);
+            let _ = tx.send(UpdateMessage::Staged(tag, result));
             ctx.request_repaint();
         });
         self.update_rx = Some(rx);
@@ -3629,41 +3690,111 @@ impl QuarkApp {
         match received {
             Some(Ok(UpdateMessage::Checked(Ok(release)))) => {
                 self.update_rx = None;
-                self.update = if update::is_newer(&release.tag_name, update::current_version()) {
-                    UpdateState::Available(release)
+                if update::is_newer(&release.tag_name, update::current_version()) {
+                    self.update = UpdateState::Available(release);
+                    if self.update_auto {
+                        self.install_update(ctx);
+                    }
                 } else {
-                    UpdateState::UpToDate
-                };
+                    self.update = UpdateState::UpToDate;
+                    self.update_auto = false;
+                }
             }
             Some(Ok(UpdateMessage::Checked(Err(err)))) => {
                 self.update_rx = None;
+                if !self.update_auto {
+                    self.toast_error(format!("Vérification des mises à jour impossible : {err}"));
+                }
                 self.update = UpdateState::Failed(err);
+                self.update_auto = false;
             }
-            Some(Ok(UpdateMessage::Downloaded(tag, Ok(path)))) => {
+            Some(Ok(UpdateMessage::Staged(tag, Ok(staged)))) => {
                 self.update_rx = None;
-                self.update = UpdateState::Downloaded(path.clone());
-                self.toast_info(format!(
-                    "{tag} téléchargée dans {}",
-                    path.parent().unwrap_or(&path).display()
-                ));
+                let automatic = self.update_auto;
+                self.update = UpdateState::Installing(tag);
+                if let Err(err) = self.finish_update(staged) {
+                    if !automatic {
+                        self.toast_error(format!("Mise à jour impossible : {err}"));
+                    }
+                    self.update = UpdateState::Failed(err);
+                    self.update_auto = false;
+                }
             }
-            Some(Ok(UpdateMessage::Downloaded(_, Err(err)))) => {
+            Some(Ok(UpdateMessage::Staged(_, Err(err)))) => {
                 self.update_rx = None;
+                if !self.update_auto {
+                    self.toast_error(format!("Mise à jour impossible : {err}"));
+                }
                 self.update = UpdateState::Failed(err);
+                self.update_auto = false;
             }
             Some(Err(TryRecvError::Disconnected)) => {
                 self.update_rx = None;
+                if !self.update_auto {
+                    self.toast_error("Vérification des mises à jour interrompue");
+                }
                 self.update = UpdateState::Failed("vérification interrompue".to_string());
+                self.update_auto = false;
             }
             _ => {
                 if matches!(
                     self.update,
-                    UpdateState::Checking | UpdateState::Downloading(_)
+                    UpdateState::Checking
+                        | UpdateState::Downloading(_)
+                        | UpdateState::Installing(_)
                 ) {
                     ctx.request_repaint_after(Duration::from_millis(150));
                 }
             }
         }
+    }
+
+    /// Remplace le binaire et relance le processus. `exec` ne revient qu'en cas
+    /// d'échec ; on restaure alors l'ancien binaire et l'icône de notification.
+    fn finish_update(&mut self, staged: update::StagedUpdate) -> Result<(), String> {
+        if !self.running.is_empty() {
+            return Err("ferme le jeu en cours avant d'installer la mise à jour".to_string());
+        }
+        if self.snapshot_mode {
+            return Err("mise à jour désactivée en rendu hors écran".to_string());
+        }
+        if self.dirty {
+            self.lib
+                .save()
+                .map_err(|err| format!("la bibliothèque n'a pas pu être enregistrée ({err})"))?;
+            self.dirty = false;
+        }
+        // L'icône tourne encore avec l'ancien inode : on l'arrête avant le
+        // renommage, puis le nouveau processus la relancera. Sans cette pause,
+        // le nouveau helper peut perdre la course contre l'ancien verrou.
+        let tray_enabled = self.lib.settings.tray_icon;
+        if tray_enabled {
+            crate::tray::stop_helper();
+            std::thread::sleep(Duration::from_millis(150));
+        }
+        let installed = match update::apply(&staged) {
+            Ok(installed) => installed,
+            Err(err) => {
+                if tray_enabled {
+                    self.tray_error = crate::tray::ensure_helper().err();
+                }
+                return Err(err);
+            }
+        };
+        let _ = std::fs::remove_file(&staged.archive);
+        crate::tray::clear_gui_pid();
+        if let Err(err) = update::relaunch(&installed.target) {
+            let restored = update::rollback(&installed);
+            crate::tray::write_gui_pid();
+            if tray_enabled {
+                self.tray_error = crate::tray::ensure_helper().err();
+            }
+            return Err(match restored {
+                Ok(()) => err,
+                Err(rollback) => format!("{err} · {rollback}"),
+            });
+        }
+        Ok(())
     }
 
     /// Jeux du carrousel de l'accueil (les dernières sessions).
@@ -6155,6 +6286,7 @@ impl QuarkApp {
             return;
         }
         self.startup_sync_done = true;
+        self.maybe_startup_update(ctx);
         self.start_steam_sync(ctx);
         if crate::providers::tools::ManagedToolId::Legendary
             .installed_path()

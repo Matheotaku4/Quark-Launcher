@@ -5,6 +5,7 @@
 
 mod achievements_bridge;
 mod app;
+mod archive;
 mod artwork;
 mod config;
 mod disk;

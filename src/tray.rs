@@ -153,6 +153,14 @@ fn lock(name: &str) -> Option<std::fs::File> {
         .open(config::data_dir().join(name))
         .ok()?;
     let taken = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0;
+    if taken {
+        // `exec` remplace le processus lors d'une mise à jour : le nouveau
+        // Quark doit pouvoir reprendre le verrou immédiatement, sans attendre
+        // la fermeture d'un descripteur hérité.
+        unsafe {
+            libc::fcntl(file.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC);
+        }
+    }
     taken.then_some(file)
 }
 

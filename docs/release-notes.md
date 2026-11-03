@@ -1,30 +1,19 @@
-## Quark 1.1.3 — stable prefixes, umu and safer defaults
+## Quark 1.1.4 — automatic updates at startup
 
-### Proton prefixes stay stable
+### Updates install themselves
 
-- The default Proton prefix is now copied into a game when it is added, and
-  once into existing games during migration. Changing the default later no
-  longer moves an existing game's prefix or hides its saves.
-- A game without its own prefix now uses the prefix of its active installation
-  before falling back to `~/.local/share/quark/prefixes/<game>`.
-- umu-launcher uses `WINEPREFIX` directly, while Proton keeps its `pfx/`
-  subdirectory. Save detection, the EOS overlay and `wineserver -k` now use the
-  real Wine prefix for both launch modes.
-
-### Launch reliability
-
-- An anti-cheat runtime (BattlEye/EasyAntiCheat) can no longer be selected and
-  executed as if it were a Proton runtime; the launch is refused with a clear
-  message instead of trying to run a data directory.
-- Automatic cloud-save synchronization only starts when the provider tool and
-  account are usable, so a missing session no longer produces an error after
-  every game session. The manual button still explains what is missing.
-
-### Interface and packaging
-
-- Arrow-key navigation in the grid follows the actual number of columns (2 to
-  8) instead of assuming three.
-- The release archive now contains `quark.desktop` and `quark.png` as the README
-  promised, with installation instructions for the application menu.
-- README corrections: settings are a horizontal tab bar, `--fetch` takes a
-  title rather than an appid, and `--news` accepts an appid or a title.
+- Quark can now check the latest GitHub release when it starts, download the
+  verified archive, replace the executable it was launched from and relaunch
+  itself. The option is enabled by default and can be turned off under
+  **Settings → About**.
+- Before replacing anything, Quark verifies the published SHA-256, extracts
+  only `quark/quark`, checks that it is an x86_64 ELF binary and confirms its
+  `--help` version matches the release tag.
+- The previous executable is renamed next to the new one, so a failed `exec`
+  restores it automatically. The backup is removed after the next successful
+  start. Read-only installs, development builds and `QUARK_NO_AUTO_UPDATE=1`
+  never update automatically, and a running game blocks the install.
+- The About page now describes the manual update flow and the automatic
+  startup option; the archive remains available for a manual fallback.
+- This first 1.1.4 install is still manual: 1.1.3 and earlier do not contain
+  the updater. Once 1.1.4 is running, later releases install automatically.

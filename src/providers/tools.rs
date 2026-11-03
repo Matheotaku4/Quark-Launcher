@@ -319,70 +319,7 @@ fn decompress_ludusavi(bytes: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 fn extract_ludusavi(bytes: &[u8]) -> Result<Vec<u8>, String> {
-    // Parse tar headers in memory; refuse paths other than the expected binary.
-    let mut offset = 0usize;
-    while offset + 512 <= bytes.len() {
-        let header = &bytes[offset..offset + 512];
-        if header.iter().all(|byte| *byte == 0) {
-            break;
-        }
-        let name_end = header[..100]
-            .iter()
-            .position(|byte| *byte == 0)
-            .unwrap_or(100);
-        let size_text = std::str::from_utf8(&header[124..136])
-            .map_err(|_| "archive Ludusavi invalide".to_string())?
-            .trim_matches(|ch| ch == '\0' || ch == ' ');
-        let size =
-            usize::from_str_radix(size_text, 8).map_err(|_| "taille tar invalide".to_string())?;
-        let body = offset + 512;
-        let end = body
-            .checked_add(size)
-            .ok_or_else(|| "archive tar invalide".to_string())?;
-        if end > bytes.len() {
-            return Err("archive tar tronquée".to_string());
-        }
-        let entry_type = header[156];
-        let stored_checksum = std::str::from_utf8(&header[148..156])
-            .ok()
-            .and_then(|text| {
-                usize::from_str_radix(text.trim_matches(|ch| ch == '\0' || ch == ' '), 8).ok()
-            })
-            .ok_or_else(|| "checksum tar invalide".to_string())?;
-        let actual_checksum: usize = header
-            .iter()
-            .enumerate()
-            .map(|(index, byte)| {
-                if (148..156).contains(&index) {
-                    b' ' as usize
-                } else {
-                    *byte as usize
-                }
-            })
-            .sum();
-        if stored_checksum != actual_checksum {
-            return Err("checksum tar invalide".to_string());
-        }
-        let prefix_end = header[345..500]
-            .iter()
-            .position(|byte| *byte == 0)
-            .unwrap_or(155);
-        let mut full_name = header[345..345 + prefix_end].to_vec();
-        if !full_name.is_empty() {
-            full_name.push(b'/');
-        }
-        full_name.extend_from_slice(&header[..name_end]);
-        let full_name =
-            std::str::from_utf8(&full_name).map_err(|_| "archive Ludusavi invalide".to_string())?;
-        if full_name.starts_with('/') || full_name.split('/').any(|part| part == "..") {
-            return Err("chemin dangereux dans l'archive Ludusavi".to_string());
-        }
-        if (entry_type == 0 || entry_type == b'0') && full_name == "ludusavi" {
-            return Ok(bytes[body..end].to_vec());
-        }
-        offset = body + size.div_ceil(512) * 512;
-    }
-    Err("binaire ludusavi absent de l'archive officielle".to_string())
+    crate::archive::extract_member(bytes, "ludusavi")
 }
 
 /// Accepte uniquement le zipapp Python officiel : shebang exact puis archive zip.
