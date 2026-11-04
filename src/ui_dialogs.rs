@@ -2323,7 +2323,7 @@ impl QuarkApp {
                         ui,
                         &pal,
                         "Statut personnel : il sert de filtre sur l'accueil et dans la colonne \
-                         de gauche (pastilles de couleur). Aucun effet sur le lancement.",
+                         de gauche (menu Filtres). Aucun effet sur le lancement.",
                     );
                 });
                 ui.horizontal_wrapped(|ui| {
@@ -3532,7 +3532,7 @@ fn tags_editor(ui: &mut egui::Ui, pal: &Palette, tags: &mut Vec<String>) {
             ui,
             pal,
             "Les tags servent de catégories : sur l'accueil et dans la colonne de gauche, \
-             cliquer sur « coop » n'affiche que les jeux qui le portent.",
+             ouvre le menu Filtres et choisis « coop » pour ne voir que les jeux qui le portent.",
         );
     });
     let mut remove: Option<usize> = None;

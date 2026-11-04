@@ -1,0 +1,61 @@
+name: wiki
+
+# Le wiki GitHub vit dans un dépôt Git séparé. Ce workflow y recopie les pages
+# versionnées dans wiki/ à chaque modification, et peut être lancé à la main
+# depuis l'onglet Actions. La première page doit déjà exister : GitHub ne crée
+# le dépôt .wiki.git qu'après une sauvegarde depuis l'interface web.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "wiki/**"
+      - ".github/workflows/wiki.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wiki
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Synchroniser les pages du wiki
+        env:
+          # Le jeton du workflow suffit quand le wiki est déjà initialisé. Un
+          # secret WIKI_TOKEN (PAT) peut prendre le relais si l'organisation
+          # restreint l'accès au dépôt .wiki.git.
+          WIKI_TOKEN: ${{ secrets.WIKI_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          wiki_dir="$RUNNER_TEMP/quark-wiki"
+          git clone --quiet \
+            "https://x-access-token:${WIKI_TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git" \
+            "$wiki_dir"
+
+          # README.md explique la publication dans le dépôt principal ; ce n'est
+          # pas une page du wiki.
+          for page in wiki/*.md; do
+            name="$(basename "$page")"
+            if [ "$name" = "README.md" ]; then
+              continue
+            fi
+            cp "$page" "$wiki_dir/$name"
+          done
+
+          cd "$wiki_dir"
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "Wiki déjà à jour."
+            exit 0
+          fi
+          git add -A
+          git commit -m "Synchronise le wiki depuis le dépôt"
+          git push origin master

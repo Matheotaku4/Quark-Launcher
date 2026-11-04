@@ -373,7 +373,11 @@ impl QuarkApp {
             });
         }
         self.library_view_bar(ui);
-        self.quick_filters(ui);
+        // Sur l'accueil, le menu est déjà affiché au-dessus de la grille :
+        // éviter un second bouton identique dans la colonne de gauche.
+        if !self.home {
+            self.filter_menu(ui, 12.0);
+        }
         ui.add_space(8.0);
 
         let age = self.page_at.elapsed().as_secs_f32();
@@ -608,58 +612,6 @@ impl QuarkApp {
                     self.launch(ui.ctx(), id);
                 }
             }
-        }
-    }
-
-    /// Filtres rapides de la colonne : statut puis tags personnels, comme les
-    /// catégories Steam. Un second clic sur la pastille active retire le filtre.
-    fn quick_filters(&mut self, ui: &mut egui::Ui) {
-        let pal = self.pal;
-        let mut new_status: Option<GameStatus> = None;
-        let mut new_tag: Option<String> = None;
-        let status = self.lib.settings.home_status;
-        let tag = self.lib.settings.home_tag.clone();
-        let tags = self.lib.all_tags();
-
-        ui.add_space(6.0);
-        ui.horizontal_wrapped(|ui| {
-            ui.add_space(12.0);
-            for option in GameStatus::ALL {
-                let selected = status == option;
-                let color = status_color(option)
-                    .map(|(r, g, b)| Color32::from_rgb(r, g, b))
-                    .unwrap_or(pal.surface_hover);
-                if widgets::chip_colored(ui, &option.label(), selected, &pal, color) {
-                    new_status = Some(if selected { GameStatus::None } else { option });
-                }
-                ui.add_space(4.0);
-            }
-        });
-        if !tags.is_empty() {
-            ui.add_space(4.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.add_space(12.0);
-                for (name, count) in tags {
-                    let selected = tag.eq_ignore_ascii_case(&name);
-                    if widgets::chip(ui, &format!("{name} · {count}"), selected, &pal) {
-                        new_tag = Some(if selected {
-                            String::new()
-                        } else {
-                            name.clone()
-                        });
-                    }
-                    ui.add_space(4.0);
-                }
-            });
-        }
-
-        if let Some(status) = new_status {
-            self.lib.settings.home_status = status;
-            self.touch();
-        }
-        if let Some(tag) = new_tag {
-            self.lib.settings.home_tag = tag;
-            self.touch();
         }
     }
 

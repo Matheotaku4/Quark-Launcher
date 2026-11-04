@@ -20,13 +20,13 @@ Quark ne nécessite aucun compte Quark et n'envoie aucune télémétrie.
 
 ## Archive de release
 
-1. Téléchargez `quark-1.2.0-linux-x86_64.tar.gz` et son fichier `.sha256`
+1. Téléchargez `quark-1.2.1-linux-x86_64.tar.gz` et son fichier `.sha256`
    depuis la [dernière release](https://github.com/Matheotaku4/Quark-Launcher/releases/latest).
 2. Vérifiez l'archive **avant** de l'extraire :
 
    ```bash
-   sha256sum -c quark-1.2.0-linux-x86_64.tar.gz.sha256
-   tar -xzf quark-1.2.0-linux-x86_64.tar.gz
+   sha256sum -c quark-1.2.1-linux-x86_64.tar.gz.sha256
+   tar -xzf quark-1.2.1-linux-x86_64.tar.gz
    ./quark/quark
    ```
 
@@ -48,7 +48,7 @@ update-desktop-database ~/.local/share/applications 2>/dev/null || true
 
 ## Mettre à jour depuis la 1.1.4
 
-La 1.2.0 conserve le format de `config.json` de la 1.1.4 et ajoute des champs
+La 1.2.1 conserve le format de `config.json` de la 1.1.4 et ajoute des champs
 avec des valeurs par défaut. La mise à jour ne demande pas de réinitialiser la
 bibliothèque et n'impose pas le parcours de bienvenue aux installations déjà
 existantes.
@@ -71,12 +71,12 @@ démarrage réussi.
 
 Si la mise à jour automatique est désactivée ou échoue :
 
-1. Quittez Quark, puis téléchargez l'archive 1.2.0 et sa somme.
+1. Quittez Quark, puis téléchargez l'archive 1.2.1 et sa somme.
 2. Vérifiez la somme, puis remplacez uniquement le binaire :
 
    ```bash
-   sha256sum -c quark-1.2.0-linux-x86_64.tar.gz.sha256
-   tar -xzf quark-1.2.0-linux-x86_64.tar.gz
+   sha256sum -c quark-1.2.1-linux-x86_64.tar.gz.sha256
+   tar -xzf quark-1.2.1-linux-x86_64.tar.gz
    install -Dm755 quark/quark ~/.local/bin/quark
    ```
 
@@ -84,7 +84,7 @@ Si la mise à jour automatique est désactivée ou échoue :
 
 Vos jeux, préfixes, sauvegardes, artworks, comptes Legendary/gogdl et
 statistiques restent dans les mêmes dossiers. Le parcours de bienvenue est
-ignoré pour une bibliothèque existante ; le résumé **Nouveautés de la 1.2.0**
+ignoré pour une bibliothèque existante ; le résumé **Nouveautés de la 1.2.1**
 apparaît une fois.
 
 > Ne supprimez pas `~/.config/quark/config.json` pour « réparer » une mise à

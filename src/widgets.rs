@@ -35,6 +35,8 @@ pub enum Icon {
     ArrowRight,
     /// Loupe pour la recherche et la liaison d'un jeu.
     Search,
+    /// Entonnoir du menu de filtres, comme dans la bibliothèque Steam.
+    Filter,
     /// Chaîne pour relier un jeu à une source d'images.
     Link,
     /// Flèche sortante d'un résultat web.
@@ -68,6 +70,7 @@ impl Icon {
             Icon::ArrowLeft => "\u{e048}",
             Icon::ArrowRight => "\u{e049}",
             Icon::Search => "\u{e151}",
+            Icon::Filter => "\u{e0dc}",
             Icon::Link => "\u{e102}",
             Icon::ExternalLink => "\u{e0b9}",
         })

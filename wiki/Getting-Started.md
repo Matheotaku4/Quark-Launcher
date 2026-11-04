@@ -36,7 +36,7 @@ journal de commits. Une fois fermé, la version lue est enregistrée dans
 `last_seen_version`. Pour le revoir : **Paramètres → À propos → Revoir les
 nouveautés**.
 
-![Nouveautés de la 1.2.0](https://raw.githubusercontent.com/Matheotaku4/Quark-Launcher/main/docs/images/whats-new-fr.png)
+![Nouveautés de la 1.2.1](https://raw.githubusercontent.com/Matheotaku4/Quark-Launcher/main/docs/images/whats-new-fr.png)
 
 ## Ajouter un jeu
 

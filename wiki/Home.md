@@ -5,7 +5,7 @@ jeux locaux, Steam, Epic Games et GOG dans une seule bibliothèque, lance les je
 Windows avec Proton ou umu-launcher, et ajoute un overlay en jeu, des captures,
 des succès et des sauvegardes locales vérifiées.
 
-Cette documentation décrit **Quark 1.2.0**. Elle est aussi disponible dans le
+Cette documentation décrit **Quark 1.2.1**. Elle est aussi disponible dans le
 dépôt, sous [`wiki/`](https://github.com/Matheotaku4/Quark-Launcher/tree/main/wiki).
 
 ![Accueil de Quark](https://raw.githubusercontent.com/Matheotaku4/Quark-Launcher/main/docs/images/home-fr.png)

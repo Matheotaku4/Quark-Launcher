@@ -22,7 +22,7 @@ git clone https://github.com/Matheotaku4/Quark-Launcher.wiki.git /tmp/quark-wiki
 rsync -av --exclude README.md wiki/ /tmp/quark-wiki/
 cd /tmp/quark-wiki
 git add -A
-git commit -m "Documentation Quark 1.2.0"
+git commit -m "Documentation Quark 1.2.1"
 git push
 ```
 

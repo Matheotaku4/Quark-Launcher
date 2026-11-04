@@ -6,7 +6,7 @@ own, launches Windows games through Proton (or umu-launcher), and stays out of
 the way with an AMOLED interface, a store page, save snapshots and an in-game
 overlay.
 
-This is the **1.2.0** documentation. Older release notes are kept on the GitHub
+This is the **1.2.1** documentation. Older release notes are kept on the GitHub
 releases page; `docs/release-notes.md` only describes the release currently
 being published.
 
@@ -26,8 +26,11 @@ repository; its complete source lives in [`wiki/`](wiki/) until it is published.
 | --- | --- |
 | ![Onboarding](docs/images/onboarding-fr.png) | ![What's new](docs/images/whats-new-fr.png) |
 
-## What's new in 1.2.0
+## What's new in 1.2.1
 
+- **A single Filters menu** on Home and in the Library, like Steam: status,
+  Steam genre and personal tags now live in one popup. The button counts active
+  filters, the menu stays open while selecting, and **Clear all** resets them.
 - **A first-run guide** in three steps: discover Quark, change language, theme,
   startup page and random hero background, then add a first game. Existing
   libraries are marked as already welcomed and are not interrupted.
@@ -47,7 +50,7 @@ repository; its complete source lives in [`wiki/`](wiki/) until it is published.
 
 ## Table of contents
 
-1. [What's new in 1.2.0](#whats-new-in-120)
+1. [What's new in 1.2.1](#whats-new-in-121)
 2. [What Quark does](#what-quark-does)
 3. [Installation](#installation)
 4. [First launch](#first-launch)
@@ -101,8 +104,8 @@ Download `quark-<version>-linux-x86_64.tar.gz` and its `.sha256` file from the
 then verify and unpack it:
 
 ```bash
-sha256sum -c quark-1.2.0-linux-x86_64.tar.gz.sha256
-tar -xzf quark-1.2.0-linux-x86_64.tar.gz
+sha256sum -c quark-1.2.1-linux-x86_64.tar.gz.sha256
+tar -xzf quark-1.2.1-linux-x86_64.tar.gz
 ./quark/quark
 ```
 
@@ -144,7 +147,7 @@ A new configuration opens a three-step welcome guide. It is not blocking:
 **Skip** closes it. The guide changes the interface language, startup page,
 theme and hero background live, then offers to add a first game. Existing
 configurations are marked as already welcomed, so updating from 1.1.4 never
-shows it unexpectedly; they still see the 1.2.0 summary once.
+shows it unexpectedly; they still see the 1.2.1 summary once.
 
 1. Open **Settings → Stores & tools** and install Legendary and/or gogdl with
    **Install / update**. Quark verifies the SHA-256 digest published by GitHub
@@ -165,9 +168,10 @@ The home page is a carousel of recently played games. The banner is the game's
 hero image, the logo (or title) sits above a **Continue/Stop** button, and the
 playtime, last session, ProtonDB rating and native-Linux badge are visible at a
 glance. Below the carousel, the whole library is shown as covers. Sort it by
-last session, date added or hours played, and filter it by status, Steam genre
-or personal tag. The carousel can advance automatically; the delay is set in
-**Settings → Appearance**.
+last session, date added or hours played. The **Filters** button opens one menu
+for status, Steam genre and personal tag; the button shows the number of active
+filters and the menu includes **Clear all**. The carousel can advance
+automatically; the delay is set in **Settings → Appearance**.
 
 **Startup page.** Settings → Appearance → **Startup page** decides what Quark
 opens at launch: **Home** (the default), **Library**, **Store** or **My games**.
@@ -189,10 +193,15 @@ batch removal.
 The **Views** menu stores the current search, filters, sort and grouping under
 a name; apply or delete a view from the same menu. Three starter views (**À jouer**,
 **En cours** and **Terminés**) are added once, then behave like any
-other view. Group the list by status, store, genre or release year, or show a
-continuous list; group headers can be collapsed. Sort by name, last session,
-date added or play time. Library search now ignores accents and compares the
-title, developer, tags and genres separately, like the command palette.
+other view. The **Filters** button groups status, Steam genre and tags in a
+single popup instead of stacking chips above the list; active filters are
+counted on the button and **Clear all** resets them. Group the list by status,
+store, genre or release year, or show a continuous list; group headers can be
+collapsed. Sort by name, last session, date added or play time. Library search
+now ignores accents and compares the title, developer, tags and genres
+separately, like the command palette.
+
+![Filters menu](docs/images/filters-fr.png)
 
 Keyboard shortcuts: arrows navigate, `Enter` launches, `Ctrl+F` or `/` focuses
 the search field, `Esc` clears it and `Ctrl+Q` really quits Quark. `Ctrl+K`

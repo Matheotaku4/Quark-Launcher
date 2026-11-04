@@ -5,9 +5,171 @@
 use crate::app::QuarkApp;
 use crate::config::{GameStatus, GroupBy, LibrarySort, SavedView};
 use crate::widgets::{self, Icon};
-use eframe::egui::{self, Align, Layout, RichText, Vec2};
+use eframe::egui::{self, Align, Color32, Layout, RichText, Vec2};
 
 impl QuarkApp {
+    /// Bouton « Filtres » et son panneau, comme la bibliothèque Steam : statut,
+    /// genre et tags sont regroupés ici au lieu d'occuper plusieurs rangées de
+    /// pastilles. Les choix se combinent et le panneau reste ouvert tant que le
+    /// clic est à l'intérieur.
+    pub(crate) fn filter_menu(&mut self, ui: &mut egui::Ui, indent: f32) {
+        let pal = self.pal;
+        let tags = self.lib.all_tags();
+        let genres = self.lib.all_genres();
+        let mut status = self.lib.settings.home_status;
+        let mut tag = self.lib.settings.home_tag.clone();
+        let mut genre = self.lib.settings.home_genre.clone();
+        let active = usize::from(status != GameStatus::None)
+            + usize::from(!tag.is_empty())
+            + usize::from(!genre.is_empty());
+        let label = if active == 0 {
+            crate::i18n::tr("Filtres")
+        } else {
+            format!("{} · {active}", crate::i18n::tr("Filtres"))
+        };
+
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.add_space(indent);
+            let response = widgets::ghost_button(ui, &label, &pal, Icon::Filter);
+            egui::Popup::from_toggle_button_response(&response)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .frame(
+                    egui::Frame::menu(ui.style())
+                        .fill(pal.header)
+                        .stroke(egui::Stroke::new(1.0_f32, pal.border))
+                        .corner_radius(8.0)
+                        .inner_margin(12.0),
+                )
+                .show(|ui| {
+                    ui.set_min_width(300.0);
+                    ui.set_max_width(340.0);
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            crate::i18n::rich("FILTRES")
+                                .size(10.0)
+                                .strong()
+                                .color(pal.accent),
+                        );
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if active > 0
+                                && widgets::ghost_button(ui, "Tout effacer", &pal, Icon::None)
+                                    .clicked()
+                            {
+                                status = GameStatus::None;
+                                tag.clear();
+                                genre.clear();
+                            }
+                        });
+                    });
+                    ui.add_space(6.0);
+                    egui::ScrollArea::vertical()
+                        .id_salt("quark_filter_menu_scroll")
+                        .max_height(430.0)
+                        .show(ui, |ui| {
+                            ui.label(
+                                crate::i18n::rich("Statut")
+                                    .size(9.5)
+                                    .strong()
+                                    .color(pal.text_faint),
+                            );
+                            ui.add_space(3.0);
+                            ui.horizontal_wrapped(|ui| {
+                                if widgets::chip_colored(
+                                    ui,
+                                    "Tous",
+                                    status == GameStatus::None,
+                                    &pal,
+                                    pal.accent,
+                                ) {
+                                    status = GameStatus::None;
+                                }
+                                for option in GameStatus::ALL.iter().skip(1) {
+                                    let selected = status == *option;
+                                    let (r, g, b) = option.color();
+                                    if widgets::chip_colored(
+                                        ui,
+                                        &option.label(),
+                                        selected,
+                                        &pal,
+                                        Color32::from_rgb(r, g, b),
+                                    ) {
+                                        status = if selected { GameStatus::None } else { *option };
+                                    }
+                                    ui.add_space(4.0);
+                                }
+                            });
+                            if !genres.is_empty() {
+                                ui.add_space(10.0);
+                                ui.label(
+                                    crate::i18n::rich("Genre")
+                                        .size(9.5)
+                                        .strong()
+                                        .color(pal.text_faint),
+                                );
+                                ui.add_space(3.0);
+                                ui.horizontal_wrapped(|ui| {
+                                    for (name, count) in &genres {
+                                        let selected = genre.eq_ignore_ascii_case(name);
+                                        if widgets::chip(
+                                            ui,
+                                            &format!("{name} · {count}"),
+                                            selected,
+                                            &pal,
+                                        ) {
+                                            genre = if selected {
+                                                String::new()
+                                            } else {
+                                                name.clone()
+                                            };
+                                        }
+                                        ui.add_space(4.0);
+                                    }
+                                });
+                            }
+                            if !tags.is_empty() {
+                                ui.add_space(10.0);
+                                ui.label(
+                                    crate::i18n::rich("Tags")
+                                        .size(9.5)
+                                        .strong()
+                                        .color(pal.text_faint),
+                                );
+                                ui.add_space(3.0);
+                                ui.horizontal_wrapped(|ui| {
+                                    for (name, count) in &tags {
+                                        let selected = tag.eq_ignore_ascii_case(name);
+                                        if widgets::chip(
+                                            ui,
+                                            &format!("#{name} · {count}"),
+                                            selected,
+                                            &pal,
+                                        ) {
+                                            tag = if selected {
+                                                String::new()
+                                            } else {
+                                                name.clone()
+                                            };
+                                        }
+                                        ui.add_space(4.0);
+                                    }
+                                });
+                            }
+                        });
+                });
+        });
+
+        if status != self.lib.settings.home_status
+            || tag != self.lib.settings.home_tag
+            || genre != self.lib.settings.home_genre
+        {
+            self.lib.settings.home_status = status;
+            self.lib.settings.home_tag = tag;
+            self.lib.settings.home_genre = genre;
+            self.touch();
+        }
+    }
+
     /// Barre compacte au-dessus des filtres : vues nommées, tri et
     /// regroupement. Elle n'apparaît que dans la colonne de la bibliothèque.
     pub(crate) fn library_view_bar(&mut self, ui: &mut egui::Ui) {

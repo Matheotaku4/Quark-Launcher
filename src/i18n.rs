@@ -188,10 +188,11 @@ fn dynamic_english(text: &str) -> String {
 }
 
 /// Résumé concret de la version courante, affiché une fois après une mise à
-/// jour. Il est volontairement court : quatre phrases, pas un journal de commit.
-pub fn release_summary() -> [&'static str; 5] {
+/// jour. Il est volontairement court : quelques phrases, pas un journal de commit.
+pub fn release_summary() -> [&'static str; 6] {
     if is_english() {
         [
+            "Library and Home filters now share one menu, with an active-filter count and a clear-all action.",
             "A first-run guide now walks through the library, stores, Proton and the settings you can change.",
             "The whole interface can switch between French and English from Appearance.",
             "Thirteen themes are available, including Catppuccin, Dracula, Nord, Gruvbox and Tokyo Night.",
@@ -200,6 +201,7 @@ pub fn release_summary() -> [&'static str; 5] {
         ]
     } else {
         [
+            "Les filtres de la bibliothèque et de l'accueil sont regroupés dans un menu unique, avec compteur et remise à zéro.",
             "Un guide de premier lancement présente la bibliothèque, les boutiques, Proton et les réglages modifiables.",
             "Toute l'interface bascule entre le français et l'anglais depuis Apparence.",
             "Treize thèmes sont disponibles, dont Catppuccin, Dracula, Nord, Gruvbox et Tokyo Night.",
@@ -258,9 +260,11 @@ mod tests {
     fn le_resume_de_version_suit_la_langue() {
         let _guard = language_lock();
         set_language(UiLanguage::French);
-        assert!(release_summary()[0].starts_with("Un guide"));
+        assert!(release_summary()[0].starts_with("Les filtres"));
+        assert!(release_summary()[1].starts_with("Un guide"));
         set_language(UiLanguage::English);
-        assert!(release_summary()[0].starts_with("A first-run guide"));
+        assert!(release_summary()[0].starts_with("Library and Home filters"));
+        assert!(release_summary()[1].starts_with("A first-run guide"));
         assert!(release_title().starts_with("What's new"));
         set_language(UiLanguage::French);
     }

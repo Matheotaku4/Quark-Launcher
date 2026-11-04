@@ -487,7 +487,7 @@ impl QuarkApp {
         let sort = self.lib.settings.home_sort;
         let mut new_sort: Option<HomeSort> = None;
 
-        self.home_filters(ui);
+        self.filter_menu(ui, PADDING);
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.add_space(PADDING);
@@ -664,98 +664,6 @@ impl QuarkApp {
         }
         if let Some(option) = new_sort {
             self.lib.settings.home_sort = option;
-            self.touch();
-        }
-    }
-
-    /// Filtres de la bibliothèque : statut, genre Steam, tag personnel.
-    /// Un second clic sur une pastille active retire son filtre.
-    fn home_filters(&mut self, ui: &mut egui::Ui) {
-        let pal = self.pal;
-        let tags = self.lib.all_tags();
-        let genres = self.lib.all_genres();
-        if tags.is_empty() && genres.is_empty() {
-            return;
-        }
-        let mut new_status: Option<crate::config::GameStatus> = None;
-        let mut new_tag: Option<String> = None;
-        let mut new_genre: Option<String> = None;
-        let status = self.lib.settings.home_status;
-        let tag = self.lib.settings.home_tag.clone();
-        let genre = self.lib.settings.home_genre.clone();
-
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.add_space(PADDING);
-            ui.label(
-                crate::i18n::rich("FILTRES")
-                    .size(10.5)
-                    .color(pal.text_faint),
-            );
-        });
-        ui.add_space(4.0);
-        ui.horizontal_wrapped(|ui| {
-            ui.add_space(PADDING);
-            if widgets::chip_colored(
-                ui,
-                "Tout",
-                status == crate::config::GameStatus::None && tag.is_empty() && genre.is_empty(),
-                &pal,
-                pal.accent,
-            ) {
-                new_status = Some(crate::config::GameStatus::None);
-                new_tag = Some(String::new());
-                new_genre = Some(String::new());
-            }
-            for option in crate::config::GameStatus::ALL.iter().skip(1) {
-                let selected = status == *option;
-                let (r, g, b) = option.color();
-                if widgets::chip_colored(
-                    ui,
-                    &option.label(),
-                    selected,
-                    &pal,
-                    Color32::from_rgb(r, g, b),
-                ) {
-                    new_status = Some(if selected {
-                        crate::config::GameStatus::None
-                    } else {
-                        *option
-                    });
-                }
-            }
-            for (name, count) in &genres {
-                let selected = genre.eq_ignore_ascii_case(name);
-                if widgets::chip(ui, &format!("{name}"), selected, &pal) {
-                    new_genre = Some(if selected {
-                        String::new()
-                    } else {
-                        name.clone()
-                    });
-                }
-                let _ = count;
-            }
-            for (name, count) in &tags {
-                let selected = tag.eq_ignore_ascii_case(name);
-                if widgets::chip(ui, &format!("#{name} · {count}"), selected, &pal) {
-                    new_tag = Some(if selected {
-                        String::new()
-                    } else {
-                        name.clone()
-                    });
-                }
-            }
-        });
-        if let Some(status) = new_status {
-            self.lib.settings.home_status = status;
-            self.touch();
-        }
-        if let Some(tag) = new_tag {
-            self.lib.settings.home_tag = tag;
-            self.touch();
-        }
-        if let Some(genre) = new_genre {
-            self.lib.settings.home_genre = genre;
             self.touch();
         }
     }

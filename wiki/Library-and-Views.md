@@ -28,15 +28,19 @@ changement de page.
 - La recherche ignore les accents et compare séparément le titre, le
   développeur, les tags et les genres. Une requête ne peut donc pas correspondre
   en dispersant ses lettres entre plusieurs champs.
-- Un clic sur un tag ou un genre dans les filtres ajoute un filtre ; les filtres
-  actifs sont visibles au-dessus de la liste.
+- Le bouton **Filtres** ouvre un panneau unique pour le statut, le genre Steam
+  et les tags personnels. Le nombre de filtres actifs apparaît sur le bouton et
+  **Tout effacer** les retire d'un coup.
 
 ## Trier, filtrer, grouper
 
 **Tri** : nom, dernière session, date d'ajout ou temps de jeu.
 
-**Filtres** : statut (`Aucun`, `À jouer`, `En cours`, `Terminé`, `Abandonné`),
-genre Steam, tag personnel et recherche libre. Les filtres se combinent.
+**Filtres** : le bouton en forme d'entonnoir, au-dessus de la liste, regroupe
+le statut (`À jouer`, `En cours`, `Terminé`, `Abandonné`), le genre Steam et le
+tag personnel. Les filtres se combinent, restent ouverts pendant la sélection et
+le bouton indique leur nombre. **Tout effacer** remet la liste complète. La
+recherche libre reste dans la barre du haut.
 
 **Groupement** de la liste :
 
