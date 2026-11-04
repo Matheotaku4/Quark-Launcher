@@ -1,8 +1,9 @@
 # Wiki source
 
-This directory is the versioned source of the GitHub Wiki for Quark. The pages
-are written in French, like the default interface, and use GitHub Wiki links
-(`[Installation](Installation)`).
+This directory is the versioned source of the
+[Quark GitHub Wiki](https://github.com/Matheotaku4/Quark-Launcher/wiki). The
+pages are written in French, like the default interface, and use GitHub Wiki
+links (`[Installation](Installation)`).
 
 - `Home.md` — entry point and navigation.
 - `_Sidebar.md` — wiki sidebar.
@@ -14,8 +15,18 @@ are written in French, like the default interface, and use GitHub Wiki links
 GitHub keeps a wiki in a separate Git repository:
 `https://github.com/Matheotaku4/Quark-Launcher.wiki.git`.
 
-The wiki must already have a first page (GitHub creates the wiki repository when
-you save a first page in the web interface). Then, from this repository:
+The workflow [`.github/workflows/wiki.yml`](../.github/workflows/wiki.yml) copies
+every `*.md` page except this README into that repository on each push touching
+`wiki/`, and can also be started manually from the Actions tab. It uses the
+workflow token by default. If the repository restricts access to `.wiki.git`,
+add a repository secret named `WIKI_TOKEN` containing a PAT with wiki write
+access; the workflow uses it automatically.
+
+The wiki must keep at least one page so GitHub keeps the `.wiki.git` repository
+initialized. `Home.md` serves that purpose. Do not put a token, a password or a
+credential file in this directory.
+
+## Manual fallback
 
 ```bash
 git clone https://github.com/Matheotaku4/Quark-Launcher.wiki.git /tmp/quark-wiki
@@ -25,11 +36,3 @@ git add -A
 git commit -m "Documentation Quark 1.2.1"
 git push
 ```
-
-Do not put a token, a password or a credential file in this directory. Use the
-Git credential helper or GitHub Desktop/CLI for authentication.
-
-The wiki is currently **not published** from this environment: the repository
-has no initialized wiki and no GitHub authentication is available here. The
-Markdown source, sidebar, links and screenshots references are ready so the
-publication is a single sync once the wiki is initialized and authenticated.
