@@ -10,11 +10,12 @@ This is the **1.2.1** documentation. Older release notes are kept on the GitHub
 releases page; `docs/release-notes.md` only describes the release currently
 being published.
 
-**Documentation:** [Wiki source](wiki/Home.md) ·
-[Getting started](wiki/Getting-Started.md) ·
-[Proton and Wine options](wiki/Proton-Wine-and-Launch-Options.md) ·
-[Troubleshooting](wiki/Troubleshooting.md). The GitHub Wiki is a separate
-repository; its complete source lives in [`wiki/`](wiki/) until it is published.
+**Documentation:** [GitHub Wiki](https://github.com/Matheotaku4/Quark-Launcher/wiki) ·
+[Getting started](https://github.com/Matheotaku4/Quark-Launcher/wiki/Getting-Started) ·
+[Proton and Wine options](https://github.com/Matheotaku4/Quark-Launcher/wiki/Proton-Wine-and-Launch-Options) ·
+[Troubleshooting](https://github.com/Matheotaku4/Quark-Launcher/wiki/Troubleshooting).
+The wiki is published from the versioned source in [`wiki/`](wiki/) by the
+`.github/workflows/wiki.yml` workflow.
 
 ![Quark home](docs/images/home-fr.png)
 
