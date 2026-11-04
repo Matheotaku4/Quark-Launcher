@@ -5,6 +5,7 @@ use crate::config::{
     Artwork, AssetKind, Game, Library, ProtonMode, StartPage, ThemeMode, ViewMode, human_playtime,
 };
 use crate::disk::{self, DiskReport};
+use crate::i18n;
 use crate::news::{self, NewsItem};
 use crate::proton::{self, ProtonRuntime};
 use crate::protondb::{self, Report};
@@ -74,6 +75,29 @@ pub struct SiteSearchJob {
         crate::game_search::SearchSite,
         Result<Vec<crate::game_search::SiteHit>, String>,
     )>,
+}
+
+/// Choisit une bannière pour le fond aléatoire. Le tirage est fait une seule
+/// fois par session : changer de page ne change pas l'image sous les yeux.
+pub(crate) fn random_hero_from(lib: &Library) -> Option<String> {
+    let candidates: Vec<&Game> = lib
+        .games
+        .iter()
+        .filter(|game| {
+            game.artwork
+                .get(AssetKind::Hero)
+                .is_some_and(|path| path.exists())
+        })
+        .collect();
+    if candidates.is_empty() {
+        return None;
+    }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let index = (nanos ^ (std::process::id() as u128)) as usize % candidates.len();
+    Some(candidates[index].id.clone())
 }
 
 /// Vrai si la fiche n'a pas encore sa jaquette ou sa bannière. Un chemin
@@ -568,6 +592,13 @@ pub struct QuarkApp {
     pub add: AddGame,
     pub settings_open: bool,
     pub settings_tab: SettingsTab,
+    /// Parcours de bienvenue du premier lancement.
+    pub onboarding_open: bool,
+    pub onboarding_step: usize,
+    /// Résumé de la version courante, montré une fois après une mise à jour.
+    pub whats_new_open: bool,
+    /// Hero tiré au hasard pour le fond de l'accueil, fixé pour cette session.
+    pub random_hero_game: Option<String>,
     pub editing: Option<Game>,
     /// Recherche de liaison Steam / SteamGridDB ouverte dans les paramètres
     /// d'un jeu qui n'a pas encore de source d'images.
@@ -837,6 +868,11 @@ impl QuarkApp {
     /// de la fenêtre réelle ou du rendu hors écran (`quark --ui`).
     pub fn new(ctx: &egui::Context) -> Self {
         let lib = Library::load();
+        i18n::set_language(lib.settings.ui_language);
+        let onboarding_open = !lib.settings.onboarding_done;
+        let whats_new_open =
+            !onboarding_open && lib.settings.last_seen_version != update::current_version();
+        let random_hero_game = random_hero_from(&lib);
         let store_snapshot = crate::steam_store::load_cache(&crate::steam_store::cache_path())
             .ok()
             .flatten();
@@ -902,6 +938,10 @@ impl QuarkApp {
             },
             settings_open: false,
             settings_tab: SettingsTab::Appearance,
+            onboarding_open,
+            onboarding_step: 0,
+            whats_new_open,
+            random_hero_game,
             editing: None,
             game_link_query: String::new(),
             game_link_for: None,
@@ -1023,6 +1063,34 @@ impl QuarkApp {
             missing_flash: HashMap::new(),
             quitting: false,
         }
+    }
+
+    /// Nouveau hero de fond, en évitant de retomber sur celui déjà affiché.
+    pub fn pick_random_background(&mut self) {
+        let candidates: Vec<String> = self
+            .lib
+            .games
+            .iter()
+            .filter(|game| {
+                game.artwork
+                    .get(AssetKind::Hero)
+                    .is_some_and(|path| path.exists())
+            })
+            .map(|game| game.id.clone())
+            .collect();
+        if candidates.is_empty() {
+            self.random_hero_game = None;
+            return;
+        }
+        let current = self.random_hero_game.as_deref();
+        let start = random_hero_from(&self.lib)
+            .and_then(|id| candidates.iter().position(|candidate| *candidate == id))
+            .unwrap_or(0);
+        let next = (start..start + candidates.len())
+            .map(|offset| offset % candidates.len())
+            .find(|index| Some(candidates[*index].as_str()) != current)
+            .unwrap_or(start);
+        self.random_hero_game = Some(candidates[next].clone());
     }
 
     pub fn touch(&mut self) {
@@ -2677,7 +2745,7 @@ impl QuarkApp {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new(errors.join(" · "))
+                        crate::i18n::rich(errors.join(" · "))
                             .size(11.5)
                             .color(pal.danger),
                     );
@@ -2720,7 +2788,12 @@ impl QuarkApp {
                         pal.accent_hover,
                     );
                     ui.add_space(4.0);
-                    ui.label(RichText::new("QUARK").size(16.0).strong().color(pal.text));
+                    ui.label(
+                        crate::i18n::rich("QUARK")
+                            .size(16.0)
+                            .strong()
+                            .color(pal.text),
+                    );
                     ui.add_space(30.0);
 
                     if widgets::tab(ui, "Boutique", self.tab == Tab::Store, &pal).clicked() {
@@ -2809,12 +2882,14 @@ impl QuarkApp {
                                 Vec2::new(260.0, 30.0),
                                 egui::TextEdit::singleline(&mut self.filter)
                                     .id(egui::Id::new("quark_filter"))
-                                    .hint_text("Rechercher dans la bibliothèque  ·  Ctrl+F")
+                                    .hint_text(crate::i18n::tr(
+                                        "Rechercher dans la bibliothèque  ·  Ctrl+F",
+                                    ))
                                     .font(FontId::proportional(12.5)),
                             );
                         } else if self.tab == Tab::Store {
                             ui.label(
-                                RichText::new("Catalogue Steam")
+                                crate::i18n::rich("Catalogue Steam")
                                     .size(11.5)
                                     .color(pal.text_faint),
                             );
@@ -2863,7 +2938,7 @@ impl QuarkApp {
                             .show(ui, |ui| {
                                 ui.set_max_width(380.0);
                                 ui.label(
-                                    RichText::new(&toast.text)
+                                    crate::i18n::rich(&toast.text)
                                         .size(12.5)
                                         .color(text_color.gamma_multiply(alpha)),
                                 );
@@ -3022,6 +3097,8 @@ impl QuarkApp {
         }
 
         self.poll_game_link_search();
+        self.onboarding_dialog(ctx);
+        self.whats_new_dialog(ctx);
         self.downloads_panel(ctx);
         self.add_dialog(ctx);
         self.saved_views_dialog(ctx);
@@ -3307,7 +3384,7 @@ impl QuarkApp {
                         ui.set_min_width(360.0);
                         ui.horizontal(|ui| {
                             ui.label(
-                                RichText::new("TÉLÉCHARGEMENTS")
+                                crate::i18n::rich("TÉLÉCHARGEMENTS")
                                     .size(10.0)
                                     .strong()
                                     .color(pal.accent),
@@ -4635,24 +4712,24 @@ impl QuarkApp {
             let mut close = false;
             egui::Modal::new(egui::Id::new("quark_save_backup_preview")).show(ctx, |ui| {
                 ui.set_min_width(460.0);
-                ui.label(RichText::new(format!("Aperçu de sauvegarde · {title}")).size(17.0).color(pal.text));
+                ui.label(crate::i18n::rich(format!("Aperçu de sauvegarde · {title}")).size(17.0).color(pal.text));
                 ui.add_space(8.0);
                 let changed = preview.changed_games.map_or_else(|| "—".to_string(), |value| value.to_string());
                 let processed = preview.processed_games.map_or_else(|| "—".to_string(), |value| value.to_string());
                 let bytes = preview.processed_bytes.map_or_else(|| "—".to_string(), |value| value.to_string());
-                ui.label(RichText::new(format!("Jeux modifiés : {changed} · traités : {processed} · données : {bytes} octets")).size(12.0).color(pal.text_dim));
+                ui.label(crate::i18n::rich(format!("Jeux modifiés : {changed} · traités : {processed} · données : {bytes} octets")).size(12.0).color(pal.text_dim));
                 if !preview.errors.is_empty() {
                     ui.add_space(8.0);
-                    ui.label(RichText::new("Ludusavi a signalé une erreur; aucune sauvegarde ne sera déclarée réussie.").size(12.0).color(pal.danger));
+                    ui.label(crate::i18n::rich("Ludusavi a signalé une erreur; aucune sauvegarde ne sera déclarée réussie.").size(12.0).color(pal.danger));
                 }
                 if preview.files.iter().any(|file| file.failed) {
-                    ui.label(RichText::new("Certains fichiers ont échoué; vérifie les détails via Ludusavi.").size(11.5).color(pal.danger));
+                    ui.label(crate::i18n::rich("Certains fichiers ont échoué; vérifie les détails via Ludusavi.").size(11.5).color(pal.danger));
                 }
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     let can_backup = preview.errors.is_empty() && !preview.files.iter().any(|file| file.failed);
-                    if ui.add_enabled(can_backup, egui::Button::new("Continuer vers la confirmation")).clicked() { begin_confirmation = true; }
-                    if ui.button("Fermer").clicked() { close = true; }
+                    if ui.add_enabled(can_backup, egui::Button::new(crate::i18n::tr("Continuer vers la confirmation"))).clicked() { begin_confirmation = true; }
+                    if ui.button(crate::i18n::tr("Fermer")).clicked() { close = true; }
                 });
             });
             if begin_confirmation {
@@ -4671,13 +4748,13 @@ impl QuarkApp {
         let mut cancel = false;
         egui::Modal::new(egui::Id::new("quark_save_backup_confirmation")).show(ctx, |ui| {
             ui.set_min_width(440.0);
-            ui.label(RichText::new("Confirmer la sauvegarde locale ?").size(17.0).color(pal.text));
+            ui.label(crate::i18n::rich("Confirmer la sauvegarde locale ?").size(17.0).color(pal.text));
             ui.add_space(8.0);
-            ui.label(RichText::new(format!("Ludusavi va écrire les données de {confirm_title} dans le coffre local de cette installation. Les sauvegardes sont limitées à 10 versions complètes sans différentielles; les anciennes sauvegardes au-delà de la limite peuvent être supprimées par Ludusavi.")).size(12.0).color(pal.text_dim));
+            ui.label(crate::i18n::rich(format!("Ludusavi va écrire les données de {confirm_title} dans le coffre local de cette installation. Les sauvegardes sont limitées à 10 versions complètes sans différentielles; les anciennes sauvegardes au-delà de la limite peuvent être supprimées par Ludusavi.")).size(12.0).color(pal.text_dim));
             ui.add_space(12.0);
             ui.horizontal(|ui| {
-                if ui.button("Créer la sauvegarde").clicked() { confirm = true; }
-                if ui.button("Annuler").clicked() { cancel = true; }
+                if ui.button(crate::i18n::tr("Créer la sauvegarde")).clicked() { confirm = true; }
+                if ui.button(crate::i18n::tr("Annuler")).clicked() { cancel = true; }
             });
         });
         if confirm {
@@ -4692,30 +4769,32 @@ impl QuarkApp {
             egui::Modal::new(egui::Id::new("quark_save_inventory")).show(ctx, |ui| {
                 ui.set_min_width(500.0);
                 ui.label(
-                    RichText::new(format!("Sauvegardes locales · {title}"))
+                    crate::i18n::rich(format!("Sauvegardes locales · {title}"))
                         .size(17.0)
                         .color(pal.text),
                 );
                 ui.add_space(8.0);
                 if backups.is_empty() {
                     ui.label(
-                        RichText::new("Aucune sauvegarde dans le coffre de cette installation.")
-                            .size(12.0)
-                            .color(pal.text_dim),
+                        crate::i18n::rich(
+                            "Aucune sauvegarde dans le coffre de cette installation.",
+                        )
+                        .size(12.0)
+                        .color(pal.text_dim),
                     );
                 }
                 for backup in &backups {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(&backup.when).size(12.0).color(pal.text));
+                        ui.label(crate::i18n::rich(&backup.when).size(12.0).color(pal.text));
                         if backup.locked {
-                            ui.label(RichText::new("Protégée").size(10.0).color(pal.accent));
+                            ui.label(crate::i18n::rich("Protégée").size(10.0).color(pal.accent));
                         }
                         if ui.small_button("Aperçu restauration…").clicked() {
                             selected = Some(backup.clone());
                         }
                     });
                 }
-                if ui.button("Fermer").clicked() {
+                if ui.button(crate::i18n::tr("Fermer")).clicked() {
                     close = true;
                 }
             });
@@ -4733,12 +4812,12 @@ impl QuarkApp {
             egui::Modal::new(egui::Id::new("quark_restore_preview")).show(ctx, |ui| {
                 ui.set_min_width(560.0);
                 ui.label(
-                    RichText::new(format!("Aperçu de restauration · {title}"))
+                    crate::i18n::rich(format!("Aperçu de restauration · {title}"))
                         .size(17.0)
                         .color(pal.text),
                 );
                 ui.label(
-                    RichText::new(format!(
+                    crate::i18n::rich(format!(
                         "Snapshot {} · {} fichier(s) concernés",
                         backup.when,
                         preview.files.len()
@@ -4751,14 +4830,16 @@ impl QuarkApp {
                     .max_height(240.0)
                     .show(ui, |ui| {
                         for file in &preview.files {
-                            ui.label(RichText::new(&file.path).size(10.5).color(pal.text_dim));
+                            ui.label(crate::i18n::rich(&file.path).size(10.5).color(pal.text_dim));
                         }
                     });
                 if !preview.errors.is_empty() || preview.files.iter().any(|file| file.failed) {
                     ui.label(
-                        RichText::new("L'aperçu contient des erreurs; restauration désactivée.")
-                            .size(11.5)
-                            .color(pal.danger),
+                        crate::i18n::rich(
+                            "L'aperçu contient des erreurs; restauration désactivée.",
+                        )
+                        .size(11.5)
+                        .color(pal.danger),
                     );
                 }
                 ui.add_space(8.0);
@@ -4768,13 +4849,15 @@ impl QuarkApp {
                     if ui
                         .add_enabled(
                             safe,
-                            egui::Button::new("Restaurer et remplacer les fichiers concernés…"),
+                            egui::Button::new(crate::i18n::tr(
+                                "Restaurer et remplacer les fichiers concernés…",
+                            )),
                         )
                         .clicked()
                     {
                         confirm = true;
                     }
-                    if ui.button("Fermer").clicked() {
+                    if ui.button(crate::i18n::tr("Fermer")).clicked() {
                         close = true;
                     }
                 });
@@ -4793,12 +4876,12 @@ impl QuarkApp {
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("quark_restore_confirmation")).show(ctx, |ui| {
                 ui.set_min_width(440.0);
-                ui.label(RichText::new("Confirmer le remplacement des sauvegardes ?").size(17.0).color(pal.danger));
-                ui.label(RichText::new(format!("Les fichiers de {title} seront restaurés depuis le snapshot {backup_id}. Les fichiers présents aux destinations pourront être écrasés.")).size(12.0).color(pal.text_dim));
+                ui.label(crate::i18n::rich("Confirmer le remplacement des sauvegardes ?").size(17.0).color(pal.danger));
+                ui.label(crate::i18n::rich(format!("Les fichiers de {title} seront restaurés depuis le snapshot {backup_id}. Les fichiers présents aux destinations pourront être écrasés.")).size(12.0).color(pal.text_dim));
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Confirmer la restauration").clicked() { confirm = true; }
-                    if ui.button("Annuler").clicked() { cancel = true; }
+                    if ui.button(crate::i18n::tr("Confirmer la restauration")).clicked() { confirm = true; }
+                    if ui.button(crate::i18n::tr("Annuler")).clicked() { cancel = true; }
                 });
             });
             if confirm {
@@ -5169,13 +5252,13 @@ impl QuarkApp {
             };
             ui.set_width(560.0);
             ui.label(
-                RichText::new(format!("Installer « {} »", request.title))
+                crate::i18n::rich(format!("Installer « {} »", request.title))
                     .size(17.0)
                     .color(pal.text),
             );
             ui.add_space(4.0);
             ui.label(
-                RichText::new(match request.key.provider {
+                crate::i18n::rich(match request.key.provider {
                     crate::providers::Provider::Epic => "Epic Games · via Legendary",
                     crate::providers::Provider::Gog => "GOG · via gogdl",
                     crate::providers::Provider::Steam => "Steam",
@@ -5187,23 +5270,26 @@ impl QuarkApp {
             let size_text = if request.size_rx.is_some() {
                 "Taille : calcul en cours…".to_string()
             } else if let Some(size) = request.size {
-                format!("Taille à télécharger : {}", disk::format_bytes(size))
+                format!(
+                    "Taille à télécharger : {}",
+                    disk::format_bytes(size, crate::i18n::is_english())
+                )
             } else if let Some(error) = &request.size_error {
                 format!("Taille non communiquée ({error})")
             } else {
                 "Taille non communiquée par la boutique".to_string()
             };
-            ui.label(RichText::new(size_text).size(12.5).color(pal.text));
+            ui.label(crate::i18n::rich(size_text).size(12.5).color(pal.text));
             ui.add_space(8.0);
             ui.label(
-                RichText::new("Dossier d'installation")
+                crate::i18n::rich("Dossier d'installation")
                     .size(10.5)
                     .color(pal.text_faint),
             );
             ui.horizontal(|ui| {
                 ui.add(
                     egui::Label::new(
-                        RichText::new(request.destination.display().to_string())
+                        crate::i18n::rich(request.destination.display().to_string())
                             .size(11.5)
                             .color(pal.text_dim),
                     )
@@ -5215,7 +5301,7 @@ impl QuarkApp {
             });
             ui.add_space(10.0);
             ui.label(
-                RichText::new(
+                crate::i18n::rich(
                     "Le jeu sera créé dans ce dossier. Les sauvegardes et le préfixe Proton \
                      restent conservés en cas de désinstallation.",
                 )

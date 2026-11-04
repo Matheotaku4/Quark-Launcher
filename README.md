@@ -6,28 +6,64 @@ own, launches Windows games through Proton (or umu-launcher), and stays out of
 the way with an AMOLED interface, a store page, save snapshots and an in-game
 overlay.
 
-This is the 1.1.6 documentation. Older release notes are kept on the GitHub
+This is the **1.2.0** documentation. Older release notes are kept on the GitHub
 releases page; `docs/release-notes.md` only describes the release currently
 being published.
 
+**Documentation:** [Wiki source](wiki/Home.md) ·
+[Getting started](wiki/Getting-Started.md) ·
+[Proton and Wine options](wiki/Proton-Wine-and-Launch-Options.md) ·
+[Troubleshooting](wiki/Troubleshooting.md). The GitHub Wiki is a separate
+repository; its complete source lives in [`wiki/`](wiki/) until it is published.
+
+![Quark home](docs/images/home-fr.png)
+
+| Library | Settings |
+| --- | --- |
+| ![Library](docs/images/library-fr.png) | ![Settings](docs/images/settings-fr.png) |
+
+| Welcome guide | What's new |
+| --- | --- |
+| ![Onboarding](docs/images/onboarding-fr.png) | ![What's new](docs/images/whats-new-fr.png) |
+
+## What's new in 1.2.0
+
+- **A first-run guide** in three steps: discover Quark, change language, theme,
+  startup page and random hero background, then add a first game. Existing
+  libraries are marked as already welcomed and are not interrupted.
+- **A short release summary** once per version, with a **Review what's new**
+  action in Settings → About.
+- **French and English** across the whole interface, switched live from
+  Appearance. The interface language is separate from the Steam API language.
+- **Thirteen dark themes**: AMOLED, Graphite, Catppuccin Mocha, Macchiato and
+  Frappé, Dracula, Nord, Gruvbox Dark, Tokyo Night, Rosé Pine, Everforest, One
+  Dark and Kanagawa.
+- **A random blurred hero background** behind Home and Library, picked once per
+  session, with a 2–30 px blur slider.
+- **Full-screen Settings** with a sidebar and clearer sections instead of a
+  small dialog.
+- **Documentation**: a detailed wiki source in `wiki/`, screenshots in
+  `docs/images/`, and every Proton/Wine/umu variable explained.
+
 ## Table of contents
 
-1. [What Quark does](#what-quark-does)
-2. [Installation](#installation)
-3. [First launch](#first-launch)
-4. [Interface](#interface)
-5. [One game, several installations](#one-game-several-installations)
-6. [Stores, accounts and cloud saves](#stores-accounts-and-cloud-saves)
-7. [Achievements and the in-game overlay](#achievements-and-the-in-game-overlay)
-8. [Proton, umu and launch options](#proton-umu-and-launch-options)
-9. [Local saves and snapshots](#local-saves-and-snapshots)
-10. [Settings](#settings)
-11. [Command line](#command-line)
-12. [Files, data and privacy](#files-data-and-privacy)
-13. [Project layout](#project-layout)
-14. [Development and tests](#development-and-tests)
-15. [Known limitations](#known-limitations)
-16. [Licence](#licence)
+1. [What's new in 1.2.0](#whats-new-in-120)
+2. [What Quark does](#what-quark-does)
+3. [Installation](#installation)
+4. [First launch](#first-launch)
+5. [Interface](#interface)
+6. [One game, several installations](#one-game-several-installations)
+7. [Stores, accounts and cloud saves](#stores-accounts-and-cloud-saves)
+8. [Achievements and the in-game overlay](#achievements-and-the-in-game-overlay)
+9. [Proton, umu and launch options](#proton-umu-and-launch-options)
+10. [Local saves and snapshots](#local-saves-and-snapshots)
+11. [Settings](#settings)
+12. [Command line](#command-line)
+13. [Files, data and privacy](#files-data-and-privacy)
+14. [Project layout](#project-layout)
+15. [Development and tests](#development-and-tests)
+16. [Known limitations](#known-limitations)
+17. [Licence](#licence)
 
 ## What Quark does
 
@@ -47,9 +83,10 @@ being published.
   upstream data as the official clients.
 - **Local save snapshots.** Ludusavi creates verified snapshots before a launch
   and after a session, with preview, inventory and restore.
-- **A sober interface.** AMOLED black or Graphite, list or grid, a home
-  carousel, status columns, tags, filters, a Ctrl+K command palette and an
-  embedded Archivo font with Lucide icons.
+- **A sober, configurable interface.** Thirteen dark themes, French or English,
+  list or grid, a home carousel, a random blurred hero background, status
+  columns, tags, filters, a Ctrl+K command palette and an embedded Archivo font
+  with Lucide icons.
 
 Quark is not a store: it never buys anything, and it never downloads or
 extracts games from third-party download sites. Store search results open in
@@ -64,8 +101,8 @@ Download `quark-<version>-linux-x86_64.tar.gz` and its `.sha256` file from the
 then verify and unpack it:
 
 ```bash
-sha256sum -c quark-1.1.6-linux-x86_64.tar.gz.sha256
-tar -xzf quark-1.1.6-linux-x86_64.tar.gz
+sha256sum -c quark-1.2.0-linux-x86_64.tar.gz.sha256
+tar -xzf quark-1.2.0-linux-x86_64.tar.gz
 ./quark/quark
 ```
 
@@ -103,6 +140,12 @@ sudo apt-get install build-essential pkg-config libx11-dev libxkbcommon-dev \
 
 ## First launch
 
+A new configuration opens a three-step welcome guide. It is not blocking:
+**Skip** closes it. The guide changes the interface language, startup page,
+theme and hero background live, then offers to add a first game. Existing
+configurations are marked as already welcomed, so updating from 1.1.4 never
+shows it unexpectedly; they still see the 1.2.0 summary once.
+
 1. Open **Settings → Stores & tools** and install Legendary and/or gogdl with
    **Install / update**. Quark verifies the SHA-256 digest published by GitHub
    before running a downloaded tool.
@@ -126,10 +169,14 @@ last session, date added or hours played, and filter it by status, Steam genre
 or personal tag. The carousel can advance automatically; the delay is set in
 **Settings → Appearance**.
 
-**Startup page.** Settings → Appearance → **Page d’ouverture** decides what Quark
+**Startup page.** Settings → Appearance → **Startup page** decides what Quark
 opens at launch: **Home** (the default), **Library**, **Store** or **My games**.
 The choice is applied once when the window opens and is saved with the library;
 an older configuration without the setting starts on Home.
+
+**Random hero background.** Appearance → Background can reuse a library banner
+as a blurred backdrop behind Home and Library. One banner is picked per session;
+the blur radius is adjustable from 2 to 30 px and is part of the blur cache key.
 
 ### Library
 
@@ -331,17 +378,22 @@ and keeps the file.
 
 ## Settings
 
-The settings window uses a horizontal tab bar with eight pages, grouped by
-purpose:
+Settings occupy the whole window, with a left sidebar and sections separated by
+accented headings. The content scrolls independently and `Esc` or the top-right
+**×** closes the page.
 
-- **Interface:** Appearance, In game.
-- **Library:** New games, Artworks.
-- **Accounts:** Stores & tools.
-- **Data:** Statistics, Disk space.
-- **Quark:** About.
+- **Appearance:** interface language, 13 themes, random hero background,
+  startup page, list/grid, carousel, notification icon.
+- **In game:** overlay shortcut, screenshot key, achievement display and
+  cloud-save toggle.
+- **New games:** defaults copied into each newly added game.
+- **Artworks:** image sources, SteamGridDB key and cache.
+- **Stores & tools:** sync, accounts, managed tools and the EOS overlay.
+- **Statistics** and **Disk space:** play history and storage measurements.
+- **About:** version, updates, release link, guide and what's-new actions.
 
-**Appearance** contains the startup page, theme, default view, home carousel
-and notification icon. **In game** contains the overlay shortcut, screenshot key, achievement
+**Appearance** contains the startup page, interface language, 13-theme grid,
+random hero background, default view, home carousel and notification icon. **In game** contains the overlay shortcut, screenshot key, achievement
 display and cloud-save toggle. **New games** contains the values copied into
 each newly added game (prefix, install folder, arguments, runtime, anti-cheat,
 launch options, environment variables). These are defaults, not global
@@ -359,9 +411,9 @@ enabled (the default), verifies the SHA-256 and the new binary, replaces the
 executable in place and relaunches itself. It keeps the previous executable
 next to the new one until the next successful start. The automatic path is
 skipped for development builds and read-only installs; a game running in Quark
-blocks the install. Use **Check for updates** to do it manually. The first
-1.1.4 install was necessarily manual; 1.1.4 and later install subsequent
-releases automatically.
+blocks the install. Use **Check for updates** to do it manually. 1.1.4 and
+later install subsequent releases automatically with the same archive format;
+the manual archive remains available for read-only installs and for a recovery.
 
 ## Command line
 
@@ -377,10 +429,13 @@ quark --ui <file.png>     Render the interface off-screen (no display needed)
 quark --tray              Run the notification-icon process
 ```
 
-`--ui` accepts `--demo`, `--view`, `--group`, `--tab`, `--dialog`, `--select`,
-`--size`, `--frames`, `--hover`, `--click` and `--key`; `--demo` uses a
-temporary configuration and never reads or writes the real library.
-`--group` accepts `status`, `store`, `genre`, `year` or `none`.
+`--ui` accepts `--demo`, `--view`, `--group`, `--tab`, `--theme`, `--lang`,
+`--select`, `--dialog`, `--hero-bg`, `--blur`, `--size`, `--frames`, `--hover`,
+`--click` and `--key`; `--demo` uses a temporary configuration and never reads or
+writes the real library. `--group` accepts `status`, `store`, `genre`, `year` or
+`none`; `--lang` accepts `fr` or `en`; `--blur` is a 2–30 px radius.
+`--dialog` includes `onboarding`, `onboarding-settings` and `whats-new` for the
+new screens.
 
 ## Files, data and privacy
 
@@ -409,11 +464,14 @@ does not send telemetry.
 src/
   app.rs              application state, jobs and background workers
   config.rs           library, settings, Game and Installation models
+  i18n.rs             French/English catalogue and dynamic labels
+  theme.rs            the 13 palettes
   ui_command.rs       Ctrl+K command palette
-  ui_home.rs          home carousel
+  ui_home.rs          home carousel and random hero background
   ui_library.rs       library, game page and installation selector
   ui_my_games.rs      owned/installed store games and install actions
   ui_dialogs.rs       settings, add-game, game settings and save dialogs
+  ui_onboarding.rs    first-run guide and what's-new summary
   ui_providers.rs     store accounts and synchronization UI
   providers/          Steam, Epic (Legendary), GOG (gogdl), achievements,
                       cloud_saves, artwork and managed tools
@@ -422,8 +480,11 @@ src/
   saves/              Ludusavi integration and snapshot validation
   overlay.rs          in-game overlay, global shortcuts and X11 capture
   snapshot.rs         off-screen PNG renderer for the CI previews
+assets/i18n/en.json  English interface catalogue (French is the source)
+docs/images/          README and wiki screenshots
 docs/
   release-notes.md    notes for the current release only
+wiki/                 GitHub Wiki source: guides, Proton variables, help
 .github/workflows/
   rust.yml            tests and checks
   release.yml         build, previews and GitHub release

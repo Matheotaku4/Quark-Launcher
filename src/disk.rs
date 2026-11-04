@@ -62,39 +62,61 @@ pub fn dir_size(path: &Path) -> u64 {
 pub fn scan(lib: &Library) -> DiskReport {
     let mut rows: Vec<DiskRow> = Vec::new();
     let settings = &lib.settings;
+    let english = crate::i18n::is_english();
 
     let artwork = config::artwork_root();
     let artwork_bytes = dir_size(&artwork);
     rows.push(DiskRow {
-        label: "Cache d'artworks".to_string(),
+        label: crate::i18n::tr("Cache d'artworks"),
         path: artwork,
         bytes: artwork_bytes,
-        detail: format!(
-            "{} jeu(x) avec des images",
-            lib.games
+        detail: {
+            let count = lib
+                .games
                 .iter()
-                .filter(|game| game.artwork.cover.is_some()
-                    || game.artwork.hero.is_some()
-                    || game.artwork.logo.is_some()
-                    || game.artwork.icon.is_some())
-                .count()
-        ),
+                .filter(|game| {
+                    game.artwork.cover.is_some()
+                        || game.artwork.hero.is_some()
+                        || game.artwork.logo.is_some()
+                        || game.artwork.icon.is_some()
+                })
+                .count();
+            if english {
+                if count == 1 {
+                    "1 game with images".to_string()
+                } else {
+                    format!("{count} games with images")
+                }
+            } else if count == 1 {
+                "1 jeu avec des images".to_string()
+            } else {
+                format!("{count} jeux avec des images")
+            }
+        },
     });
 
     let logs = config::data_dir().join("logs");
     rows.push(DiskRow {
-        label: "Journaux de session".to_string(),
+        label: crate::i18n::tr("Journaux de session"),
         path: logs.clone(),
         bytes: dir_size(&logs),
-        detail: "un fichier session.log par jeu, réécrit à chaque lancement".to_string(),
+        detail: if english {
+            "one session.log per game, rewritten on each launch".to_string()
+        } else {
+            "un fichier session.log par jeu, réécrit à chaque lancement".to_string()
+        },
     });
 
     let updates = config::data_dir().join("updates");
     rows.push(DiskRow {
-        label: "Archives de mise à jour".to_string(),
+        label: crate::i18n::tr("Archives de mise à jour"),
         path: updates.clone(),
         bytes: dir_size(&updates),
-        detail: "téléchargées depuis les releases GitHub".to_string(),
+        detail: if english {
+            "downloaded from GitHub releases".to_string()
+        } else {
+            "téléchargées depuis les releases GitHub".to_string()
+        },
     });
 
     // Un dossier de préfixe par chemin réel : plusieurs jeux peuvent partager
@@ -113,9 +135,17 @@ pub fn scan(lib: &Library) -> DiskReport {
     prefixes.sort_by(|a, b| a.0.cmp(&b.0));
     for (path, count) in prefixes {
         let bytes = dir_size(&path);
-        let mut detail = "préfixe Proton".to_string();
+        let mut detail = if english {
+            "Proton prefix".to_string()
+        } else {
+            "préfixe Proton".to_string()
+        };
         if count > 1 {
-            detail = format!("partagé par {count} jeux");
+            detail = if english {
+                format!("shared by {count} games")
+            } else {
+                format!("partagé par {count} jeux")
+            };
         }
         if let Some(game) = lib
             .games
@@ -125,7 +155,7 @@ pub fn scan(lib: &Library) -> DiskReport {
             detail = format!("{} · {detail}", game.name);
         }
         rows.push(DiskRow {
-            label: "Préfixe Proton".to_string(),
+            label: crate::i18n::tr("Préfixe Proton"),
             path,
             bytes,
             detail,
@@ -154,7 +184,7 @@ pub fn scan(lib: &Library) -> DiskReport {
     game_dirs.sort_by(|a, b| a.0.cmp(&b.0));
     for (dir, name) in game_dirs {
         rows.push(DiskRow {
-            label: "Jeu".to_string(),
+            label: crate::i18n::tr("Jeu"),
             path: dir.clone(),
             bytes: dir_size(&dir),
             detail: name,
@@ -177,18 +207,29 @@ pub fn spawn(lib: Library) -> std::sync::mpsc::Receiver<DiskReport> {
 }
 
 /// « 1,4 Go » : taille lisible, en français.
-pub fn format_bytes(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["o", "Ko", "Mo", "Go", "To"];
+pub fn format_bytes(bytes: u64, english: bool) -> String {
+    const FR: [&str; 5] = ["o", "Ko", "Mo", "Go", "To"];
+    const EN: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let units = if english { EN } else { FR };
     let mut value = bytes as f64;
     let mut unit = 0;
-    while value >= 1024.0 && unit + 1 < UNITS.len() {
+    while value >= 1024.0 && unit + 1 < units.len() {
         value /= 1024.0;
         unit += 1;
     }
     if unit == 0 {
-        format!("{bytes} o")
+        format!("{bytes} {}", units[0])
     } else {
-        format!("{value:.1} {}", UNITS[unit]).replace('.', ",")
+        let number = format!("{value:.1}");
+        format!(
+            "{} {}",
+            if english {
+                number
+            } else {
+                number.replace('.', ",")
+            },
+            units[unit]
+        )
     }
 }
 
@@ -198,11 +239,15 @@ mod tests {
 
     #[test]
     fn les_tailles_sont_lisibles() {
-        assert_eq!(format_bytes(0), "0 o");
-        assert_eq!(format_bytes(512), "512 o");
-        assert_eq!(format_bytes(1024), "1,0 Ko");
-        assert_eq!(format_bytes(1_572_864), "1,5 Mo");
-        assert_eq!(format_bytes(12 * 1024 * 1024 * 1024), "12,0 Go");
+        assert_eq!(format_bytes(0, false), "0 o");
+        assert_eq!(format_bytes(512, false), "512 o");
+        assert_eq!(format_bytes(1024, false), "1,0 Ko");
+        assert_eq!(format_bytes(1_572_864, false), "1,5 Mo");
+        assert_eq!(format_bytes(12 * 1024 * 1024 * 1024, false), "12,0 Go");
+        assert_eq!(format_bytes(0, true), "0 B");
+        assert_eq!(format_bytes(1024, true), "1.0 KB");
+        assert_eq!(format_bytes(1_572_864, true), "1.5 MB");
+        assert_eq!(format_bytes(12 * 1024 * 1024 * 1024, true), "12.0 GB");
     }
 
     #[test]

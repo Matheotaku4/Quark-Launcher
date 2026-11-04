@@ -286,10 +286,7 @@ fn parse_gamebounty(text: &str) -> Result<Vec<SiteHit>, String> {
             if title.is_empty() || slug.is_empty() {
                 return None;
             }
-            let size = item
-                .get("size_human")
-                .and_then(Value::as_str)
-                .unwrap_or("");
+            let size = item.get("size_human").and_then(Value::as_str).unwrap_or("");
             let version = item.get("version").and_then(Value::as_str).unwrap_or("");
             Some(SiteHit {
                 title: title.to_string(),
@@ -338,8 +335,7 @@ fn parse_kryoto(text: &str) -> Result<Vec<SiteHit>, String> {
                 title: title.to_string(),
                 url: format!("https://kryo.to/game/{slug}"),
                 detail: clean_detail(&[developer, &year]),
-                cover: http_url(item.get("cover_vertical"))
-                    .or_else(|| http_url(item.get("cover"))),
+                cover: http_url(item.get("cover_vertical")).or_else(|| http_url(item.get("cover"))),
             })
         })
         .collect())
@@ -368,9 +364,9 @@ fn parse_scene(text: &str) -> Result<Vec<SiteHit>, String> {
     }
     let mut hits = Vec::new();
     for block in text.split(marker).skip(1) {
-        let Some(id) = between(block, "id=\"release-", "\"").filter(|id| {
-            !id.is_empty() && id.chars().all(|character| character.is_ascii_digit())
-        }) else {
+        let Some(id) = between(block, "id=\"release-", "\"")
+            .filter(|id| !id.is_empty() && id.chars().all(|character| character.is_ascii_digit()))
+        else {
             continue;
         };
         let Some(raw_title) = between(block, "release-name\" title=\"", "\"") else {
@@ -380,13 +376,17 @@ fn parse_scene(text: &str) -> Result<Vec<SiteHit>, String> {
         if title.is_empty() {
             continue;
         }
-        let category = between(block, "Category: <span class=\"text-zinc-400 font-normal\">", "</span>")
-            .unwrap_or("")
-            .trim();
+        let category = between(
+            block,
+            "Category: <span class=\"text-zinc-400 font-normal\">",
+            "</span>",
+        )
+        .unwrap_or("")
+        .trim();
         let size = between(block, "data-size=\"", "\"")
             .and_then(|size| size.parse::<u64>().ok())
             .filter(|size| *size > 0)
-            .map(crate::disk::format_bytes)
+            .map(|size| crate::disk::format_bytes(size, crate::i18n::is_english()))
             .unwrap_or_default();
         let cover = block
             .find("class=\"metadata-cover")
@@ -526,9 +526,11 @@ mod tests {
 
     #[test]
     fn une_page_scene_sans_resultat_n_est_pas_une_erreur() {
-        assert!(parse_scene("<html><body>Rien ici</body></html>")
-            .unwrap()
-            .is_empty());
+        assert!(
+            parse_scene("<html><body>Rien ici</body></html>")
+                .unwrap()
+                .is_empty()
+        );
         assert!(parse_scene("Just a moment").is_err());
     }
 
@@ -544,10 +546,7 @@ mod tests {
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].title, "Cyberpunk 2077");
         assert_eq!(hits[0].url, "https://astralgames.net/game/cyberpunk-2077");
-        assert_eq!(
-            hits[1].url,
-            "https://astralgames.net/game/va-11-hall-a"
-        );
+        assert_eq!(hits[1].url, "https://astralgames.net/game/va-11-hall-a");
     }
 
     #[test]

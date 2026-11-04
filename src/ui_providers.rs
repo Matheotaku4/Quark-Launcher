@@ -51,7 +51,7 @@ impl QuarkApp {
 
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new(
+                crate::i18n::rich(
                     "Lancée automatiquement au démarrage, boutique par boutique. \
                      Chaque synchronisation remplace seulement les jeux de sa boutique.",
                 )
@@ -122,9 +122,9 @@ impl QuarkApp {
         ] {
             let (count, last) = summary[index];
             ui.horizontal(|ui| {
-                ui.label(RichText::new(label).size(12.5).strong().color(pal.text));
+                ui.label(crate::i18n::rich(label).size(12.5).strong().color(pal.text));
                 ui.label(
-                    RichText::new(if count > 1 {
+                    crate::i18n::rich(if count > 1 {
                         format!("{count} jeux")
                     } else if count == 1 {
                         "1 jeu".to_string()
@@ -136,7 +136,7 @@ impl QuarkApp {
                 );
                 if let Some(ts) = last {
                     ui.label(
-                        RichText::new(crate::config::human_ago(ts))
+                        crate::i18n::rich(crate::config::human_ago(ts))
                             .size(11.0)
                             .color(pal.text_faint),
                     );
@@ -158,9 +158,9 @@ impl QuarkApp {
                     });
                 });
             });
-            ui.label(RichText::new(note).size(11.0).color(pal.text_dim));
+            ui.label(crate::i18n::rich(note).size(11.0).color(pal.text_dim));
             if let Some(error) = error {
-                ui.label(RichText::new(error).size(11.0).color(pal.danger));
+                ui.label(crate::i18n::rich(error).size(11.0).color(pal.danger));
             }
             ui.add_space(4.0);
         }
@@ -168,7 +168,7 @@ impl QuarkApp {
             ui.horizontal(|ui| {
                 ui.add(egui::Spinner::new().size(12.0));
                 ui.label(
-                    RichText::new("Synchronisation en cours…")
+                    crate::i18n::rich("Synchronisation en cours…")
                         .size(11.0)
                         .color(pal.text_faint),
                 );
@@ -275,8 +275,8 @@ fn account_row(
 ) -> bool {
     let mut clicked = false;
     ui.horizontal_wrapped(|ui| {
-        ui.label(RichText::new(provider).size(12.0).color(pal.text));
-        ui.label(RichText::new(status).size(11.0).color(pal.text_dim));
+        ui.label(crate::i18n::rich(provider).size(12.0).color(pal.text));
+        ui.label(crate::i18n::rich(status).size(11.0).color(pal.text_dim));
         if let Some(label) = action {
             if crate::widgets::ghost_button(ui, label, pal, crate::widgets::Icon::Plus).clicked() {
                 clicked = true;
@@ -322,7 +322,11 @@ fn login_form(
         .corner_radius(6.0)
         .inner_margin(egui::Margin::symmetric(12, 10))
         .show(ui, |ui| {
-            ui.label(RichText::new(instructions).size(11.5).color(pal.text_dim));
+            ui.label(
+                crate::i18n::rich(instructions)
+                    .size(11.5)
+                    .color(pal.text_dim),
+            );
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
                 if crate::widgets::ghost_button(
@@ -340,14 +344,14 @@ fn login_form(
                     Vec2::new(320.0, 28.0),
                     egui::TextEdit::singleline(&mut login.code)
                         .password(true)
-                        .hint_text("Code d'autorisation"),
+                        .hint_text(crate::i18n::tr("Code d'autorisation")),
                 );
                 let submitted =
                     field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
                 if ui
                     .add_enabled(
                         !busy && !login.code.trim().is_empty(),
-                        egui::Button::new("Connecter"),
+                        egui::Button::new(crate::i18n::tr("Connecter")),
                     )
                     .clicked()
                     || (submitted && !busy && !login.code.trim().is_empty())
@@ -355,7 +359,7 @@ fn login_form(
                     action = LoginAction::Submit;
                 }
                 if ui
-                    .add_enabled(!busy, egui::Button::new("Annuler"))
+                    .add_enabled(!busy, egui::Button::new(crate::i18n::tr("Annuler")))
                     .clicked()
                 {
                     action = LoginAction::Cancel;
@@ -365,12 +369,12 @@ fn login_form(
                 }
             });
             if let Some(error) = &login.error {
-                ui.label(RichText::new(error).size(11.5).color(pal.danger));
+                ui.label(crate::i18n::rich(error).size(11.5).color(pal.danger));
             } else if let Some(status) = &login.status {
-                ui.label(RichText::new(status).size(11.0).color(pal.accent));
+                ui.label(crate::i18n::rich(status).size(11.0).color(pal.accent));
             }
             ui.label(
-                RichText::new(
+                crate::i18n::rich(
                     "Le code est échangé par l'outil officiel ; Quark ne conserve que la session \
                      écrite par cet outil, et n'affiche jamais le code ni les jetons.",
                 )

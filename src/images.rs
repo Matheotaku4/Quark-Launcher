@@ -221,7 +221,9 @@ impl QuarkApp {
 /// par fichier.
 #[derive(Default)]
 pub struct BlurCache {
-    entries: HashMap<PathBuf, (Option<SystemTime>, TextureHandle)>,
+    /// La clé contient le rayon : régler le flou ne doit pas réutiliser
+    /// silencieusement l'ancienne texture.
+    entries: HashMap<(PathBuf, u8), (Option<SystemTime>, TextureHandle)>,
 }
 
 const BLUR_WIDTH: u32 = 144;
@@ -231,9 +233,11 @@ const BLUR_WIDTH: u32 = 144;
 const BLUR_BUDGET: usize = 32;
 
 impl BlurCache {
-    pub fn get(&mut self, ctx: &egui::Context, path: &Path) -> Option<&TextureHandle> {
+    pub fn get(&mut self, ctx: &egui::Context, path: &Path, radius: f32) -> Option<&TextureHandle> {
+        let radius = radius.clamp(2.0, 30.0).round() as u8;
+        let key = (path.to_path_buf(), radius);
         let modified = std::fs::metadata(path).ok().and_then(|m| m.modified().ok());
-        let stale = match self.entries.get(path) {
+        let stale = match self.entries.get(&key) {
             Some((stamp, _)) => *stamp != modified,
             None => true,
         };
@@ -253,35 +257,40 @@ impl BlurCache {
                 .to_rgba8();
             // Un rayon un peu plus large compense la résolution plus haute :
             // le fond est doux au lieu d'être une bouillie de gros pixels.
-            let blurred = image::imageops::blur(&small, 6.0);
+            let blurred = image::imageops::blur(&small, radius as f32);
             let color_image = egui::ColorImage::from_rgba_unmultiplied(
                 [blurred.width() as usize, blurred.height() as usize],
                 blurred.as_raw(),
             );
             let texture = ctx.load_texture(
-                format!("blur:{}", path.display()),
+                format!("blur:{}:{radius}", path.display()),
                 color_image,
                 egui::TextureOptions::LINEAR,
             );
             // Le clone ne coûte qu'un compteur de références ; il permet de
             // réinsérer la texture courante après un vidage.
             self.entries
-                .insert(path.to_path_buf(), (modified, texture.clone()));
+                .insert(key.clone(), (modified, texture.clone()));
             if self.entries.len() > BLUR_BUDGET {
                 // Vidage simple : ces textures sont recalculées à la demande en
                 // quelques millisecondes, la mémoire reste plate.
                 self.entries.clear();
-                self.entries.insert(path.to_path_buf(), (modified, texture));
+                self.entries.insert(key.clone(), (modified, texture));
             }
         }
-        self.entries.get(path).map(|(_, texture)| texture)
+        self.entries.get(&key).map(|(_, texture)| texture)
     }
 }
 
 impl QuarkApp {
     /// Texture floutée d'une bannière, pour le fond de la fiche.
-    pub fn blurred_texture(&mut self, ctx: &egui::Context, path: &Path) -> Option<TextureHandle> {
-        self.blurs.get(ctx, path).cloned()
+    pub fn blurred_texture(
+        &mut self,
+        ctx: &egui::Context,
+        path: &Path,
+        radius: f32,
+    ) -> Option<TextureHandle> {
+        self.blurs.get(ctx, path, radius).cloned()
     }
 }
 

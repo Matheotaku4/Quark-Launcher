@@ -23,14 +23,14 @@ impl QuarkApp {
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             ui.add_space(12.0);
-            ui.label(RichText::new("VUES").size(10.0).color(pal.text_faint));
+            ui.label(crate::i18n::rich("VUES").size(10.0).color(pal.text_faint));
             egui::ComboBox::from_id_salt("quark_saved_views")
-                .selected_text(RichText::new(active).size(11.0))
+                .selected_text(crate::i18n::rich(active).size(11.0))
                 .width(118.0)
                 .show_ui(ui, |ui| {
                     if views.is_empty() {
                         ui.label(
-                            RichText::new("Aucune vue enregistrée")
+                            crate::i18n::rich("Aucune vue enregistrée")
                                 .size(11.0)
                                 .color(pal.text_faint),
                         );
@@ -74,7 +74,7 @@ impl QuarkApp {
             ui.add_space(12.0);
             let mut sort = self.lib.settings.library_sort;
             egui::ComboBox::from_id_salt("quark_library_sort")
-                .selected_text(RichText::new(format!("Tri : {}", sort.label())).size(11.0))
+                .selected_text(crate::i18n::rich(format!("Tri : {}", sort.label())).size(11.0))
                 .width(104.0)
                 .show_ui(ui, |ui| {
                     for option in LibrarySort::ALL {
@@ -88,7 +88,7 @@ impl QuarkApp {
 
             let mut group = self.lib.settings.group_by;
             egui::ComboBox::from_id_salt("quark_library_group")
-                .selected_text(RichText::new(format!("Grouper : {}", group.label())).size(11.0))
+                .selected_text(crate::i18n::rich(format!("Grouper : {}", group.label())).size(11.0))
                 .width(118.0)
                 .show_ui(ui, |ui| {
                     for option in GroupBy::ALL {
@@ -172,12 +172,12 @@ impl QuarkApp {
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     ui.label(
-                        RichText::new("Vues enregistrées")
+                        crate::i18n::rich("Vues enregistrées")
                             .size(18.0)
                             .color(pal.text),
                     );
                     ui.label(
-                        RichText::new(
+                        crate::i18n::rich(
                             "Une vue garde la recherche, les filtres, le tri et le regroupement \
                              de la bibliothèque.",
                         )
@@ -196,7 +196,9 @@ impl QuarkApp {
                 let response = ui.add_sized(
                     Vec2::new(360.0, 30.0),
                     egui::TextEdit::singleline(&mut self.saved_view_name)
-                        .hint_text("Nom de la vue, par exemple « À jouer ce soir »")
+                        .hint_text(crate::i18n::tr(
+                            "Nom de la vue, par exemple « À jouer ce soir »",
+                        ))
                         .font(egui::FontId::proportional(12.5)),
                 );
                 if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
@@ -217,14 +219,14 @@ impl QuarkApp {
             });
             if let Some(error) = &self.saved_view_error {
                 ui.add_space(4.0);
-                ui.label(RichText::new(error).size(11.0).color(pal.danger));
+                ui.label(crate::i18n::rich(error).size(11.0).color(pal.danger));
             }
             ui.add_space(12.0);
             ui.separator();
             ui.add_space(8.0);
             if views.is_empty() {
                 ui.label(
-                    RichText::new(
+                    crate::i18n::rich(
                         "Aucune vue pour l'instant. Filtre la bibliothèque, puis enregistre-la \
                          ici.",
                     )
@@ -246,7 +248,7 @@ impl QuarkApp {
                                     ui.horizontal(|ui| {
                                         ui.vertical(|ui| {
                                             ui.label(
-                                                RichText::new(&view.name)
+                                                crate::i18n::rich(&view.name)
                                                     .size(12.5)
                                                     .color(pal.text),
                                             );
@@ -270,7 +272,7 @@ impl QuarkApp {
                                             details.push(view.view.label().to_string());
                                             details.push(format!("Tri : {}", view.sort.label()));
                                             ui.label(
-                                                RichText::new(details.join(" · "))
+                                                crate::i18n::rich(details.join(" · "))
                                                     .size(10.5)
                                                     .color(pal.text_faint),
                                             );
@@ -311,7 +313,7 @@ impl QuarkApp {
             ui.separator();
             ui.add_space(6.0);
             ui.label(
-                RichText::new(
+                crate::i18n::rich(
                     "Astuce : une vue peut aussi être appliquée depuis le menu « Vues » de la \
                      bibliothèque.",
                 )

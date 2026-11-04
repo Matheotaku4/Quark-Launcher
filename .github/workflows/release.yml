@@ -80,6 +80,12 @@ jobs:
             "marked:--view list --marked" \
             "dialog-remove-many:--marked --dialog remove" \
             "home:--home" \
+            "home-hero:--home --hero-bg --blur 18" \
+            "home-theme:--home --theme catppuccin-mocha" \
+            "settings-en:--dialog settings --lang en" \
+            "onboarding:--dialog onboarding" \
+            "onboarding-settings:--dialog onboarding-settings" \
+            "whats-new:--dialog whats-new" \
             "grid-overlay:--view grid --dialog overlay" \
             "settings-stats:--dialog settings-stats" \
             "settings-disk:--dialog settings-disk" \

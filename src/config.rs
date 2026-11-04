@@ -172,13 +172,13 @@ impl AssetKind {
         }
     }
 
-    pub fn label(self) -> &'static str {
-        match self {
+    pub fn label(self) -> String {
+        crate::i18n::tr(match self {
             AssetKind::Cover => "couverture",
             AssetKind::Hero => "bannière",
             AssetKind::Logo => "logo",
             AssetKind::Icon => "icône",
-        }
+        })
     }
 }
 
@@ -282,11 +282,11 @@ impl Default for ViewMode {
 }
 
 impl ViewMode {
-    pub fn label(self) -> &'static str {
-        match self {
+    pub fn label(self) -> String {
+        crate::i18n::tr(match self {
             ViewMode::List => "Liste",
             ViewMode::Grid => "Grille",
-        }
+        })
     }
 }
 
@@ -298,13 +298,122 @@ pub enum ThemeMode {
     Amoled,
     /// Noir/gris ardoise, un peu moins agressif sur les écrans non-OLED.
     Graphite,
+    CatppuccinMocha,
+    CatppuccinMacchiato,
+    CatppuccinFrappe,
+    Dracula,
+    Nord,
+    GruvboxDark,
+    TokyoNight,
+    RosePine,
+    Everforest,
+    OneDark,
+    Kanagawa,
 }
 
 impl ThemeMode {
-    pub fn label(self) -> &'static str {
+    pub const ALL: [ThemeMode; 13] = [
+        ThemeMode::Amoled,
+        ThemeMode::Graphite,
+        ThemeMode::CatppuccinMocha,
+        ThemeMode::CatppuccinMacchiato,
+        ThemeMode::CatppuccinFrappe,
+        ThemeMode::Dracula,
+        ThemeMode::Nord,
+        ThemeMode::GruvboxDark,
+        ThemeMode::TokyoNight,
+        ThemeMode::RosePine,
+        ThemeMode::Everforest,
+        ThemeMode::OneDark,
+        ThemeMode::Kanagawa,
+    ];
+
+    pub fn label(self) -> String {
+        crate::i18n::tr(match self {
+            ThemeMode::Amoled => "AMOLED",
+            ThemeMode::Graphite => "Graphite",
+            ThemeMode::CatppuccinMocha => "Catppuccin Mocha",
+            ThemeMode::CatppuccinMacchiato => "Catppuccin Macchiato",
+            ThemeMode::CatppuccinFrappe => "Catppuccin Frappé",
+            ThemeMode::Dracula => "Dracula",
+            ThemeMode::Nord => "Nord",
+            ThemeMode::GruvboxDark => "Gruvbox Dark",
+            ThemeMode::TokyoNight => "Tokyo Night",
+            ThemeMode::RosePine => "Rosé Pine",
+            ThemeMode::Everforest => "Everforest",
+            ThemeMode::OneDark => "One Dark",
+            ThemeMode::Kanagawa => "Kanagawa",
+        })
+    }
+
+    /// Description courte affichée sous le nom du thème.
+    pub fn description(self) -> String {
+        crate::i18n::tr(match self {
+            ThemeMode::Amoled => "Noir pur, contraste maximal",
+            ThemeMode::Graphite => "Noir doux et ardoise",
+            ThemeMode::CatppuccinMocha => "Pastel chaleureux sur espresso",
+            ThemeMode::CatppuccinMacchiato => "Pastel doux sur bleu nuit",
+            ThemeMode::CatppuccinFrappe => "Pastel froid sur ardoise",
+            ThemeMode::Dracula => "Violet et cyan sur nuit",
+            ThemeMode::Nord => "Bleu arctique et brume",
+            ThemeMode::GruvboxDark => "Ambre et terre cuite",
+            ThemeMode::TokyoNight => "Bleu électrique et néon",
+            ThemeMode::RosePine => "Rose poudré et mauve",
+            ThemeMode::Everforest => "Vert forêt et sauge",
+            ThemeMode::OneDark => "Bleu acier et graphite",
+            ThemeMode::Kanagawa => "Encre japonaise et indigo",
+        })
+    }
+}
+
+fn deserialize_theme<'de, D>(deserializer: D) -> Result<ThemeMode, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    Ok(match value.trim().to_ascii_lowercase().as_str() {
+        "graphite" => ThemeMode::Graphite,
+        "catppuccin_mocha" | "catppuccin-mocha" => ThemeMode::CatppuccinMocha,
+        "catppuccin_macchiato" | "catppuccin-macchiato" => ThemeMode::CatppuccinMacchiato,
+        "catppuccin_frappe" | "catppuccin-frappe" | "catppuccin_frappé" => {
+            ThemeMode::CatppuccinFrappe
+        }
+        "dracula" => ThemeMode::Dracula,
+        "nord" => ThemeMode::Nord,
+        "gruvbox_dark" | "gruvbox-dark" => ThemeMode::GruvboxDark,
+        "tokyo_night" | "tokyo-night" => ThemeMode::TokyoNight,
+        "rose_pine" | "rose-pine" => ThemeMode::RosePine,
+        "everforest" => ThemeMode::Everforest,
+        "one_dark" | "one-dark" => ThemeMode::OneDark,
+        "kanagawa" => ThemeMode::Kanagawa,
+        _ => ThemeMode::Amoled,
+    })
+}
+
+/// Langue de l'interface. Elle est distincte de `Settings.language`, qui est
+/// la langue demandée aux API Steam pour les fiches de boutique.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum UiLanguage {
+    #[default]
+    French,
+    English,
+}
+
+impl UiLanguage {
+    pub const ALL: [UiLanguage; 2] = [UiLanguage::French, UiLanguage::English];
+
+    pub fn label(self) -> String {
+        crate::i18n::tr(match self {
+            UiLanguage::French => "Français",
+            UiLanguage::English => "English",
+        })
+    }
+
+    pub fn short(self) -> &'static str {
         match self {
-            ThemeMode::Amoled => "AMOLED (noir profond)",
-            ThemeMode::Graphite => "Graphite (noir doux)",
+            UiLanguage::French => "FR",
+            UiLanguage::English => "EN",
         }
     }
 }
@@ -328,12 +437,12 @@ impl HomeSort {
     /// Nombre de jeux montrés dans le carrousel de l'accueil.
     pub const CAROUSEL: usize = 5;
 
-    pub fn label(self) -> &'static str {
-        match self {
+    pub fn label(self) -> String {
+        crate::i18n::tr(match self {
             HomeSort::Recent => "Joués récemment",
             HomeSort::Added => "Ajoutés récemment",
             HomeSort::Playtime => "Plus joués",
-        }
+        })
     }
 }
 
@@ -361,13 +470,13 @@ impl StartPage {
         StartPage::MyGames,
     ];
 
-    pub fn label(self) -> &'static str {
-        match self {
+    pub fn label(self) -> String {
+        crate::i18n::tr(match self {
             StartPage::Home => "Accueil",
             StartPage::Library => "Bibliothèque",
             StartPage::Store => "Boutique",
             StartPage::MyGames => "Mes jeux",
-        }
+        })
     }
 
     fn from_key(key: &str) -> Self {
@@ -410,14 +519,14 @@ impl GroupBy {
         GroupBy::None,
     ];
 
-    pub fn label(self) -> &'static str {
-        match self {
+    pub fn label(self) -> String {
+        crate::i18n::tr(match self {
             GroupBy::Status => "Statut",
             GroupBy::Store => "Boutique",
             GroupBy::Genre => "Genre",
             GroupBy::Year => "Année",
             GroupBy::None => "Aucun",
-        }
+        })
     }
 
     fn from_key(key: &str) -> Self {
@@ -459,13 +568,13 @@ impl LibrarySort {
         LibrarySort::Playtime,
     ];
 
-    pub fn label(self) -> &'static str {
-        match self {
+    pub fn label(self) -> String {
+        crate::i18n::tr(match self {
             LibrarySort::Name => "Nom",
             LibrarySort::Recent => "Dernière session",
             LibrarySort::Added => "Ajout récent",
             LibrarySort::Playtime => "Temps joué",
-        }
+        })
     }
 
     fn from_key(key: &str) -> Self {
@@ -601,20 +710,20 @@ impl GameStatus {
         GameStatus::None,
     ];
 
-    pub fn label(self) -> &'static str {
-        match self {
+    pub fn label(self) -> String {
+        crate::i18n::tr(match self {
             GameStatus::None => "Aucun",
             GameStatus::Backlog => "\u{c0} jouer",
             GameStatus::Playing => "En cours",
             GameStatus::Finished => "Termin\u{e9}",
             GameStatus::Dropped => "Abandonn\u{e9}",
-        }
+        })
     }
 
     /// Titre de section : « Sans statut » plutôt que « Aucun ».
-    pub fn column_label(self) -> &'static str {
+    pub fn column_label(self) -> String {
         match self {
-            GameStatus::None => "Sans statut",
+            GameStatus::None => crate::i18n::tr("Sans statut"),
             other => other.label(),
         }
     }
@@ -727,7 +836,20 @@ pub struct Settings {
     pub view: ViewMode,
     /// Tri des jeux sur la page d'accueil.
     pub home_sort: HomeSort,
+    #[serde(deserialize_with = "deserialize_theme")]
     pub theme: ThemeMode,
+    /// Langue de l'interface, indépendante de la langue des fiches Steam.
+    pub ui_language: UiLanguage,
+    /// Le parcours de bienvenue a été terminé. Les configurations existantes
+    /// sont marquées comme déjà accueillies lors de la migration.
+    pub onboarding_done: bool,
+    /// Dernière version dont le résumé a été lu. Vide sur une installation
+    /// neuve ou une configuration antérieure à 1.2.
+    pub last_seen_version: String,
+    /// Affiche un hero aléatoire flouté derrière l'accueil et la bibliothèque.
+    pub hero_background: bool,
+    /// Rayon du flou du fond, en pixels logiques.
+    pub hero_background_blur: f32,
     /// Clé API SteamGridDB (https://www.steamgriddb.com/profile/preferences/api).
     pub sgdb_api_key: String,
     /// Langue demandée à l'API Steam (storesearch).
@@ -822,6 +944,11 @@ impl Default for Settings {
             view: ViewMode::List,
             home_sort: HomeSort::Recent,
             theme: ThemeMode::Amoled,
+            ui_language: UiLanguage::French,
+            onboarding_done: false,
+            last_seen_version: String::new(),
+            hero_background: false,
+            hero_background_blur: 14.0,
             sgdb_api_key: String::new(),
             language: "french".to_string(),
             country: "FR".to_string(),
@@ -1318,7 +1445,7 @@ impl Game {
 
     pub fn playtime_label(&self) -> String {
         if self.playtime_secs == 0 {
-            "Aucune session".to_string()
+            crate::i18n::tr("Aucune session")
         } else {
             human_playtime(self.playtime_secs)
         }
@@ -1354,7 +1481,7 @@ impl Game {
     pub fn last_played_label(&self) -> String {
         match self.last_played {
             Some(t) => human_ago(t),
-            None => "Jamais lancé".to_string(),
+            None => crate::i18n::tr("Jamais lancé"),
         }
     }
 
@@ -1413,6 +1540,8 @@ pub fn human_playtime(secs: u64) -> String {
         "< 1 min".to_string()
     } else if secs < 3600 {
         format!("{} min", secs / 60)
+    } else if crate::i18n::is_english() {
+        format!("{:.1} h", secs as f64 / 3600.0)
     } else {
         format!("{:.1} h", secs as f64 / 3600.0).replace('.', ",")
     }
@@ -1420,14 +1549,29 @@ pub fn human_playtime(secs: u64) -> String {
 
 pub fn human_ago(ts: i64) -> String {
     let delta = (now_ts() - ts).max(0) as u64;
+    let english = crate::i18n::is_english();
     match delta {
-        0..=59 => "à l'instant".to_string(),
-        60..=3599 => format!("il y a {} min", delta / 60),
-        3600..=86_399 => format!("il y a {} h", delta / 3600),
+        0..=59 => crate::i18n::tr("à l'instant"),
+        60..=3599 => {
+            if english {
+                format!("{} min ago", delta / 60)
+            } else {
+                format!("il y a {} min", delta / 60)
+            }
+        }
+        3600..=86_399 => {
+            if english {
+                format!("{} h ago", delta / 3600)
+            } else {
+                format!("il y a {} h", delta / 3600)
+            }
+        }
         86_400..=2_591_999 => {
             let d = delta / 86_400;
             if d == 1 {
-                "hier".to_string()
+                crate::i18n::tr("hier")
+            } else if english {
+                format!("{d} days ago")
             } else {
                 format!("il y a {d} jours")
             }
@@ -1435,7 +1579,13 @@ pub fn human_ago(ts: i64) -> String {
         _ => {
             let m = delta / 2_592_000;
             if m == 1 {
-                "il y a 1 mois".to_string()
+                if english {
+                    "1 month ago".to_string()
+                } else {
+                    "il y a 1 mois".to_string()
+                }
+            } else if english {
+                format!("{m} months ago")
             } else {
                 format!("il y a {m} mois")
             }
@@ -1585,6 +1735,15 @@ impl Library {
     /// des jeux existants ne change pas.
     pub fn migrate_defaults(&mut self) {
         self.migrate_installations();
+        // Les configurations créées avant la 1.2 n'ont pas de parcours de
+        // bienvenue : on ne le leur impose pas, mais elles verront le résumé
+        // de la 1.2 une fois. Une configuration neuve garde le drapeau à faux
+        // et affiche donc le parcours au premier lancement.
+        if !self.settings.onboarding_done
+            && (!self.games.is_empty() || self.settings.saved_views_seeded)
+        {
+            self.settings.onboarding_done = true;
+        }
         self.prune_saved_views();
         self.seed_saved_views();
         // Le préfixe par défaut était appliqué à la volée à tous les jeux qui
@@ -2171,6 +2330,38 @@ mod tests {
             lib.get("a").and_then(|game| game.prefix.as_deref()),
             Some("/tmp/quark-tests/defaut")
         );
+    }
+
+    #[test]
+    fn une_configuration_1_1_4_s_ouvre_sans_perdre_ses_jeux() {
+        // Configuration minimale telle qu'écrite par la 1.1.4 : aucun champ
+        // de la 1.2 (langue d'interface, onboarding, fond, version lue).
+        let raw = r#"{
+            "games": [{"id": "ancien", "name": "Ancien jeu"}],
+            "settings": {"theme": "amoled", "language": "french", "saved_views_seeded": false}
+        }"#;
+        let mut lib: Library = serde_json::from_str(raw).expect("config 1.1.4 lisible");
+        assert_eq!(lib.games.len(), 1);
+        assert_eq!(lib.settings.ui_language, UiLanguage::French);
+        assert!(!lib.settings.onboarding_done);
+        assert!(lib.settings.last_seen_version.is_empty());
+        assert!(!lib.settings.hero_background);
+        assert!(lib.settings.hero_background_blur > 0.0);
+
+        // Une bibliothèque existante est considérée comme déjà accueillie :
+        // la mise à jour ne lui impose pas le parcours de première installation.
+        lib.migrate_defaults();
+        assert!(lib.settings.onboarding_done);
+        assert!(lib.settings.saved_views_seeded);
+    }
+
+    #[test]
+    fn une_configuration_neuve_garde_le_parcours_de_bienvenue() {
+        let raw = r#"{"games": [], "settings": {"saved_views_seeded": false}}"#;
+        let mut lib: Library = serde_json::from_str(raw).expect("configuration neuve lisible");
+        lib.migrate_defaults();
+        assert!(!lib.settings.onboarding_done);
+        assert_eq!(lib.settings.ui_language, UiLanguage::French);
     }
 
     #[test]

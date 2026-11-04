@@ -6,7 +6,7 @@
 
 use crate::app::QuarkApp;
 use crate::config::{self, AssetKind, HomeSort};
-use crate::images::{self, draw_fit_left};
+use crate::images::{self, draw_cover, draw_fit_left};
 use crate::proton::{self, LaunchKind};
 use crate::theme::{self, Palette};
 use crate::ui_library::{protondb_badge, single_line};
@@ -28,6 +28,7 @@ const PADDING: f32 = 26.0;
 
 impl QuarkApp {
     pub(crate) fn home_pane(&mut self, ui: &mut egui::Ui) {
+        self.random_background(ui);
         let recent = self.recent_ids();
         if self.carousel >= recent.len() {
             self.carousel = 0;
@@ -64,6 +65,41 @@ impl QuarkApp {
             });
     }
 
+    /// Peint le hero aléatoire flouté derrière une page. Le tirage et le flou
+    /// sont fixés pour la session ; le voile garde le texte lisible.
+    pub(crate) fn random_background(&mut self, ui: &mut egui::Ui) {
+        if !self.lib.settings.hero_background {
+            return;
+        }
+        let Some(id) = self.random_hero_game.clone() else {
+            return;
+        };
+        let Some(path) = self
+            .lib
+            .get(&id)
+            .and_then(|game| game.artwork.get(AssetKind::Hero))
+            .filter(|path| path.exists())
+            .cloned()
+        else {
+            return;
+        };
+        let blur = self.lib.settings.hero_background_blur;
+        let Some(texture) = self.blurred_texture(ui.ctx(), &path, blur) else {
+            return;
+        };
+        let area = ui.max_rect();
+        let painter = ui.painter_at(area);
+        draw_cover(&painter, &texture, area);
+        let mut veil = egui::Mesh::default();
+        veil.colored_vertex(area.left_top(), Color32::from_black_alpha(96));
+        veil.colored_vertex(area.right_top(), Color32::from_black_alpha(96));
+        veil.colored_vertex(area.left_bottom(), Color32::from_black_alpha(196));
+        veil.colored_vertex(area.right_bottom(), Color32::from_black_alpha(196));
+        veil.add_triangle(0, 1, 2);
+        veil.add_triangle(1, 2, 3);
+        painter.add(egui::Shape::mesh(veil));
+    }
+
     /// Change de vignette et relance l'animation d'entrée.
     pub fn show_slide(&mut self, index: usize, len: usize) {
         if len == 0 {
@@ -78,13 +114,13 @@ impl QuarkApp {
         ui.vertical_centered(|ui| {
             ui.add_space(120.0);
             ui.label(
-                RichText::new("Bienvenue dans Quark")
+                crate::i18n::rich("Bienvenue dans Quark")
                     .size(22.0)
                     .color(pal.text),
             );
             ui.add_space(8.0);
             ui.label(
-                RichText::new("Ajoute un jeu pour le voir apparaître ici.")
+                crate::i18n::rich("Ajoute un jeu pour le voir apparaître ici.")
                     .size(12.5)
                     .color(pal.text_dim),
             );
@@ -298,25 +334,35 @@ impl QuarkApp {
                             .clicked();
                             ui.add_space(18.0);
                             let playtime = if running {
-                                format!(
-                                    "En jeu depuis {}",
-                                    config::human_playtime(running_secs.max(1))
-                                )
+                                if crate::i18n::is_english() {
+                                    format!(
+                                        "In game for {}",
+                                        config::human_playtime(running_secs.max(1))
+                                    )
+                                } else {
+                                    format!(
+                                        "En jeu depuis {}",
+                                        config::human_playtime(running_secs.max(1))
+                                    )
+                                }
+                            } else if crate::i18n::is_english() {
+                                format!("{} played", game.playtime_label())
                             } else {
                                 format!("{} de jeu", game.playtime_label())
                             };
                             ui.label(
-                                RichText::new(playtime)
+                                crate::i18n::rich(playtime)
                                     .size(13.0)
                                     .color(pal.text_dim.gamma_multiply(ease)),
                             );
                             if game.last_played.is_some() {
                                 ui.add_space(14.0);
                                 ui.label(
-                                    RichText::new(format!(
-                                        "\u{b7}  jou\u{e9} {}",
-                                        game.last_played_label()
-                                    ))
+                                    crate::i18n::rich(if crate::i18n::is_english() {
+                                        format!("\u{b7}  last played {}", game.last_played_label())
+                                    } else {
+                                        format!("\u{b7}  jou\u{e9} {}", game.last_played_label())
+                                    })
                                     .size(12.5)
                                     .color(pal.text_faint.gamma_multiply(ease)),
                                 );
@@ -446,7 +492,7 @@ impl QuarkApp {
         ui.horizontal(|ui| {
             ui.add_space(PADDING);
             ui.label(
-                RichText::new(match sort {
+                crate::i18n::rich(match sort {
                     HomeSort::Recent => "TOUS LES JEUX \u{b7} DERNI\u{c8}RE SESSION",
                     HomeSort::Added => "TOUS LES JEUX \u{b7} AJOUT\u{c9}S R\u{c9}C\u{c9}MMENT",
                     HomeSort::Playtime => "TOUS LES JEUX \u{b7} LES PLUS JOU\u{c9}S",
@@ -457,7 +503,7 @@ impl QuarkApp {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add_space(PADDING);
                 for option in HomeSort::ALL.iter().rev() {
-                    if sort_chip(ui, option.label(), sort == *option, &pal) {
+                    if sort_chip(ui, &option.label(), sort == *option, &pal) {
                         new_sort = Some(*option);
                     }
                     ui.add_space(6.0);
@@ -641,7 +687,11 @@ impl QuarkApp {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.add_space(PADDING);
-            ui.label(RichText::new("FILTRES").size(10.5).color(pal.text_faint));
+            ui.label(
+                crate::i18n::rich("FILTRES")
+                    .size(10.5)
+                    .color(pal.text_faint),
+            );
         });
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
@@ -662,7 +712,7 @@ impl QuarkApp {
                 let (r, g, b) = option.color();
                 if widgets::chip_colored(
                     ui,
-                    option.label(),
+                    &option.label(),
                     selected,
                     &pal,
                     Color32::from_rgb(r, g, b),
@@ -716,7 +766,7 @@ pub(crate) fn linux_chip(ui: &mut egui::Ui, pal: &Palette) {
     let color = Color32::from_rgb(0x3C, 0xA5, 0x62);
     ui.add(
         egui::Button::new(
-            RichText::new("LINUX NATIF")
+            crate::i18n::rich("LINUX NATIF")
                 .size(10.0)
                 .strong()
                 .color(theme::on_accent(color)),
@@ -738,7 +788,7 @@ fn sort_chip(ui: &mut egui::Ui, label: &str, selected: bool, pal: &Palette) -> b
         pal.text_dim
     };
     ui.add(
-        egui::Button::new(RichText::new(label).size(11.0).color(ink))
+        egui::Button::new(crate::i18n::rich(label).size(11.0).color(ink))
             .fill(if selected { pal.accent } else { pal.surface })
             .stroke(egui::Stroke::new(
                 1.0_f32,

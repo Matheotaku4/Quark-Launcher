@@ -19,7 +19,6 @@ const CARD_GAP: f32 = 14.0;
 const CARDS_PER_SECTION: usize = 24;
 const ART_RATIO: f32 = 1.745;
 
-
 /// Texture d'une image de boutique, chargée par le loader HTTP d'egui.
 fn store_texture(ctx: &egui::Context, url: &str) -> Option<(egui::TextureId, Vec2)> {
     match ctx.try_load_texture(
@@ -64,12 +63,7 @@ fn cover_uv(size: Vec2, rect: Rect) -> Rect {
     }
 }
 
-fn paint_store_image(
-    painter: &egui::Painter,
-    ctx: &egui::Context,
-    url: &str,
-    rect: Rect,
-) -> bool {
+fn paint_store_image(painter: &egui::Painter, ctx: &egui::Context, url: &str, rect: Rect) -> bool {
     if let Some((id, size)) = store_texture(ctx, url) {
         painter.image(id, rect, cover_uv(size, rect), Color32::WHITE);
         true
@@ -113,7 +107,7 @@ impl QuarkApp {
                                     let field = ui.add_sized(
                                         Vec2::new(field_width, 34.0),
                                         egui::TextEdit::singleline(&mut self.store_query)
-                                            .hint_text("Rechercher un jeu sur Steam…")
+                                            .hint_text(crate::i18n::tr("Rechercher un jeu sur Steam…"))
                                             .font(FontId::proportional(14.0)),
                                     );
                                     do_search |= field.lost_focus()
@@ -139,7 +133,7 @@ impl QuarkApp {
                                 }
                                 if let Some(error) = &self.store_search_error {
                                     ui.label(
-                                        RichText::new(error).size(11.5).color(pal.danger),
+                                        crate::i18n::rich(error).size(11.5).color(pal.danger),
                                     );
                                 }
                                 if let Some(results) = self.store_search_results.clone() {
@@ -172,7 +166,7 @@ impl QuarkApp {
                                 }
                                 if let Some(error) = &self.store_error {
                                     ui.label(
-                                        RichText::new(format!(
+                                        crate::i18n::rich(format!(
                                             "{error} · les dernières offres en cache restent affichées."
                                         ))
                                         .size(11.5)
@@ -181,14 +175,14 @@ impl QuarkApp {
                                 }
                                 if let Some(notice) = &self.store_notice {
                                     ui.label(
-                                        RichText::new(notice)
+                                        crate::i18n::rich(notice)
                                             .size(11.0)
                                             .color(pal.text_faint),
                                     );
                                 }
                                 if self.store_stale && self.store_snapshot.is_some() {
                                     ui.label(
-                                        RichText::new(
+                                        crate::i18n::rich(
                                             "Cache local · données potentiellement périmées",
                                         )
                                         .size(11.0)
@@ -309,19 +303,19 @@ impl QuarkApp {
                     ui.horizontal(|ui| {
                         ui.vertical(|ui| {
                             ui.label(
-                                RichText::new("RECHERCHE MULTI-SITES")
+                                crate::i18n::rich("RECHERCHE MULTI-SITES")
                                     .size(10.5)
                                     .strong()
                                     .color(pal.accent),
                             );
                             ui.label(
-                                RichText::new(&job.title)
+                                crate::i18n::rich(&job.title)
                                     .size(21.0)
                                     .strong()
                                     .color(pal.text),
                             );
                             ui.label(
-                                RichText::new(
+                                crate::i18n::rich(
                                     "5 sites · chaque résultat s'ouvre dans le navigateur",
                                 )
                                 .size(11.0)
@@ -344,13 +338,13 @@ impl QuarkApp {
                     });
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Voir sur Steam").clicked() {
+                        if ui.button(crate::i18n::tr("Voir sur Steam")).clicked() {
                             open_url = Some(job.steam_url.clone());
                         }
                         if job.pending > 0 {
                             ui.add(egui::Spinner::new().size(12.0));
                             ui.label(
-                                RichText::new(format!(
+                                crate::i18n::rich(format!(
                                     "{} source(s) en cours…",
                                     job.pending
                                 ))
@@ -361,7 +355,7 @@ impl QuarkApp {
                                 .request_repaint_after(std::time::Duration::from_millis(140));
                         } else {
                             ui.label(
-                                RichText::new("Recherche terminée")
+                                crate::i18n::rich("Recherche terminée")
                                     .size(10.5)
                                     .color(pal.text_faint),
                             );
@@ -378,13 +372,13 @@ impl QuarkApp {
                                 ui.add_space(12.0);
                                 ui.horizontal(|ui| {
                                     ui.label(
-                                        RichText::new(site.label())
+                                        crate::i18n::rich(site.label())
                                             .size(13.5)
                                             .strong()
                                             .color(site_color(*site)),
                                     );
                                     ui.label(
-                                        RichText::new(site.host())
+                                        crate::i18n::rich(site.host())
                                             .size(10.0)
                                             .color(pal.text_faint),
                                     );
@@ -403,7 +397,7 @@ impl QuarkApp {
                                         Layout::right_to_left(Align::Center),
                                         |ui| {
                                             ui.label(
-                                                RichText::new(status)
+                                                crate::i18n::rich(status)
                                                     .size(10.0)
                                                     .color(pal.text_faint),
                                             );
@@ -416,7 +410,7 @@ impl QuarkApp {
                                         ui.horizontal(|ui| {
                                             ui.add(egui::Spinner::new().size(11.0));
                                             ui.label(
-                                                RichText::new("Interrogation du site…")
+                                                crate::i18n::rich("Interrogation du site…")
                                                     .size(11.5)
                                                     .color(pal.text_dim),
                                             );
@@ -425,7 +419,7 @@ impl QuarkApp {
                                     SiteSearchState::Ready(hits) if hits.is_empty() => {
                                         ui.horizontal(|ui| {
                                             ui.label(
-                                                RichText::new(
+                                                crate::i18n::rich(
                                                     "Aucun résultat pour ce titre.",
                                                 )
                                                 .size(11.5)
@@ -453,7 +447,7 @@ impl QuarkApp {
                                     }
                                     SiteSearchState::Failed(error) => {
                                         ui.label(
-                                            RichText::new(error)
+                                            crate::i18n::rich(error)
                                                 .size(11.0)
                                                 .color(pal.danger),
                                         );
@@ -472,7 +466,7 @@ impl QuarkApp {
                             }
                             ui.add_space(14.0);
                             ui.label(
-                                RichText::new(
+                                crate::i18n::rich(
                                     "Quark ne télécharge aucun fichier depuis ces sites : les liens sont ouverts dans ton navigateur.",
                                 )
                                 .size(10.0)
@@ -503,11 +497,7 @@ fn site_color(site: crate::game_search::SearchSite) -> Color32 {
     }
 }
 
-fn search_hit_row(
-    ui: &mut egui::Ui,
-    pal: &Palette,
-    hit: &crate::game_search::SiteHit,
-) -> bool {
+fn search_hit_row(ui: &mut egui::Ui, pal: &Palette, hit: &crate::game_search::SiteHit) -> bool {
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 46.0), Sense::click());
     let hover = ui.ctx().animate_bool_with_time(
@@ -535,7 +525,7 @@ fn search_hit_row(
             ui.add_space(6.0);
             ui.add(
                 egui::Label::new(
-                    RichText::new(&hit.title)
+                    crate::i18n::rich(&hit.title)
                         .size(12.5)
                         .strong()
                         .color(pal.text),
@@ -543,7 +533,7 @@ fn search_hit_row(
                 .truncate(),
             );
             ui.label(
-                RichText::new(if hit.detail.is_empty() {
+                crate::i18n::rich(if hit.detail.is_empty() {
                     "Voir la fiche du site"
                 } else {
                     &hit.detail
@@ -575,21 +565,23 @@ fn store_heading(ui: &mut egui::Ui, pal: &Palette) {
         ui.add_space(10.0);
         ui.vertical(|ui| {
             ui.label(
-                RichText::new("BOUTIQUE STEAM")
+                crate::i18n::rich("BOUTIQUE STEAM")
                     .size(11.0)
                     .strong()
                     .color(pal.accent),
             );
             ui.label(
-                RichText::new("Découvrir votre prochain jeu")
+                crate::i18n::rich("Découvrir votre prochain jeu")
                     .size(28.0)
                     .strong()
                     .color(pal.text),
             );
             ui.label(
-                RichText::new("Catalogue régional Steam · les achats se font sur le site officiel")
-                    .size(12.0)
-                    .color(pal.text_dim),
+                crate::i18n::rich(
+                    "Catalogue régional Steam · les achats se font sur le site officiel",
+                )
+                .size(12.0)
+                .color(pal.text_dim),
             );
         });
     });
@@ -598,7 +590,7 @@ fn store_heading(ui: &mut egui::Ui, pal: &Palette) {
 fn widgets_button(ui: &mut egui::Ui, label: &str, pal: &Palette, enabled: bool) -> bool {
     ui.add_enabled(
         enabled,
-        egui::Button::new(RichText::new(label).size(12.0))
+        egui::Button::new(crate::i18n::rich(label).size(12.0))
             .fill(pal.surface)
             .stroke(egui::Stroke::new(1.0_f32, pal.border))
             .corner_radius(7.0)
@@ -611,12 +603,12 @@ fn spinner_line(ui: &mut egui::Ui, pal: &Palette, text: &str) {
     ui.horizontal(|ui| {
         ui.add(egui::Spinner::new().size(13.0));
         ui.add_space(6.0);
-        ui.label(RichText::new(text).size(12.0).color(pal.text_dim));
+        ui.label(crate::i18n::rich(text).size(12.0).color(pal.text_dim));
     });
 }
 
 fn empty_line(ui: &mut egui::Ui, pal: &Palette, text: &str) {
-    ui.label(RichText::new(text).size(12.0).color(pal.text_dim));
+    ui.label(crate::i18n::rich(text).size(12.0).color(pal.text_dim));
 }
 
 fn accent_for(pal: &Palette, section: &StoreSection) -> Color32 {
@@ -662,11 +654,11 @@ fn section_heading(
         let (bar, _) = ui.allocate_exact_size(Vec2::new(3.0, 15.0), Sense::hover());
         ui.painter().rect_filled(bar, 1.5, accent);
         ui.add_space(8.0);
-        ui.label(RichText::new(text).size(12.0).strong().color(pal.text));
+        ui.label(crate::i18n::rich(text).size(12.0).strong().color(pal.text));
     });
     if let Some(caption) = caption {
         ui.add_space(2.0);
-        ui.label(RichText::new(caption).size(10.5).color(pal.text_faint));
+        ui.label(crate::i18n::rich(caption).size(10.5).color(pal.text_faint));
     }
     ui.add_space(9.0);
 }
@@ -762,7 +754,7 @@ fn hero_card(
     painter.text(
         pill.center(),
         Align2::CENTER_CENTER,
-        "À LA UNE",
+        crate::i18n::tr("À LA UNE"),
         FontId::proportional(10.5),
         pal.accent,
     );
@@ -792,7 +784,7 @@ fn hero_card(
             .layout(Layout::top_down(Align::Min)),
     );
     child.label(
-        RichText::new(&item.name)
+        crate::i18n::rich(&item.name)
             .size(24.0)
             .strong()
             .color(Color32::WHITE),
@@ -800,7 +792,7 @@ fn hero_card(
     child.add_space(4.0);
     if item.linux_available == Some(true) {
         child.label(
-            RichText::new("Linux natif")
+            crate::i18n::rich("Linux natif")
                 .size(10.5)
                 .strong()
                 .color(pal.accent),
@@ -808,7 +800,7 @@ fn hero_card(
     }
     if let Some(peak) = item.players_peak {
         child.label(
-            RichText::new(format!("{} joueurs simultanés au pic", thousands(peak)))
+            crate::i18n::rich(format!("{} joueurs simultanés au pic", thousands(peak)))
                 .size(10.5)
                 .color(Color32::from_white_alpha(190)),
         );
@@ -820,7 +812,7 @@ fn hero_card(
         if ui
             .add(
                 egui::Button::new(
-                    RichText::new("Voir sur Steam")
+                    crate::i18n::rich("Voir sur Steam")
                         .size(12.5)
                         .strong()
                         .color(crate::theme::on_accent(pal.accent)),
@@ -933,7 +925,7 @@ fn deal_card(
     );
     child.add(
         egui::Label::new(
-            RichText::new(&item.name)
+            crate::i18n::rich(&item.name)
                 .size(11.5)
                 .strong()
                 .color(pal.text),
@@ -1048,7 +1040,7 @@ fn card(ui: &mut egui::Ui, pal: &Palette, item: &StoreItem, open_item: &mut Opti
     );
     child.add(
         egui::Label::new(
-            RichText::new(&item.name)
+            crate::i18n::rich(&item.name)
                 .size(12.0)
                 .strong()
                 .color(pal.text),
@@ -1058,7 +1050,7 @@ fn card(ui: &mut egui::Ui, pal: &Palette, item: &StoreItem, open_item: &mut Opti
     child.horizontal(|ui| price_widgets(ui, pal, item, false));
     if let Some(peak) = item.players_peak {
         child.label(
-            RichText::new(format!("{} joueurs simultanés", thousands(peak)))
+            crate::i18n::rich(format!("{} joueurs simultanés", thousands(peak)))
                 .size(9.5)
                 .color(pal.text_faint),
         );
@@ -1078,7 +1070,7 @@ fn card(ui: &mut egui::Ui, pal: &Palette, item: &StoreItem, open_item: &mut Opti
 fn price_widgets(ui: &mut egui::Ui, pal: &Palette, item: &StoreItem, large: bool) {
     let Some(price) = &item.price else {
         ui.label(
-            RichText::new("Prix indisponible")
+            crate::i18n::rich("Prix indisponible")
                 .size(11.0)
                 .color(pal.text_faint),
         );
@@ -1087,26 +1079,26 @@ fn price_widgets(ui: &mut egui::Ui, pal: &Palette, item: &StoreItem, large: bool
     let amount = |minor: u64| format!("{}.{:02}", minor / 100, minor % 100);
     if let Some(discount) = price.discount_percent {
         ui.label(
-            RichText::new(format!("-{discount} %"))
+            crate::i18n::rich(format!("-{discount} %"))
                 .size(if large { 12.0 } else { 10.5 })
                 .strong()
                 .color(pal.accent),
         );
         ui.label(
-            RichText::new(format!("{} {}", price.currency, amount(price.final_price)))
+            crate::i18n::rich(format!("{} {}", price.currency, amount(price.final_price)))
                 .size(if large { 14.0 } else { 11.5 })
                 .strong()
                 .color(if large { Color32::WHITE } else { pal.text }),
         );
         ui.label(
-            RichText::new(format!("{} {}", price.currency, amount(price.initial)))
+            crate::i18n::rich(format!("{} {}", price.currency, amount(price.initial)))
                 .size(if large { 11.5 } else { 10.0 })
                 .color(pal.text_faint)
                 .strikethrough(),
         );
     } else {
         ui.label(
-            RichText::new(format!("{} {}", price.currency, amount(price.final_price)))
+            crate::i18n::rich(format!("{} {}", price.currency, amount(price.final_price)))
                 .size(if large { 14.0 } else { 11.5 })
                 .color(if large { Color32::WHITE } else { pal.text }),
         );

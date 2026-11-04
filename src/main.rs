@@ -11,6 +11,7 @@ mod config;
 mod disk;
 mod fonts;
 mod game_search;
+mod i18n;
 mod icon;
 mod images;
 mod net;
@@ -35,6 +36,7 @@ mod ui_dialogs;
 mod ui_home;
 mod ui_library;
 mod ui_my_games;
+mod ui_onboarding;
 mod ui_providers;
 mod ui_store;
 mod ui_views;
@@ -220,13 +222,15 @@ fn cli(args: &[String]) -> Option<i32> {
                             return Some(2);
                         }
                     },
-                    "--demo-count" => match value.as_deref().and_then(|v| v.parse::<usize>().ok()) {
-                        Some(count) => opts.demo_count = Some(count.clamp(1, 2_000)),
-                        None => {
-                            eprintln!("--demo-count attend un entier (ex. 660)");
-                            return Some(2);
+                    "--demo-count" => {
+                        match value.as_deref().and_then(|v| v.parse::<usize>().ok()) {
+                            Some(count) => opts.demo_count = Some(count.clamp(1, 2_000)),
+                            None => {
+                                eprintln!("--demo-count attend un entier (ex. 660)");
+                                return Some(2);
+                            }
                         }
-                    },
+                    }
                     "--hover" => match value.as_deref().and_then(parse_point) {
                         Some(point) => opts.hover = Some(point),
                         None => {
@@ -282,8 +286,44 @@ fn cli(args: &[String]) -> Option<i32> {
                         opts.theme = match value.as_deref() {
                             Some("amoled") => Some(config::ThemeMode::Amoled),
                             Some("graphite") => Some(config::ThemeMode::Graphite),
+                            Some("catppuccin-mocha") => Some(config::ThemeMode::CatppuccinMocha),
+                            Some("catppuccin-macchiato") => {
+                                Some(config::ThemeMode::CatppuccinMacchiato)
+                            }
+                            Some("catppuccin-frappe") => Some(config::ThemeMode::CatppuccinFrappe),
+                            Some("dracula") => Some(config::ThemeMode::Dracula),
+                            Some("nord") => Some(config::ThemeMode::Nord),
+                            Some("gruvbox") => Some(config::ThemeMode::GruvboxDark),
+                            Some("tokyo-night") => Some(config::ThemeMode::TokyoNight),
+                            Some("rose-pine") => Some(config::ThemeMode::RosePine),
+                            Some("everforest") => Some(config::ThemeMode::Everforest),
+                            Some("one-dark") => Some(config::ThemeMode::OneDark),
+                            Some("kanagawa") => Some(config::ThemeMode::Kanagawa),
                             _ => {
-                                eprintln!("--theme attend amoled ou graphite");
+                                eprintln!(
+                                    "thème inconnu (amoled, graphite, catppuccin-mocha, dracula, nord, gruvbox, tokyo-night, rose-pine, everforest, one-dark, kanagawa)"
+                                );
+                                return Some(2);
+                            }
+                        }
+                    }
+                    "--blur" => match value.as_deref().and_then(|v| v.parse::<f32>().ok()) {
+                        Some(blur) => opts.hero_blur = Some(blur),
+                        None => {
+                            eprintln!("--blur attend un nombre (ex. 14)");
+                            return Some(2);
+                        }
+                    },
+                    "--lang" => {
+                        opts.language = match value.as_deref() {
+                            Some("fr") | Some("french") | Some("français") => {
+                                Some(config::UiLanguage::French)
+                            }
+                            Some("en") | Some("english") | Some("anglais") => {
+                                Some(config::UiLanguage::English)
+                            }
+                            _ => {
+                                eprintln!("--lang attend fr ou en");
                                 return Some(2);
                             }
                         }
@@ -314,6 +354,11 @@ fn cli(args: &[String]) -> Option<i32> {
                     },
                     "--home" => {
                         opts.home = true;
+                        index += 1;
+                        continue;
+                    }
+                    "--hero-bg" => {
+                        opts.hero_background = true;
                         index += 1;
                         continue;
                     }

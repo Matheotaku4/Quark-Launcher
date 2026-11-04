@@ -453,7 +453,9 @@ impl QuarkApp {
                                 Vec2::new((width - 92.0).max(180.0), 30.0),
                                 egui::TextEdit::singleline(&mut self.command_query)
                                     .id(egui::Id::new("quark_command_query"))
-                                    .hint_text("Rechercher un jeu ou une commande…")
+                                    .hint_text(crate::i18n::tr(
+                                        "Rechercher un jeu ou une commande…",
+                                    ))
                                     .frame(false)
                                     .font(FontId::proportional(14.0)),
                             );
@@ -461,7 +463,7 @@ impl QuarkApp {
                                 self.command_selected = 0;
                             }
                             ui.label(
-                                RichText::new("ESC")
+                                crate::i18n::rich("ESC")
                                     .size(10.0)
                                     .monospace()
                                     .color(pal.text_faint),
@@ -483,7 +485,7 @@ impl QuarkApp {
                                     ui.add_space(22.0);
                                     ui.vertical_centered(|ui| {
                                         ui.label(
-                                            RichText::new("Aucun résultat")
+                                            crate::i18n::rich("Aucun résultat")
                                                 .size(12.5)
                                                 .color(pal.text_dim),
                                         );
@@ -499,7 +501,7 @@ impl QuarkApp {
                                         ui.horizontal(|ui| {
                                             ui.add_space(18.0);
                                             ui.label(
-                                                RichText::new(entry.group)
+                                                crate::i18n::rich(entry.group)
                                                     .size(9.5)
                                                     .strong()
                                                     .color(pal.text_faint),
@@ -602,7 +604,7 @@ impl QuarkApp {
                         ui.horizontal(|ui| {
                             ui.add_space(18.0);
                             ui.label(
-                                RichText::new("↑↓ naviguer   Entrée ouvrir   Échap fermer")
+                                crate::i18n::rich("↑↓ naviguer   Entrée ouvrir   Échap fermer")
                                     .size(10.0)
                                     .color(pal.text_faint),
                             );

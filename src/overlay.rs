@@ -314,12 +314,17 @@ fn draw_toast(ui: &mut egui::Ui, pal: &crate::theme::Palette, notices: &[Notice]
         .show(ui, |ui| {
             ui.set_min_width(340.0);
             ui.horizontal(|ui| {
-                ui.label(RichText::new("QUARK").size(9.5).color(pal.accent).strong());
+                ui.label(
+                    crate::i18n::rich("QUARK")
+                        .size(9.5)
+                        .color(pal.accent)
+                        .strong(),
+                );
                 ui.with_layout(
                     eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
                     |ui| {
                         ui.label(
-                            RichText::new(&notice.title)
+                            crate::i18n::rich(&notice.title)
                                 .size(12.0)
                                 .color(Color32::WHITE),
                         );
@@ -327,7 +332,7 @@ fn draw_toast(ui: &mut egui::Ui, pal: &crate::theme::Palette, notices: &[Notice]
                 );
             });
             ui.label(
-                RichText::new(&notice.detail)
+                crate::i18n::rich(&notice.detail)
                     .size(11.0)
                     .color(Color32::from_white_alpha(190)),
             );
@@ -370,19 +375,19 @@ fn draw_overlay(
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
                         ui.label(
-                            RichText::new("EN JEU")
+                            crate::i18n::rich("EN JEU")
                                 .size(10.0)
                                 .color(pal.accent)
                                 .strong(),
                         );
-                        ui.label(RichText::new(game).size(24.0).color(pal.text));
+                        ui.label(crate::i18n::rich(game).size(24.0).color(pal.text));
                     });
                     ui.with_layout(
                         eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
                         |ui| {
                             if ui
                                 .add(
-                                    egui::Button::new(RichText::new("✕").size(16.0))
+                                    egui::Button::new(crate::i18n::rich("✕").size(16.0))
                                         .fill(Color32::TRANSPARENT),
                                 )
                                 .clicked()
@@ -391,14 +396,14 @@ fn draw_overlay(
                             }
                             ui.add_space(8.0);
                             ui.label(
-                                RichText::new(clock(elapsed.as_secs()))
+                                crate::i18n::rich(clock(elapsed.as_secs()))
                                     .size(16.0)
                                     .monospace()
                                     .color(pal.text),
                             );
                             if let Some(provider) = provider {
                                 ui.label(
-                                    RichText::new(provider_label(provider))
+                                    crate::i18n::rich(provider_label(provider))
                                         .size(10.0)
                                         .color(provider_color(provider)),
                                 );
@@ -408,7 +413,7 @@ fn draw_overlay(
                 });
                 ui.add_space(4.0);
                 ui.label(
-                    RichText::new(format!(
+                    crate::i18n::rich(format!(
                         "{} pour fermer · {} pour une capture",
                         settings.overlay_hotkey, settings.screenshot_key
                     ))
@@ -421,14 +426,14 @@ fn draw_overlay(
 
                 ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new("Succès")
+                        crate::i18n::rich("Succès")
                             .size(13.0)
                             .color(pal.text)
                             .strong(),
                     );
                     if let Some(info) = achievements {
                         ui.label(
-                            RichText::new(format!("{} / {}", info.unlocked, info.total))
+                            crate::i18n::rich(format!("{} / {}", info.unlocked, info.total))
                                 .size(11.0)
                                 .color(pal.text_dim),
                         );
@@ -457,15 +462,15 @@ fn draw_overlay(
                     ui.horizontal(|ui| {
                         ui.spinner();
                         ui.label(
-                            RichText::new("Lecture des succès…")
+                            crate::i18n::rich("Lecture des succès…")
                                 .size(12.0)
                                 .color(pal.text_dim),
                         );
                     });
                 } else if let Some(error) = error {
-                    ui.label(RichText::new(error).size(12.0).color(pal.danger));
+                    ui.label(crate::i18n::rich(error).size(12.0).color(pal.danger));
                     ui.label(
-                        RichText::new(
+                        crate::i18n::rich(
                             "Vérifie la connexion à la boutique dans Paramètres → Boutiques & outils.",
                         )
                         .size(11.0)
@@ -482,7 +487,7 @@ fn draw_overlay(
                     };
                     if rows.is_empty() {
                         ui.label(
-                            RichText::new("Aucun succès à afficher.")
+                            crate::i18n::rich("Aucun succès à afficher.")
                                 .size(12.0)
                                 .color(pal.text_dim),
                         );
@@ -499,7 +504,7 @@ fn draw_overlay(
                         });
                 } else {
                     ui.label(
-                        RichText::new("Aucun succès chargé pour ce jeu.")
+                        crate::i18n::rich("Aucun succès chargé pour ce jeu.")
                             .size(12.0)
                             .color(pal.text_dim),
                     );
@@ -510,7 +515,7 @@ fn draw_overlay(
                     |ui| {
                         for notice in notices.iter().rev() {
                             ui.label(
-                                RichText::new(format!("{} · {}", notice.title, notice.detail))
+                                crate::i18n::rich(format!("{} · {}", notice.title, notice.detail))
                                     .size(10.0)
                                     .color(pal.text_faint),
                             );
@@ -573,18 +578,18 @@ fn achievement_row(
                     ui.set_max_width((ui.available_width() - 150.0).max(160.0));
                     ui.horizontal(|ui| {
                         ui.label(
-                            RichText::new(&row.name)
+                            crate::i18n::rich(&row.name)
                                 .size(12.5)
                                 .color(if row.unlocked { pal.text } else { pal.text_dim })
                                 .strong(),
                         );
                         if row.session {
-                            ui.label(RichText::new("SESSION").size(8.5).color(pal.accent));
+                            ui.label(crate::i18n::rich("SESSION").size(8.5).color(pal.accent));
                         }
                     });
                     if !compact && !row.description.is_empty() {
                         ui.label(
-                            RichText::new(&row.description)
+                            crate::i18n::rich(&row.description)
                                 .size(10.5)
                                 .color(pal.text_faint),
                         );
@@ -594,10 +599,10 @@ fn achievement_row(
                     eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
                     |ui| {
                         if row.unlocked {
-                            ui.label(RichText::new("✓").size(16.0).color(pal.accent));
+                            ui.label(crate::i18n::rich("✓").size(16.0).color(pal.accent));
                         } else if settings.overlay_show_progress && row.progress > 0.0 {
                             ui.label(
-                                RichText::new(format!("{:.0} %", row.progress * 100.0))
+                                crate::i18n::rich(format!("{:.0} %", row.progress * 100.0))
                                     .size(10.5)
                                     .color(pal.text_faint),
                             );
@@ -606,7 +611,7 @@ fn achievement_row(
                             && let Some(rarity) = row.rarity
                         {
                             ui.label(
-                                RichText::new(format!("{rarity:.1} % des joueurs"))
+                                crate::i18n::rich(format!("{rarity:.1} % des joueurs"))
                                     .size(9.5)
                                     .color(pal.text_faint),
                             );

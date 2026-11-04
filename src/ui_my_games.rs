@@ -74,19 +74,19 @@ impl QuarkApp {
                                 ui.horizontal(|ui| {
                                     ui.vertical(|ui| {
                                         ui.label(
-                                            RichText::new("MES JEUX")
+                                            crate::i18n::rich("MES JEUX")
                                                 .size(11.0)
                                                 .strong()
                                                 .color(pal.accent),
                                         );
                                         ui.label(
-                                            RichText::new("Vos bibliothèques réunies")
+                                            crate::i18n::rich("Vos bibliothèques réunies")
                                                 .size(26.0)
                                                 .strong()
                                                 .color(pal.text),
                                         );
                                         ui.label(
-                                            RichText::new(if busy {
+                                            crate::i18n::rich(if busy {
                                                 "Synchronisation en cours…"
                                             } else {
                                                 "Synchronisées au démarrage · installations locales détectées"
@@ -112,7 +112,7 @@ impl QuarkApp {
                                                     &mut self.my_games_query,
                                                 )
                                                 .id(egui::Id::new("quark_my_games_search"))
-                                                .hint_text("Rechercher un jeu")
+                                                .hint_text(crate::i18n::tr("Rechercher un jeu"))
                                                 .font(egui::FontId::proportional(12.5)),
                                             );
                                         },
@@ -151,21 +151,21 @@ impl QuarkApp {
 
                                 if let Some(error) = &self.steam_sync_error {
                                     ui.label(
-                                        RichText::new(format!("Steam : {error}"))
+                                        crate::i18n::rich(format!("Steam : {error}"))
                                             .size(11.5)
                                             .color(pal.danger),
                                     );
                                 }
                                 if let Some(error) = &self.epic_sync_error {
                                     ui.label(
-                                        RichText::new(format!("Epic : {error}"))
+                                        crate::i18n::rich(format!("Epic : {error}"))
                                             .size(11.5)
                                             .color(pal.danger),
                                     );
                                 }
                                 if let Some(error) = &self.gog_sync_error {
                                     ui.label(
-                                        RichText::new(format!("GOG : {error}"))
+                                        crate::i18n::rich(format!("GOG : {error}"))
                                             .size(11.5)
                                             .color(pal.danger),
                                     );
@@ -174,7 +174,7 @@ impl QuarkApp {
                                     || self.credentials.steam_id.is_none()
                                 {
                                     ui.label(
-                                        RichText::new(
+                                        crate::i18n::rich(
                                             "Steam : les jeux installés sont détectés sans clé ; \
                                              les jeux possédés demandent une clé Web API dans \
                                              Paramètres → Boutiques & outils.",
@@ -191,7 +191,7 @@ impl QuarkApp {
                                 if games.is_empty() {
                                     ui.add_space(20.0);
                                     ui.label(
-                                        RichText::new(if needle.is_empty() {
+                                        crate::i18n::rich(if needle.is_empty() {
                                             "Aucun jeu de boutique synchronisé".to_string()
                                         } else {
                                             format!("Aucun jeu ne correspond à « {needle} »")
@@ -201,7 +201,7 @@ impl QuarkApp {
                                     );
                                     ui.add_space(5.0);
                                     ui.label(
-                                        RichText::new(if needle.is_empty() {
+                                        crate::i18n::rich(if needle.is_empty() {
                                             "Connecte une boutique dans Paramètres → Boutiques & outils : \
                                              la synchronisation suit automatiquement."
                                                 .to_string()
@@ -254,7 +254,7 @@ impl QuarkApp {
                                         .collect();
                                     ui.horizontal(|ui| {
                                         ui.label(
-                                            RichText::new(format!(
+                                            crate::i18n::rich(format!(
                                                 "Correspondance exacte : {}",
                                                 labels.join(" · ")
                                             ))
@@ -279,7 +279,7 @@ impl QuarkApp {
                                             })
                                             .collect();
                                         ui.label(
-                                            RichText::new(format!(
+                                            crate::i18n::rich(format!(
                                                 "Groupe manuel : {}",
                                                 labels.join(" · ")
                                             ))
@@ -434,10 +434,10 @@ impl QuarkApp {
         // ligne de marge de chaque côté évite un trou pendant un défilement
         // rapide.
         let clip = ui.clip_rect();
-        let first = (((clip.top() - grid_top) / row_step).floor().max(0.0) as usize)
-            .saturating_sub(1);
-        let last = ((((clip.bottom() - grid_top) / row_step).ceil().max(0.0) as usize) + 1)
-            .min(rows);
+        let first =
+            (((clip.top() - grid_top) / row_step).floor().max(0.0) as usize).saturating_sub(1);
+        let last =
+            ((((clip.bottom() - grid_top) / row_step).ceil().max(0.0) as usize) + 1).min(rows);
         // Même cascade que la bibliothèque, pour que les deux pages se
         // répondent quand on passe de l'une à l'autre.
         let age = self.page_at.elapsed().as_secs_f32();
@@ -532,7 +532,7 @@ impl QuarkApp {
                     ui.horizontal(|ui| {
                         ui.vertical(|ui| {
                             ui.label(
-                                RichText::new(format!(
+                                crate::i18n::rich(format!(
                                     "Installation {} · {title}",
                                     provider_name(key.provider)
                                 ))
@@ -551,7 +551,7 @@ impl QuarkApp {
                                 detail.push(format!("reste {eta}"));
                             }
                             ui.label(
-                                RichText::new(detail.join(" · "))
+                                crate::i18n::rich(detail.join(" · "))
                                     .size(11.0)
                                     .color(pal.text_dim),
                             );
@@ -628,12 +628,12 @@ impl QuarkApp {
             .collect();
         if active.is_empty() {
             ui.label(
-                RichText::new("Aucun téléchargement en cours.")
+                crate::i18n::rich("Aucun téléchargement en cours.")
                     .size(11.5)
                     .color(pal.text_dim),
             );
             ui.label(
-                RichText::new("Lance une installation depuis Mes jeux.")
+                crate::i18n::rich("Lance une installation depuis Mes jeux.")
                     .size(10.5)
                     .color(pal.text_faint),
             );
@@ -662,7 +662,7 @@ impl QuarkApp {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
                         ui.label(
-                            RichText::new(format!("{} · {title}", provider_name(key.provider)))
+                            crate::i18n::rich(format!("{} · {title}", provider_name(key.provider)))
                                 .size(11.5)
                                 .strong()
                                 .color(pal.text),
@@ -684,7 +684,7 @@ impl QuarkApp {
                         detail.push(format!("reste {eta}"));
                     }
                     ui.label(
-                        RichText::new(detail.join(" · "))
+                        crate::i18n::rich(detail.join(" · "))
                             .size(10.5)
                             .color(pal.text_dim),
                     );
@@ -896,7 +896,7 @@ fn provider_card(
     footer_ui.spacing_mut().item_spacing.y = 1.0;
     footer_ui.add(
         egui::Label::new(
-            RichText::new(&game.title)
+            crate::i18n::rich(&game.title)
                 .size(12.0)
                 .strong()
                 .color(pal.text),
@@ -906,15 +906,15 @@ fn provider_card(
     footer_ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 5.0;
         ui.label(
-            RichText::new(buffer_or(&game.key.provider))
+            crate::i18n::rich(buffer_or(&game.key.provider))
                 .size(10.0)
                 .color(pal.text_faint),
         );
-        ui.label(RichText::new("·").size(10.0).color(pal.text_faint));
+        ui.label(crate::i18n::rich("·").size(10.0).color(pal.text_faint));
         if installed {
-            ui.colored_label(status_color, RichText::new(status).size(10.0));
+            ui.colored_label(status_color, crate::i18n::rich(status).size(10.0));
         } else {
-            ui.label(RichText::new(status).size(10.0).color(status_color));
+            ui.label(crate::i18n::rich(status).size(10.0).color(status_color));
         }
     });
 
@@ -1084,36 +1084,40 @@ fn actions_menu_items(
         return;
     }
     ui.set_min_width(210.0);
-    if steam_installable && ui.button("Installer via Steam").clicked() {
+    if steam_installable && ui.button(crate::i18n::tr("Installer via Steam")).clicked() {
         *install = app_id;
         ui.close();
     }
-    if epic_installable && ui.button("Installer Epic…").clicked() {
+    if epic_installable && ui.button(crate::i18n::tr("Installer Epic…")).clicked() {
         *install_request = Some(game.key.clone());
         ui.close();
     }
-    if gog_installable && ui.button("Installer GOG…").clicked() {
+    if gog_installable && ui.button(crate::i18n::tr("Installer GOG…")).clicked() {
         *install_request = Some(game.key.clone());
         ui.close();
     }
-    if installed && game.quark_game_id.is_none() && ui.button("Ajouter à la bibliothèque").clicked()
+    if installed
+        && game.quark_game_id.is_none()
+        && ui
+            .button(crate::i18n::tr("Ajouter à la bibliothèque"))
+            .clicked()
     {
         *adopt = Some(game.key.clone());
         ui.close();
     }
     if installed
         && matches!(game.key.provider, Provider::Epic | Provider::Gog)
-        && ui.button("Désinstaller…").clicked()
+        && ui.button(crate::i18n::tr("Désinstaller…")).clicked()
     {
         *uninstall = Some(game.key.clone());
         ui.close();
     }
     if installed && ludusavi_ready {
-        if ui.button("Aperçu sauvegarde").clicked() {
+        if ui.button(crate::i18n::tr("Aperçu sauvegarde")).clicked() {
             *preview_save = Some(game.key.clone());
             ui.close();
         }
-        if ui.button("Restaurer…").clicked() {
+        if ui.button(crate::i18n::tr("Restaurer…")).clicked() {
             *inventory_save = Some(game.key.clone());
             ui.close();
         }
@@ -1121,30 +1125,34 @@ fn actions_menu_items(
     ui.separator();
     match game.key.provider {
         Provider::Epic if legendary_ready => {
-            if ui.button("Succès…").clicked() {
+            if ui.button(crate::i18n::tr("Succès…")).clicked() {
                 *achievements = Some(game.key.clone());
                 ui.close();
             }
         }
         Provider::Epic => {
-            ui.add_enabled(false, egui::Button::new("Succès…"))
+            ui.add_enabled(false, egui::Button::new(crate::i18n::tr("Succès…")))
                 .on_disabled_hover_text("Legendary n'est pas installé");
         }
         Provider::Gog if gogdl_ready => {
-            if ui.button("Succès…").clicked() {
+            if ui.button(crate::i18n::tr("Succès…")).clicked() {
                 *achievements = Some(game.key.clone());
                 ui.close();
             }
         }
         Provider::Gog => {
-            ui.add_enabled(false, egui::Button::new("Succès…"))
+            ui.add_enabled(false, egui::Button::new(crate::i18n::tr("Succès…")))
                 .on_disabled_hover_text(
                     "gogdl n'est pas installé : Paramètres → Boutiques & outils",
                 );
         }
         Provider::Steam => {}
     }
-    if installed && ui.button("Dossiers de sauvegarde…").clicked() {
+    if installed
+        && ui
+            .button(crate::i18n::tr("Dossiers de sauvegarde…"))
+            .clicked()
+    {
         *choose_save_folder = Some(game.key.clone());
         ui.close();
     }

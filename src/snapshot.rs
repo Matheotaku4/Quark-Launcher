@@ -42,6 +42,9 @@ pub struct SnapshotOptions {
     pub tab: Option<Tab>,
     pub select: Option<String>,
     pub theme: Option<ThemeMode>,
+    pub language: Option<crate::config::UiLanguage>,
+    pub hero_background: bool,
+    pub hero_blur: Option<f32>,
     pub info: bool,
     pub running: bool,
     pub key: Option<String>,
@@ -74,6 +77,9 @@ impl Default for SnapshotOptions {
             tab: None,
             select: None,
             theme: None,
+            language: None,
+            hero_background: false,
+            hero_blur: None,
             info: false,
             running: false,
             key: None,
@@ -93,13 +99,15 @@ pub const HELP: &str = "\
   quark --ui <fichier.png>  Rend l'interface hors écran dans un PNG (sans écran)\n\
       [--size 1360x860] [--scale 1.5] [--frames 16]\n\
       [--view list|grid] [--group status|store|genre|year|none]\n\
-      [--tab library|store] [--theme amoled|graphite]\n\
+      [--tab library|store] [--theme amoled|graphite|catppuccin-mocha|...]\n\
+      [--lang fr|en]\n\
       [--select <jeu>] [--info] [--running] [--marked] [--home]\n\
       [--dialog none|add|artwork|exe|scan|settings|settings-defaults|\n\
       settings-ingame|settings-env|settings-artworks|settings-stats|\n\
       settings-disk|\n\
       settings-about|game|logs|updates|customize|remove|steam|overlay|install|\n\
-      site-search|command|command-search|history|saved-views]\n\
+      site-search|command|command-search|history|saved-views|onboarding|\n\
+      onboarding-settings|whats-new]\n\
       [--hover X,Y] [--click X,Y] [--button left|right]\n\
       [--key up|down|left|right|enter|escape] [--demo] [--demo-count N]\n\
       --demo : bibliothèque de démonstration avec artworks factices (la\n\
@@ -399,6 +407,17 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
     if let Some(theme) = opts.theme {
         app.lib.settings.theme = theme;
     }
+    if let Some(language) = opts.language {
+        app.lib.settings.ui_language = language;
+        crate::i18n::set_language(language);
+    }
+    if opts.hero_background {
+        app.lib.settings.hero_background = true;
+        app.random_hero_game = crate::app::random_hero_from(&app.lib);
+    }
+    if let Some(blur) = opts.hero_blur {
+        app.lib.settings.hero_background_blur = blur.clamp(2.0, 30.0);
+    }
     if let Some(tab) = opts.tab {
         app.tab = tab;
     }
@@ -417,6 +436,10 @@ pub fn run(opts: &SnapshotOptions) -> Result<(), String> {
             .collect();
     }
     app.show_info = opts.info;
+    // Les rendus de contrôle ne doivent pas être recouverts par le parcours
+    // de bienvenue ni par le résumé de version, sauf demande explicite.
+    app.onboarding_open = false;
+    app.whats_new_open = false;
     if let Some(dialog) = &opts.dialog {
         apply_dialog(&mut app, dialog)?;
     }
@@ -601,6 +624,21 @@ fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
         "history" => {
             app.home = false;
             app.detail_tab = crate::app::DetailTab::History;
+        }
+        "onboarding" => {
+            app.onboarding_open = true;
+            app.onboarding_step = 0;
+        }
+        "onboarding-settings" => {
+            app.onboarding_open = true;
+            app.onboarding_step = 1;
+        }
+        "onboarding-ready" => {
+            app.onboarding_open = true;
+            app.onboarding_step = 2;
+        }
+        "whats-new" => {
+            app.whats_new_open = true;
         }
         "saved-views" => {
             app.home = false;
@@ -1466,48 +1504,68 @@ fn demo_library() -> Result<Library, String> {
 /// Mesure d'espace disque factice, pour le rendu de la page correspondante.
 fn demo_disk_report() -> crate::disk::DiskReport {
     let root = crate::config::data_dir();
+    let english = crate::i18n::is_english();
+    let prefix_detail = |game: &str| {
+        if english {
+            format!("{game} · Proton prefix")
+        } else {
+            format!("{game} · préfixe Proton")
+        }
+    };
     let mut rows = vec![
         crate::disk::DiskRow {
-            label: "Jeu".to_string(),
+            label: crate::i18n::tr("Jeu"),
             path: root.join("demo-jeux/witcher3"),
             bytes: 62_400_000_000,
             detail: "The Witcher 3: Wild Hunt".to_string(),
         },
         crate::disk::DiskRow {
-            label: "Préfixe Proton".to_string(),
+            label: crate::i18n::tr("Préfixe Proton"),
             path: root.join("demo-jeux/prefixes/witcher3"),
             bytes: 4_812_000_000,
-            detail: "The Witcher 3: Wild Hunt · préfixe Proton".to_string(),
+            detail: prefix_detail("The Witcher 3: Wild Hunt"),
         },
         crate::disk::DiskRow {
-            label: "Jeu".to_string(),
+            label: crate::i18n::tr("Jeu"),
             path: root.join("demo-jeux/7dtd"),
             bytes: 12_800_000_000,
             detail: "7 Days to Die".to_string(),
         },
         crate::disk::DiskRow {
-            label: "Préfixe Proton".to_string(),
+            label: crate::i18n::tr("Préfixe Proton"),
             path: root.join("demo-jeux/prefixes/7dtd"),
             bytes: 1_204_000_000,
-            detail: "7 Days to Die · préfixe Proton".to_string(),
+            detail: prefix_detail("7 Days to Die"),
         },
         crate::disk::DiskRow {
-            label: "Cache d'artworks".to_string(),
+            label: crate::i18n::tr("Cache d'artworks"),
             path: crate::config::artwork_root(),
             bytes: 244_000_000,
-            detail: "5 jeu(x) avec des images".to_string(),
+            detail: if english {
+                "5 games with images".to_string()
+            } else {
+                "5 jeux avec des images".to_string()
+            },
         },
         crate::disk::DiskRow {
-            label: "Journaux de session".to_string(),
+            label: crate::i18n::tr("Journaux de session"),
             path: crate::config::data_dir().join("logs"),
             bytes: 18_400_000,
-            detail: "un fichier session.log par jeu, réécrit à chaque lancement".to_string(),
+            detail: if english {
+                "one session.log per game, rewritten on each launch".to_string()
+            } else {
+                "un fichier session.log par jeu, réécrit à chaque lancement".to_string()
+            },
         },
         crate::disk::DiskRow {
-            label: "Archives de mise à jour".to_string(),
+            label: crate::i18n::tr("Archives de mise à jour"),
             path: crate::config::data_dir().join("updates"),
             bytes: 9_200_000,
-            detail: "téléchargées depuis les releases GitHub".to_string(),
+            detail: if english {
+                "downloaded from GitHub releases".to_string()
+            } else {
+                "téléchargées depuis les releases GitHub".to_string()
+            },
         },
     ];
     rows.sort_by(|a, b| b.bytes.cmp(&a.bytes));

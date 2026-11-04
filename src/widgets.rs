@@ -138,6 +138,7 @@ pub fn accent_button(
     enabled: bool,
     icon: Icon,
 ) -> Response {
+    let label = crate::i18n::tr(label);
     let sense = if enabled {
         Sense::click()
     } else {
@@ -148,7 +149,7 @@ pub fn accent_button(
     // Transition douce vers l'état survolé. egui ne redemande une image que
     // pendant la transition : au repos, aucun repaint supplémentaire.
     let hover = ui.ctx().animate_bool_with_time(
-        control_id(ui, rect, label, "accent"),
+        control_id(ui, rect, &label, "accent"),
         enabled && resp.hovered(),
         0.12,
     );
@@ -176,13 +177,14 @@ pub fn accent_button(
         );
     }
 
-    let galley = painter.layout_no_wrap(label.to_string(), FontId::proportional(15.0), fg);
+    let galley = painter.layout_no_wrap(label.clone(), FontId::proportional(15.0), fg);
     let icon_w = if icon == Icon::None { 0.0 } else { 15.0 };
     let gap = if icon_w > 0.0 { 9.0 } else { 0.0 };
     let total = icon_w + gap + galley.size().x;
     let x0 = rect.center().x - total / 2.0;
     if icon != Icon::None {
-        paint_icon(ui,
+        paint_icon(
+            ui,
             Rect::from_center_size(
                 Pos2::new(x0 + icon_w / 2.0, rect.center().y),
                 Vec2::splat(icon_w),
@@ -208,6 +210,7 @@ pub fn danger_button(
     enabled: bool,
     icon: Icon,
 ) -> Response {
+    let label = crate::i18n::tr(label);
     let sense = if enabled {
         Sense::click()
     } else {
@@ -217,7 +220,7 @@ pub fn danger_button(
     let fg = Color32::WHITE;
     let pressed = enabled && resp.is_pointer_button_down_on();
     let hover = ui.ctx().animate_bool_with_time(
-        control_id(ui, rect, label, "danger"),
+        control_id(ui, rect, &label, "danger"),
         enabled && resp.hovered(),
         0.12,
     );
@@ -229,13 +232,14 @@ pub fn danger_button(
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect.shrink(if pressed { 1.0 } else { 0.0 }), 4.0, bg);
 
-    let galley = painter.layout_no_wrap(label.to_string(), FontId::proportional(14.0), fg);
+    let galley = painter.layout_no_wrap(label.clone(), FontId::proportional(14.0), fg);
     let icon_w = if icon == Icon::None { 0.0 } else { 15.0 };
     let gap = if icon_w > 0.0 { 9.0 } else { 0.0 };
     let total = icon_w + gap + galley.size().x;
     let x0 = rect.center().x - total / 2.0;
     if icon != Icon::None {
-        paint_icon(ui,
+        paint_icon(
+            ui,
             Rect::from_center_size(
                 Pos2::new(x0 + icon_w / 2.0, rect.center().y),
                 Vec2::splat(icon_w),
@@ -254,18 +258,21 @@ pub fn danger_button(
 
 /// Bouton secondaire discret (contour au survol), largeur automatique.
 pub fn ghost_button(ui: &mut egui::Ui, label: &str, pal: &Palette, icon: Icon) -> Response {
+    let label = crate::i18n::tr(label);
     let font = FontId::proportional(12.5);
     let galley = ui
         .painter()
-        .layout_no_wrap(label.to_string(), font.clone(), pal.text);
+        .layout_no_wrap(label.clone(), font.clone(), pal.text);
     let icon_w = if icon == Icon::None { 0.0 } else { 13.0 };
     let gap = if icon_w > 0.0 { 8.0 } else { 0.0 };
     let size = Vec2::new(galley.size().x + icon_w + gap + 22.0, 30.0);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let painter = ui.painter_at(rect);
-    let hover =
-        ui.ctx()
-            .animate_bool_with_time(control_id(ui, rect, label, "ghost"), resp.hovered(), 0.12);
+    let hover = ui.ctx().animate_bool_with_time(
+        control_id(ui, rect, &label, "ghost"),
+        resp.hovered(),
+        0.12,
+    );
     if hover > 0.0 {
         painter.rect_filled(rect, 4.0, pal.surface_hover.gamma_multiply(hover));
         border_rect(&painter, rect, 1.0, pal.border.gamma_multiply(hover));
@@ -273,7 +280,8 @@ pub fn ghost_button(ui: &mut egui::Ui, label: &str, pal: &Palette, icon: Icon) -
     let color = theme::lerp_color(pal.text_dim, pal.text, hover);
     let x0 = rect.center().x - (icon_w + gap + galley.size().x) / 2.0;
     if icon != Icon::None {
-        paint_icon(ui,
+        paint_icon(
+            ui,
             Rect::from_center_size(
                 Pos2::new(x0 + icon_w / 2.0, rect.center().y),
                 Vec2::splat(icon_w),
@@ -298,10 +306,11 @@ pub fn icon_button(
     pal: &Palette,
     tooltip: &str,
 ) -> Response {
+    let tooltip = crate::i18n::tr(tooltip);
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
     let painter = ui.painter_at(rect);
     let hover = ui.ctx().animate_bool_with_time(
-        control_id(ui, rect, tooltip, "icon"),
+        control_id(ui, rect, &tooltip, "icon"),
         resp.hovered(),
         0.12,
     );
@@ -310,7 +319,8 @@ pub fn icon_button(
     }
     // Le symbole se resserre légèrement au survol : un effet de « prise », sans
     // aucune conséquence sur la mise en page.
-    paint_icon(ui,
+    paint_icon(
+        ui,
         rect.shrink(size * (0.24 + 0.03 * hover)),
         icon,
         theme::lerp_color(pal.text_dim, pal.text, hover),
@@ -332,10 +342,11 @@ pub fn tinted_icon_button(
     color: Color32,
     tooltip: &str,
 ) -> Response {
+    let tooltip = crate::i18n::tr(tooltip);
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
     let painter = ui.painter_at(rect);
     let hover = ui.ctx().animate_bool_with_time(
-        control_id(ui, rect, tooltip, "tinted"),
+        control_id(ui, rect, &tooltip, "tinted"),
         resp.hovered(),
         0.12,
     );
@@ -352,7 +363,8 @@ pub fn tinted_icon_button(
         size * 0.5 - 0.5,
         Stroke::new(1.0_f32, color.gamma_multiply(0.65 + 0.35 * hover)),
     );
-    paint_icon(ui,
+    paint_icon(
+        ui,
         rect.shrink(size * (0.29 + 0.02 * hover)),
         icon,
         theme::lerp_color(color, Color32::WHITE, hover * 0.30),
@@ -370,6 +382,7 @@ pub fn tinted_icon_button(
 /// droit les mêmes icônes que la fiche. La pastille sombre garde le symbole
 /// lisible même quand la fenêtre est posée sur une bannière claire.
 pub fn menu_row(ui: &mut egui::Ui, pal: &Palette, icon: Icon, color: Color32, label: &str) -> bool {
+    let label = crate::i18n::tr(label);
     let (rect, resp) = ui.allocate_exact_size(
         Vec2::new(ui.available_width().max(206.0), 28.0),
         Sense::click(),
@@ -377,14 +390,15 @@ pub fn menu_row(ui: &mut egui::Ui, pal: &Palette, icon: Icon, color: Color32, la
     let painter = ui.painter_at(rect);
     let hover =
         ui.ctx()
-            .animate_bool_with_time(ui.id().with(("quark_menu", label)), resp.hovered(), 0.10);
+            .animate_bool_with_time(ui.id().with(("quark_menu", &label)), resp.hovered(), 0.10);
     if hover > 0.0 {
         painter.rect_filled(rect, 5.0, pal.surface_hover.gamma_multiply(hover));
     }
     let center = Pos2::new(rect.left() + 18.0, rect.center().y);
     painter.circle_filled(center, 10.0, Color32::from_black_alpha(130));
     painter.circle_stroke(center, 9.5, Stroke::new(1.0_f32, color.gamma_multiply(0.6)));
-    paint_icon(ui,
+    paint_icon(
+        ui,
         Rect::from_center_size(center, Vec2::splat(12.0)),
         icon,
         color,
@@ -392,7 +406,7 @@ pub fn menu_row(ui: &mut egui::Ui, pal: &Palette, icon: Icon, color: Color32, la
     painter.text(
         Pos2::new(rect.left() + 36.0, rect.center().y),
         Align2::LEFT_CENTER,
-        label,
+        &label,
         FontId::proportional(12.5),
         theme::lerp_color(pal.text_dim, pal.text, 0.55 + 0.45 * hover),
     );
@@ -401,6 +415,7 @@ pub fn menu_row(ui: &mut egui::Ui, pal: &Palette, icon: Icon, color: Color32, la
 
 /// Onglet de la barre supérieure (Boutique / Bibliothèque).
 pub fn tab(ui: &mut egui::Ui, label: &str, selected: bool, pal: &Palette) -> Response {
+    let label = crate::i18n::tr(label);
     let text = label.to_uppercase();
     let font = FontId::proportional(12.5);
     let width = ui
@@ -411,14 +426,14 @@ pub fn tab(ui: &mut egui::Ui, label: &str, selected: bool, pal: &Palette) -> Res
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width + 26.0, 34.0), Sense::click());
     let painter = ui.painter_at(rect);
     let hover = ui.ctx().animate_bool_with_time(
-        ui.id().with(("quark-tab-hover", label)),
+        ui.id().with(("quark-tab-hover", &label)),
         resp.hovered(),
         0.12,
     );
     // Le trait d'onglet s'étire depuis le centre quand l'onglet est choisi.
     let mark =
         ui.ctx()
-            .animate_bool_with_time(ui.id().with(("quark-tab-mark", label)), selected, 0.16);
+            .animate_bool_with_time(ui.id().with(("quark-tab-mark", &label)), selected, 0.16);
     let color = if selected {
         pal.text
     } else {
@@ -479,7 +494,7 @@ pub fn chip_colored(
         pal.text_dim
     };
     ui.add(
-        egui::Button::new(RichText::new(label).size(11.0).color(ink))
+        egui::Button::new(crate::i18n::rich(label).size(11.0).color(ink))
             .fill(if selected { accent } else { pal.surface })
             .stroke(egui::Stroke::new(
                 1.0_f32,
@@ -526,9 +541,10 @@ pub fn setting_toggle(
             .layout(egui::Layout::top_down(egui::Align::Min)),
     );
     child.spacing_mut().item_spacing.y = 1.0;
-    child.label(RichText::new(title).size(12.5).color(pal.text));
+    child.label(crate::i18n::rich(title).size(12.5).color(pal.text));
     if let Some(hint) = hint {
-        child.add(egui::Label::new(RichText::new(hint).size(10.5).color(pal.text_faint)).wrap());
+        child
+            .add(egui::Label::new(crate::i18n::rich(hint).size(10.5).color(pal.text_faint)).wrap());
     }
     // Interrupteur peint, sans widget interactif imbriqué : toute la ligne
     // réagit au clic, sans double bascule.
@@ -584,7 +600,8 @@ pub fn home_button(ui: &mut egui::Ui, selected: bool, pal: &Palette) -> Response
     } else {
         theme::lerp_color(pal.text_dim, pal.text, hover)
     };
-    paint_icon(ui,
+    paint_icon(
+        ui,
         Rect::from_center_size(
             Pos2::new(rect.left() + 16.0, rect.center().y),
             Vec2::splat(15.0),
@@ -595,7 +612,7 @@ pub fn home_button(ui: &mut egui::Ui, selected: bool, pal: &Palette) -> Response
     painter.text(
         Pos2::new(rect.left() + 29.0, rect.center().y),
         Align2::LEFT_CENTER,
-        "Accueil",
+        crate::i18n::tr("Accueil"),
         FontId::proportional(12.5),
         color,
     );
@@ -652,11 +669,7 @@ pub fn floating_icon_button(
     } else {
         theme::lerp_color(pal.text, Color32::WHITE, hover)
     };
-    paint_icon(ui,
-        rect.shrink(size * (0.26 + 0.02 * hover)),
-        icon,
-        fg,
-    );
+    paint_icon(ui, rect.shrink(size * (0.26 + 0.02 * hover)), icon, fg);
     if tooltip.is_empty() {
         resp
     } else {

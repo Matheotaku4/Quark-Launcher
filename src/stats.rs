@@ -14,6 +14,11 @@ pub const MONTHS: [&str; 12] = [
     "déc.",
 ];
 
+/// English month abbreviations, used by the chart labels.
+pub const MONTHS_EN: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
 /// Numéro du jour depuis l'époque Unix (UTC).
 pub fn day_of(ts: i64) -> i64 {
     ts.div_euclid(86_400)
@@ -25,20 +30,34 @@ pub fn weekday(day: i64) -> usize {
     (day + 3).rem_euclid(7) as usize
 }
 
-pub fn weekday_label(day: usize) -> &'static str {
-    ["L", "M", "M", "J", "V", "S", "D"][day.min(6)]
+pub fn weekday_label(day: usize, english: bool) -> &'static str {
+    if english {
+        ["M", "T", "W", "T", "F", "S", "S"][day.min(6)]
+    } else {
+        ["L", "M", "M", "J", "V", "S", "D"][day.min(6)]
+    }
 }
 
-/// « 28 oct. » pour un numéro de jour.
-pub fn date_label(day: i64) -> String {
+/// « 28 oct. » ou « Oct 28 » pour un numéro de jour.
+pub fn date_label(day: i64, english: bool) -> String {
     let (_, month, dom) = civil_from_days(day);
-    format!("{dom} {}", MONTHS[(month as usize).clamp(1, 12) - 1])
+    let month = (month as usize).clamp(1, 12) - 1;
+    if english {
+        format!("{} {dom}", MONTHS_EN[month])
+    } else {
+        format!("{dom} {}", MONTHS[month])
+    }
 }
 
 /// « oct. 2026 » : libellé court pour l'axe du calendrier.
-pub fn month_short(day: i64) -> String {
+pub fn month_short(day: i64, english: bool) -> String {
     let (year, month, _) = civil_from_days(day);
-    format!("{} {year}", MONTHS[(month as usize).clamp(1, 12) - 1])
+    let month = (month as usize).clamp(1, 12) - 1;
+    if english {
+        format!("{} {year}", MONTHS_EN[month])
+    } else {
+        format!("{} {year}", MONTHS[month])
+    }
 }
 
 /// Durée par jour : la session est comptée le jour où elle a commencé.
@@ -220,8 +239,10 @@ mod tests {
     #[test]
     fn les_libelles_de_date_sont_lisibles() {
         // 28 octobre 2026 = jour 20754 (1 793 196 300 / 86 400).
-        assert_eq!(date_label(20_754), "28 oct.");
-        assert_eq!(month_short(20_754), "oct. 2026");
+        assert_eq!(date_label(20_754, false), "28 oct.");
+        assert_eq!(date_label(20_754, true), "Oct 28");
+        assert_eq!(month_short(20_754, false), "oct. 2026");
+        assert_eq!(month_short(20_754, true), "Oct 2026");
         assert_eq!(human(7_500), "2 h 05");
     }
 }

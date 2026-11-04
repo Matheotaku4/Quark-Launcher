@@ -12,7 +12,9 @@ use crate::stats;
 use crate::theme::{self, Palette};
 use crate::update;
 use crate::widgets::{self, Icon};
-use eframe::egui::{self, Align, Align2, FontId, Layout, Pos2, Rect, RichText, Sense, Vec2};
+use eframe::egui::{
+    self, Align, Align2, Color32, FontId, Layout, Pos2, Rect, RichText, Sense, Stroke, Vec2,
+};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -53,13 +55,17 @@ impl QuarkApp {
 
         let modal = egui::Modal::new(egui::Id::new("quark_add_game")).show(ctx, |ui| {
             ui.set_min_width(660.0);
-            ui.label(RichText::new(title).size(17.0).color(pal.text));
+            ui.label(crate::i18n::rich(title).size(17.0).color(pal.text));
             ui.add_space(10.0);
 
             match step {
                 AddStep::Name => {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Nom du jeu").size(12.0).color(pal.text_dim));
+                        ui.label(
+                            crate::i18n::rich("Nom du jeu")
+                                .size(12.0)
+                                .color(pal.text_dim),
+                        );
                         widgets::info_button(
                             ui,
                             &pal,
@@ -71,7 +77,7 @@ impl QuarkApp {
                     ui.add_space(4.0);
                     let response = ui.add(
                         egui::TextEdit::singleline(&mut self.add.name)
-                            .hint_text("Ex. Hollow Knight")
+                            .hint_text(crate::i18n::tr("Ex. Hollow Knight"))
                             .font(FontId::proportional(15.0))
                             .desired_width(f32::INFINITY),
                     );
@@ -89,7 +95,7 @@ impl QuarkApp {
                     match &self.add.state {
                         SearchState::Idle => {
                             ui.label(
-                                RichText::new(
+                                crate::i18n::rich(
                                     "Tape au moins 2 lettres, la recherche est automatique.",
                                 )
                                 .size(11.5)
@@ -100,7 +106,7 @@ impl QuarkApp {
                             ui.horizontal(|ui| {
                                 ui.spinner();
                                 ui.label(
-                                    RichText::new("Recherche en cours…")
+                                    crate::i18n::rich("Recherche en cours…")
                                         .size(12.5)
                                         .color(pal.text_dim),
                                 );
@@ -110,7 +116,7 @@ impl QuarkApp {
                             warnings = warns.clone();
                             if hits.is_empty() {
                                 ui.label(
-                                    RichText::new(
+                                    crate::i18n::rich(
                                         "Aucun résultat. Tu peux continuer sans artwork.",
                                     )
                                     .size(12.5)
@@ -133,7 +139,7 @@ impl QuarkApp {
                     }
                     for warning in warnings {
                         ui.add_space(2.0);
-                        ui.label(RichText::new(warning).size(11.0).color(pal.text_faint));
+                        ui.label(crate::i18n::rich(warning).size(11.0).color(pal.text_faint));
                     }
 
                     ui.add_space(14.0);
@@ -175,7 +181,7 @@ impl QuarkApp {
                 AddStep::Artwork => {
                     ui.horizontal(|ui| {
                         ui.label(
-                            RichText::new("Images du jeu")
+                            crate::i18n::rich("Images du jeu")
                                 .size(12.0)
                                 .color(pal.text_dim),
                         );
@@ -193,7 +199,7 @@ impl QuarkApp {
                         ui.horizontal(|ui| {
                             ui.spinner();
                             ui.label(
-                                RichText::new("Recherche des artworks\u{2026}")
+                                crate::i18n::rich("Recherche des artworks\u{2026}")
                                     .size(12.5)
                                     .color(pal.text_dim),
                             );
@@ -207,14 +213,14 @@ impl QuarkApp {
                                 for kind in AssetKind::ALL {
                                     let urls = plan.candidates(kind);
                                     ui.label(
-                                        RichText::new(kind.label().to_uppercase())
+                                        crate::i18n::rich(kind.label().to_uppercase())
                                             .size(11.0)
                                             .color(pal.text_faint),
                                     );
                                     ui.add_space(3.0);
                                     if urls.is_empty() {
                                         ui.label(
-                                            RichText::new("aucune proposition")
+                                            crate::i18n::rich("aucune proposition")
                                                 .size(11.5)
                                                 .color(pal.text_faint),
                                         );
@@ -248,14 +254,14 @@ impl QuarkApp {
                             });
                     } else {
                         ui.label(
-                            RichText::new("Aucun artwork proposé : tu peux continuer sans.")
+                            crate::i18n::rich("Aucun artwork proposé : tu peux continuer sans.")
                                 .size(12.0)
                                 .color(pal.text_dim),
                         );
                     }
                     if let Some(error) = self.add.artwork.error.clone() {
                         ui.add_space(4.0);
-                        ui.label(RichText::new(error).size(11.0).color(pal.text_faint));
+                        ui.label(crate::i18n::rich(error).size(11.0).color(pal.text_faint));
                     }
 
                     ui.add_space(14.0);
@@ -282,7 +288,11 @@ impl QuarkApp {
                     scan_action = self.scan_step(ui, &pal);
                 }
                 AddStep::Exe => {
-                    ui.label(RichText::new("Nom affiché").size(12.0).color(pal.text_dim));
+                    ui.label(
+                        crate::i18n::rich("Nom affiché")
+                            .size(12.0)
+                            .color(pal.text_dim),
+                    );
                     ui.add(
                         egui::TextEdit::singleline(&mut self.add.name)
                             .font(FontId::proportional(15.0))
@@ -291,7 +301,7 @@ impl QuarkApp {
                     ui.add_space(10.0);
 
                     ui.label(
-                        RichText::new("Exécutable du jeu")
+                        crate::i18n::rich("Exécutable du jeu")
                             .size(12.0)
                             .color(pal.text_dim),
                     );
@@ -299,7 +309,7 @@ impl QuarkApp {
                         let field = (ui.available_width() - 130.0).max(200.0);
                         ui.add(
                             egui::TextEdit::singleline(&mut self.add.exe)
-                                .hint_text("/chemin/vers/jeu.exe ou jeu.sh")
+                                .hint_text(crate::i18n::tr("/chemin/vers/jeu.exe ou jeu.sh"))
                                 .desired_width(field),
                         );
                         if widgets::ghost_button(ui, "Parcourir…", &pal, Icon::Folder).clicked() {
@@ -312,23 +322,27 @@ impl QuarkApp {
                             (None, Some(id)) => format!("Artworks : SteamGridDB #{id}"),
                             _ => "Artworks : aucun".to_string(),
                         };
-                        ui.label(RichText::new(info).size(11.0).color(pal.text_faint));
+                        ui.label(crate::i18n::rich(info).size(11.0).color(pal.text_faint));
                     }
                     ui.add_space(12.0);
 
                     ui.label(
-                        RichText::new("Arguments (optionnel)")
+                        crate::i18n::rich("Arguments (optionnel)")
                             .size(12.0)
                             .color(pal.text_dim),
                     );
                     ui.add(
                         egui::TextEdit::singleline(&mut self.add.args)
-                            .hint_text("--fullscreen")
+                            .hint_text(crate::i18n::tr("--fullscreen"))
                             .desired_width(f32::INFINITY),
                     );
                     ui.add_space(12.0);
 
-                    ui.label(RichText::new("Lancement").size(12.0).color(pal.text_dim));
+                    ui.label(
+                        crate::i18n::rich("Lancement")
+                            .size(12.0)
+                            .color(pal.text_dim),
+                    );
                     runtime_combo(
                         ui,
                         &pal,
@@ -356,7 +370,7 @@ impl QuarkApp {
                             let field = (ui.available_width() - 130.0).max(200.0);
                             ui.add(
                                 egui::TextEdit::singleline(&mut self.add.prefix)
-                                    .hint_text("~/Games/prefixes/mon-jeu")
+                                    .hint_text(crate::i18n::tr("~/Games/prefixes/mon-jeu"))
                                     .desired_width(field),
                             );
                             if widgets::ghost_button(ui, "Parcourir…", &pal, Icon::Folder).clicked()
@@ -389,7 +403,7 @@ impl QuarkApp {
                         if !ready {
                             ui.add_space(8.0);
                             ui.label(
-                                RichText::new("indique l'exécutable pour valider")
+                                crate::i18n::rich("indique l'exécutable pour valider")
                                     .size(11.0)
                                     .color(pal.text_faint),
                             );
@@ -537,99 +551,248 @@ impl QuarkApp {
         let mut download_update = false;
         let mut open_url: Option<String> = None;
 
-        // La page défile dans l'espace qui reste dans la fenêtre, une fois
-        // l'en-tête, les onglets et le pied de page retirés.
-        let page_height = (ctx.screen_rect().height() - 360.0).max(220.0);
-        let modal = egui::Modal::new(egui::Id::new("quark_settings")).show(ctx, |ui| {
-            ui.set_min_width(980.0);
-            ui.set_max_width(980.0);
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(RichText::new("Paramètres").size(20.0).color(pal.text));
-                    ui.label(
-                        RichText::new("Réglages de Quark, enregistrés automatiquement")
-                            .size(11.0)
-                            .color(pal.text_faint),
-                    );
-                });
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if widgets::icon_button(ui, 28.0, Icon::Close, &pal, "Fermer").clicked() {
-                        close_requested = true;
-                    }
-                    ui.add_space(6.0);
-                    ui.label(
-                        RichText::new("Les modifications sont appliquées immédiatement")
-                            .size(10.5)
-                            .color(pal.text_faint),
-                    );
-                });
-            });
-            ui.add_space(14.0);
-            ui.separator();
-            ui.add_space(14.0);
+        // Les paramètres occupent toute la fenêtre au lieu de flotter dans
+        // une modale étroite. La navigation latérale garde toutes les
+        // catégories visibles et le contenu utilise la largeur disponible.
+        let screen = ctx.screen_rect();
+        let page_height = (screen.height() - 170.0).max(300.0);
+        egui::Area::new(egui::Id::new("quark_settings"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(screen.min)
+            .show(ctx, |ui| {
+                ui.set_min_size(screen.size());
+                ui.set_max_size(screen.size());
+                egui::Frame::new()
+                    .fill(pal.bg)
+                    .inner_margin(egui::Margin::symmetric(28, 18))
+                    .show(ui, |ui| {
+                        // La marge du cadre est déjà dans `screen` : retirer sa
+                        // taille évite que le bouton Fermer soit hors écran.
+                        ui.set_min_size(screen.size() - Vec2::new(56.0, 36.0));
+                        ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                ui.label(
+                                    crate::i18n::rich("Paramètres").size(22.0).color(pal.text),
+                                );
+                                ui.label(
+                                    crate::i18n::rich(
+                                        "Réglages de Quark, enregistrés automatiquement",
+                                    )
+                                    .size(11.0)
+                                    .color(pal.text_faint),
+                                );
+                            });
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if widgets::icon_button(
+                                    ui,
+                                    30.0,
+                                    Icon::Close,
+                                    &pal,
+                                    "Fermer",
+                                )
+                                .clicked()
+                                {
+                                    close_requested = true;
+                                }
+                            });
+                        });
+                        ui.add_space(12.0);
+                        ui.separator();
+                        ui.add_space(16.0);
 
-            ui.vertical(|ui| {
-                let mut next_tab = None;
-                // Onglets horizontaux en haut de la fenêtre : toutes les pages
-                // restent visibles d'un coup d'œil, sans colonne latérale.
-                ui.horizontal_wrapped(|ui| {
-                    for (tab, label) in SettingsTab::ALL {
-                        if widgets::tab(ui, label, self.settings_tab == tab, &pal).clicked() {
-                            next_tab = Some(tab);
-                        }
-                    }
-                });
-                ui.add_space(6.0);
-                ui.label(
-                    RichText::new(self.settings_tab.hint())
-                        .size(12.0)
-                        .color(pal.text_dim),
-                );
-                ui.add_space(8.0);
-                ui.separator();
-                ui.add_space(10.0);
-                // Le contenu est limité en largeur : les lignes de réglages
-                // restent lisibles même sur un écran large.
-                ui.set_max_width(760.0);
-            egui::ScrollArea::vertical()
-                .id_salt("quark_settings_scroll")
-                .max_height(page_height)
-                // Se rétrécit quand la page est courte, mais grandit jusqu'à
-                // `max_height` quand les variables s'accumulent.
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    // Chaque page se fond à l'ouverture de son onglet : le
-                    // changement se voit, sans déplacer le contenu.
-                    let page_fade = ui.ctx().animate_bool_with_time(
-                        egui::Id::new(("quark_settings_page", self.settings_tab as usize)),
-                        true,
-                        0.16,
-                    );
-                    ui.set_opacity(page_fade);
+                        ui.horizontal_top(|ui| {
+                            // Colonne de navigation : plus stable qu'une rangée
+                            // d'onglets qui déborde à 1024 px.
+                            ui.vertical(|ui| {
+                                ui.set_width(218.0);
+                                ui.add_space(4.0);
+                                for (tab, label) in SettingsTab::ALL {
+                                    let selected = self.settings_tab == tab;
+                                    if ui
+                                        .add_sized(
+                                            Vec2::new(210.0, 34.0),
+                                            egui::Button::new(
+                                                crate::i18n::rich(label)
+                                                    .size(12.5)
+                                                    .color(if selected {
+                                                        pal.text
+                                                    } else {
+                                                        pal.text_dim
+                                                    }),
+                                            )
+                                            .selected(selected)
+                                            .fill(if selected {
+                                                pal.surface
+                                            } else {
+                                                Color32::TRANSPARENT
+                                            })
+                                            .stroke(if selected {
+                                                Stroke::new(1.0_f32, pal.accent)
+                                            } else {
+                                                Stroke::NONE
+                                            })
+                                            .corner_radius(6.0),
+                                        )
+                                        .clicked()
+                                    {
+                                        self.settings_tab = tab;
+                                    }
+                                    ui.add_space(2.0);
+                                }
+                            });
+                            ui.add_space(22.0);
+                            ui.separator();
+                            ui.add_space(22.0);
+
+                            ui.vertical(|ui| {
+                                ui.set_max_width((ui.available_width() - 8.0).min(1080.0));
+                                ui.label(
+                                    crate::i18n::rich(self.settings_tab.hint())
+                                        .size(12.5)
+                                        .color(pal.text_dim),
+                                );
+                                ui.add_space(6.0);
+                                ui.separator();
+                                ui.add_space(12.0);
+                                egui::ScrollArea::vertical()
+                                    .id_salt("quark_settings_scroll")
+                                    .max_height(page_height)
+                                    .auto_shrink([false, true])
+                                    .show(ui, |ui| {
+                                        let page_fade = ui.ctx().animate_bool_with_time(
+                                            egui::Id::new((
+                                                "quark_settings_page",
+                                                self.settings_tab as usize,
+                                            )),
+                                            true,
+                                            0.16,
+                                        );
+                                        ui.set_opacity(page_fade);
                     match self.settings_tab {
                     SettingsTab::Appearance => {
-                        section(ui, "THÈME", &pal);
-                        ui.horizontal(|ui| {
-                            for mode in [ThemeMode::Amoled, ThemeMode::Graphite] {
+                        section(ui, "LANGUE", &pal);
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(
+                                crate::i18n::rich("Langue de l'interface")
+                                    .size(12.5)
+                                    .color(pal.text_dim),
+                            );
+                            ui.add_space(10.0);
+                            for language in config::UiLanguage::ALL {
                                 if ui
-                                    .radio_value(&mut self.lib.settings.theme, mode, mode.label())
+                                    .radio_value(
+                                        &mut self.lib.settings.ui_language,
+                                        language,
+                                        language.label(),
+                                    )
                                     .changed()
                                 {
+                                    crate::i18n::set_language(language);
                                     self.touch();
                                 }
                             }
                             widgets::info_button(
                                 ui,
                                 &pal,
-                                "AMOLED est noir pur (#000000) ; Graphite adoucit les noirs sur \
-                                 les écrans qui ne sont pas OLED.",
+                                "Le changement est immédiat. La langue des fiches Steam reste réglée séparément dans Boutiques & outils.",
                             );
                         });
+
+                        section(ui, "THÈME", &pal);
+                        ui.horizontal_wrapped(|ui| {
+                            for mode in ThemeMode::ALL {
+                                if theme_card(ui, mode, self.lib.settings.theme == mode) {
+                                    self.lib.settings.theme = mode;
+                                    self.touch();
+                                }
+                            }
+                        });
+                        ui.add_space(6.0);
+                        ui.label(
+                            crate::i18n::rich("Le thème s'applique immédiatement à toute l'interface.")
+                                .size(10.5)
+                                .color(pal.text_faint),
+                        );
+
+                        section(ui, "FOND", &pal);
+                        if widgets::setting_toggle(
+                            ui,
+                            &pal,
+                            "Fond hero aléatoire",
+                            Some(
+                                "Choisit une bannière au hasard dans la bibliothèque, la floute et l'affiche derrière l'accueil et la bibliothèque. Un nouveau choix est fait à chaque démarrage.",
+                            ),
+                            &mut self.lib.settings.hero_background,
+                            "hero_background",
+                        )
+                        .changed()
+                        {
+                            if self.lib.settings.hero_background {
+                                self.pick_random_background();
+                            }
+                            self.touch();
+                        }
+                        if self.lib.settings.hero_background {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    crate::i18n::rich("Flou du fond")
+                                        .size(12.0)
+                                        .color(pal.text_dim),
+                                );
+                                let mut blur = self.lib.settings.hero_background_blur;
+                                if ui
+                                    .add(
+                                        egui::Slider::new(&mut blur, 2.0..=30.0)
+                                            .suffix(" px")
+                                            .fixed_decimals(0),
+                                    )
+                                    .changed()
+                                {
+                                    self.lib.settings.hero_background_blur = blur;
+                                    self.touch();
+                                }
+                                if widgets::ghost_button(
+                                    ui,
+                                    "Autre bannière",
+                                    &pal,
+                                    Icon::Refresh,
+                                )
+                                .clicked()
+                                {
+                                    self.pick_random_background();
+                                }
+                            });
+                            let current = self
+                                .random_hero_game
+                                .as_ref()
+                                .and_then(|id| self.lib.get(id))
+                                .map(|game| game.name.clone());
+                            match current {
+                                Some(name) => {
+                                    ui.label(
+                                        crate::i18n::rich(format!(
+                                            "Bannière de cette session : {name}"
+                                        ))
+                                        .size(10.5)
+                                        .color(pal.text_faint),
+                                    );
+                                }
+                                None => {
+                                    ui.label(
+                                        crate::i18n::rich(
+                                            "Aucune bannière disponible pour le fond aléatoire.",
+                                        )
+                                        .size(10.5)
+                                        .color(pal.text_faint),
+                                    );
+                                }
+                            }
+                        }
 
                         section(ui, "DÉMARRAGE", &pal);
                         ui.horizontal_wrapped(|ui| {
                             ui.label(
-                                RichText::new("Page d'ouverture").size(12.5).color(pal.text_dim),
+                                crate::i18n::rich("Page d'ouverture").size(12.5).color(pal.text_dim),
                             );
                             ui.add_space(10.0);
                             for page in StartPage::ALL {
@@ -655,7 +818,7 @@ impl QuarkApp {
 
                         section(ui, "BIBLIOTHÈQUE", &pal);
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Vue par défaut").size(12.5).color(pal.text_dim));
+                            ui.label(crate::i18n::rich("Vue par défaut").size(12.5).color(pal.text_dim));
                             ui.add_space(12.0);
                             for view in [ViewMode::List, ViewMode::Grid] {
                                 if ui
@@ -713,7 +876,7 @@ impl QuarkApp {
                         if self.lib.settings.carousel_auto {
                             ui.horizontal(|ui| {
                                 ui.label(
-                                    RichText::new("Changer toutes les")
+                                    crate::i18n::rich("Changer toutes les")
                                         .size(12.0)
                                         .color(pal.text_dim),
                                 );
@@ -758,7 +921,7 @@ impl QuarkApp {
                             match (&crate::tray::helper_pid(), &self.tray_error) {
                                 (Some(_), _) => {
                                     ui.label(
-                                        RichText::new(
+                                        crate::i18n::rich(
                                             "Icône active : la croix ferme Quark, l'icône reste \
                                              et un clic la relance.",
                                         )
@@ -771,7 +934,7 @@ impl QuarkApp {
                                     // dans le ⓘ : la ligne brute débordait de la fenêtre.
                                     ui.horizontal(|ui| {
                                         ui.label(
-                                            RichText::new(
+                                            crate::i18n::rich(
                                                 "Icône indisponible : ce bureau n'a pas de zone \
                                                  de notification.",
                                             )
@@ -781,7 +944,7 @@ impl QuarkApp {
                                         widgets::info_button(ui, &pal, err);
                                     });
                                     ui.label(
-                                        RichText::new(
+                                        crate::i18n::rich(
                                             "Le bureau doit fournir un watcher StatusNotifierItem \
                                              (extension AppIndicator sous GNOME). Décoché, la \
                                              croix quitte Quark.",
@@ -819,7 +982,7 @@ impl QuarkApp {
                             ui.add_space(6.0);
                             ui.horizontal(|ui| {
                                 ui.label(
-                                    RichText::new("Raccourci d'ouverture")
+                                    crate::i18n::rich("Raccourci d'ouverture")
                                         .size(12.0)
                                         .color(pal.text_dim),
                                 );
@@ -829,7 +992,7 @@ impl QuarkApp {
                                         egui::TextEdit::singleline(
                                             &mut self.lib.settings.overlay_hotkey,
                                         )
-                                        .hint_text("Shift+BackSpace")
+                                        .hint_text(crate::i18n::tr("Shift+BackSpace"))
                                         .font(egui::FontId::monospace(12.0)),
                                     )
                                     .changed();
@@ -851,7 +1014,7 @@ impl QuarkApp {
                             });
                             ui.horizontal(|ui| {
                                 ui.label(
-                                    RichText::new("Touche de capture")
+                                    crate::i18n::rich("Touche de capture")
                                         .size(12.0)
                                         .color(pal.text_dim),
                                 );
@@ -861,7 +1024,7 @@ impl QuarkApp {
                                         egui::TextEdit::singleline(
                                             &mut self.lib.settings.screenshot_key,
                                         )
-                                        .hint_text("F12")
+                                        .hint_text(crate::i18n::tr("F12"))
                                         .font(egui::FontId::monospace(12.0)),
                                     )
                                     .changed();
@@ -875,7 +1038,7 @@ impl QuarkApp {
                                     self.touch();
                                 }
                                 ui.label(
-                                    RichText::new("F1–F12, Print… · appliquée au prochain lancement")
+                                    crate::i18n::rich("F1–F12, Print… · appliquée au prochain lancement")
                                         .size(10.5)
                                         .color(pal.text_faint),
                                 );
@@ -950,7 +1113,7 @@ impl QuarkApp {
                             self.touch();
                         }
                         ui.label(
-                            RichText::new(
+                            crate::i18n::rich(
                                 "Steam Cloud reste géré par le client Steam : Quark ne \
                                  l'interroge pas.",
                             )
@@ -1050,7 +1213,7 @@ impl QuarkApp {
                         ui.horizontal(|ui| {
                             let response = ui.add(
                                 egui::TextEdit::singleline(&mut self.lib.settings.default_args)
-                                    .hint_text("ex. -windowed -novid")
+                                    .hint_text(crate::i18n::tr("ex. -windowed -novid"))
                                     .desired_width((ui.available_width() - 50.0).max(300.0)),
                             );
                             if response.changed() {
@@ -1098,9 +1261,15 @@ impl QuarkApp {
                                 .count();
                             let anticheat = self.runtimes.len() - protons;
                             ui.label(
-                                RichText::new(format!(
-                                    "{protons} runtime(s) Proton · {anticheat} runtime(s) anti-triche"
-                                ))
+                                crate::i18n::rich(if crate::i18n::is_english() {
+                                    format!(
+                                        "{protons} Proton runtime(s) · {anticheat} anti-cheat runtime(s)"
+                                    )
+                                } else {
+                                    format!(
+                                        "{protons} runtime(s) Proton · {anticheat} runtime(s) anti-triche"
+                                    )
+                                })
                                 .size(11.0)
                                 .color(pal.text_faint),
                             );
@@ -1110,7 +1279,7 @@ impl QuarkApp {
                         });
                         ui.horizontal(|ui| {
                             ui.label(
-                                RichText::new(format!(
+                                crate::i18n::rich(format!(
                                     "Anti-triche : {}",
                                     proton::anticheat_summary(&self.runtimes)
                                 ))
@@ -1128,7 +1297,7 @@ impl QuarkApp {
                         });
                         if self.runtimes.is_empty() {
                             ui.label(
-                                RichText::new(
+                                crate::i18n::rich(
                                     "Aucun runtime trouvé. Installe Proton (Steam) ou dépose un \
                                      build dans ~/.steam/steam/compatibilitytools.d/.",
                                 )
@@ -1212,7 +1381,7 @@ impl QuarkApp {
                         section(ui, "SOURCES", &pal);
                         ui.horizontal(|ui| {
                             ui.label(
-                                RichText::new("Clé API SteamGridDB").size(12.5).color(pal.text_dim),
+                                crate::i18n::rich("Clé API SteamGridDB").size(12.5).color(pal.text_dim),
                             );
                             widgets::info_button(
                                 ui,
@@ -1224,7 +1393,7 @@ impl QuarkApp {
                             let response = ui.add(
                                 egui::TextEdit::singleline(&mut self.lib.settings.sgdb_api_key)
                                     .password(true)
-                                    .hint_text("optionnelle")
+                                    .hint_text(crate::i18n::tr("optionnelle"))
                                     .desired_width(300.0),
                             );
                             if response.changed() {
@@ -1233,7 +1402,7 @@ impl QuarkApp {
                         });
                         ui.horizontal(|ui| {
                             ui.label(
-                                RichText::new("Langue / pays (recherche Steam)")
+                                crate::i18n::rich("Langue / pays (recherche Steam)")
                                     .size(12.5)
                                     .color(pal.text_dim),
                             );
@@ -1283,7 +1452,7 @@ impl QuarkApp {
                         ui.add_space(12.0);
                         section(ui, "COMPTES", &pal);
                         ui.label(
-                            RichText::new(
+                            crate::i18n::rich(
                                 "Les identifiants restent sur cet ordinateur dans un fichier séparé, protégé par les permissions de ton compte. Ils ne sont pas chiffrés et Quark ne les envoie jamais à un serveur Quark.",
                             )
                             .size(12.0)
@@ -1291,10 +1460,10 @@ impl QuarkApp {
                         );
                         ui.add_space(8.0);
                         if let Some(error) = &self.credentials_error {
-                            ui.label(RichText::new(error).size(11.5).color(pal.danger));
+                            ui.label(crate::i18n::rich(error).size(11.5).color(pal.danger));
                         }
                         ui.label(
-                            RichText::new(if self.credentials.steam_web_api_key.is_some() {
+                            crate::i18n::rich(if self.credentials.steam_web_api_key.is_some() {
                                 "Steam Web API : clé enregistrée (masquée)"
                             } else {
                                 "Steam Web API : clé facultative non configurée"
@@ -1307,7 +1476,7 @@ impl QuarkApp {
                                 Vec2::new(330.0, 28.0),
                                 egui::TextEdit::singleline(&mut self.steam_key_draft)
                                     .password(true)
-                                    .hint_text("Clé Web API Steam personnelle · laisser vide pour garder l'actuelle"),
+                                    .hint_text(crate::i18n::tr("Clé Web API Steam personnelle · laisser vide pour garder l'actuelle")),
                             );
                             ui.add_sized(
                                 Vec2::new(220.0, 28.0),
@@ -1328,7 +1497,7 @@ impl QuarkApp {
                         section(ui, "CONNEXIONS", &pal);
                         self.provider_accounts(ui, ctx, &pal);
                         ui.label(
-                            RichText::new("Heroic sera détecté et sa configuration ne sera lue qu'après ton accord explicite.")
+                            crate::i18n::rich("Heroic sera détecté et sa configuration ne sera lue qu'après ton accord explicite.")
                                 .size(11.5)
                                 .color(pal.text_faint),
                         );
@@ -1337,13 +1506,13 @@ impl QuarkApp {
                         section(ui, "OUTILS GÉRÉS PAR QUARK", &pal);
                         for tool in crate::providers::tools::ManagedToolId::ALL {
                             ui.horizontal_wrapped(|ui| {
-                                ui.label(RichText::new(tool.label()).size(12.0).color(pal.text));
+                                ui.label(crate::i18n::rich(tool.label()).size(12.0).color(pal.text));
                                 if let Some(state) = &self.managed_tools[tool.index()] {
-                                    ui.label(RichText::new(state).size(11.0).color(pal.text_dim));
+                                    ui.label(crate::i18n::rich(state).size(11.0).color(pal.text_dim));
                                 } else if tool.installed_path().is_file() {
-                                    ui.label(RichText::new("Binaire présent · version non vérifiée à cette session").size(10.5).color(pal.text_faint));
+                                    ui.label(crate::i18n::rich("Binaire présent · version non vérifiée à cette session").size(10.5).color(pal.text_faint));
                                 } else {
-                                    ui.label(RichText::new("Non installé").size(10.5).color(pal.text_faint));
+                                    ui.label(crate::i18n::rich("Non installé").size(10.5).color(pal.text_faint));
                                 }
                                 if widgets::ghost_button(ui, "Installer / actualiser", &pal, Icon::Refresh).clicked() {
                                     self.start_managed_tool(ctx, tool);
@@ -1351,7 +1520,7 @@ impl QuarkApp {
                             });
                         }
                         ui.label(
-                            RichText::new("Téléchargements depuis les releases officielles Linux x86_64 ; le digest SHA-256 GitHub est vérifié avant exécution (il ne s'agit pas d'une signature indépendante). Les licences et avis de distribution seront inclus dans le paquet.")
+                            crate::i18n::rich("Téléchargements depuis les releases officielles Linux x86_64 ; le digest SHA-256 GitHub est vérifié avant exécution (il ne s'agit pas d'une signature indépendante). Les licences et avis de distribution seront inclus dans le paquet.")
                                 .size(11.0)
                                 .color(pal.text_faint),
                         );
@@ -1364,23 +1533,23 @@ impl QuarkApp {
                                 .lock()
                                 .map(|progress| progress.label())
                                 .unwrap_or_else(|_| "Overlay Epic · installation…".to_string());
-                            ui.label(RichText::new(label).size(12.0).color(pal.text_dim));
+                            ui.label(crate::i18n::rich(label).size(12.0).color(pal.text_dim));
                         } else if let Some(path) =
                             crate::providers::legendary::LegendaryAdapter::eos_overlay_installed_path()
                         {
                             ui.label(
-                                RichText::new(format!("Installé · {}", path.display()))
+                                crate::i18n::rich(format!("Installé · {}", path.display()))
                                     .size(11.5)
                                     .color(pal.text_dim),
                             );
                             ui.label(
-                                RichText::new("Activé automatiquement dans le préfixe de chaque jeu Epic au lancement.")
+                                crate::i18n::rich("Activé automatiquement dans le préfixe de chaque jeu Epic au lancement.")
                                     .size(11.0)
                                     .color(pal.text_faint),
                             );
                         } else {
                             ui.label(
-                                RichText::new("Comme Heroic : télécharge l'overlay Epic une fois, puis l'active dans le préfixe du jeu. Maj+F3 ouvre l'overlay Epic en jeu.")
+                                crate::i18n::rich("Comme Heroic : télécharge l'overlay Epic une fois, puis l'active dans le préfixe du jeu. Maj+F3 ouvre l'overlay Epic en jeu.")
                                     .size(11.5)
                                     .color(pal.text_dim),
                             );
@@ -1397,6 +1566,35 @@ impl QuarkApp {
                         }
                     }
                     SettingsTab::About => {
+                        section(ui, "GUIDE", &pal);
+                        ui.horizontal(|ui| {
+                            if widgets::ghost_button(
+                                ui,
+                                "Revoir le guide de démarrage",
+                                &pal,
+                                Icon::Info,
+                            )
+                            .clicked()
+                            {
+                                self.settings_open = false;
+                                self.onboarding_step = 0;
+                                self.onboarding_open = true;
+                            }
+                            ui.add_space(8.0);
+                            if widgets::ghost_button(
+                                ui,
+                                "Revoir les nouveautés",
+                                &pal,
+                                Icon::Info,
+                            )
+                            .clicked()
+                            {
+                                self.settings_open = false;
+                                self.whats_new_open = true;
+                            }
+                        });
+                        ui.add_space(8.0);
+
                         section(ui, "MISES À JOUR", &pal);
                         if widgets::setting_toggle(
                             ui,
@@ -1419,7 +1617,7 @@ impl QuarkApp {
                         section(ui, "VERSION", &pal);
                         ui.horizontal(|ui| {
                             ui.label(
-                                RichText::new(format!("Quark {}", update::current_version()))
+                                crate::i18n::rich(format!("Quark {}", update::current_version()))
                                     .size(12.5)
                                     .color(pal.text),
                             );
@@ -1440,14 +1638,14 @@ impl QuarkApp {
                                 UpdateState::Checking => {
                                     ui.spinner();
                                     ui.label(
-                                        RichText::new("vérification\u{2026}")
+                                        crate::i18n::rich("vérification\u{2026}")
                                             .size(12.0)
                                             .color(pal.text_dim),
                                     );
                                 }
                                 UpdateState::UpToDate => {
                                     ui.label(
-                                        RichText::new("à jour").size(12.0).color(pal.text_dim),
+                                        crate::i18n::rich("à jour").size(12.0).color(pal.text_dim),
                                     );
                                     if widgets::ghost_button(ui, "Revérifier", &pal, Icon::Refresh)
                                         .clicked()
@@ -1457,7 +1655,7 @@ impl QuarkApp {
                                 }
                                 UpdateState::Available(release) => {
                                     ui.label(
-                                        RichText::new(format!(
+                                        crate::i18n::rich(format!(
                                             "{} disponible",
                                             release.tag_name
                                         ))
@@ -1469,7 +1667,19 @@ impl QuarkApp {
                                         .map(|asset| asset.size as f64 / 1_048_576.0)
                                         .unwrap_or(0.0);
                                     let label = if size > 0.0 {
-                                        format!("Installer {} ({size:.1} Mo)", release.tag_name)
+                                        if crate::i18n::is_english() {
+                                            format!(
+                                                "Install {} ({size:.1} MB)",
+                                                release.tag_name
+                                            )
+                                        } else {
+                                            format!(
+                                                "Installer {} ({size:.1} Mo)",
+                                                release.tag_name
+                                            )
+                                        }
+                                    } else if crate::i18n::is_english() {
+                                        format!("Install {}", release.tag_name)
                                     } else {
                                         format!("Installer {}", release.tag_name)
                                     };
@@ -1491,7 +1701,7 @@ impl QuarkApp {
                                 UpdateState::Downloading(release) => {
                                     ui.spinner();
                                     ui.label(
-                                        RichText::new(format!(
+                                        crate::i18n::rich(format!(
                                             "téléchargement et vérification de {}",
                                             release.tag_name
                                         ))
@@ -1502,7 +1712,7 @@ impl QuarkApp {
                                 UpdateState::Installing(tag) => {
                                     ui.spinner();
                                     ui.label(
-                                        RichText::new(format!(
+                                        crate::i18n::rich(format!(
                                             "installation de {tag} et redémarrage\u{2026}"
                                         ))
                                         .size(12.0)
@@ -1510,7 +1720,7 @@ impl QuarkApp {
                                     );
                                 }
                                 UpdateState::Failed(error) => {
-                                    ui.label(RichText::new(error).size(11.5).color(pal.danger));
+                                    ui.label(crate::i18n::rich(error).size(11.5).color(pal.danger));
                                     if widgets::ghost_button(ui, "Réessayer", &pal, Icon::Refresh)
                                         .clicked()
                                     {
@@ -1520,7 +1730,7 @@ impl QuarkApp {
                             }
                         });
                         ui.label(
-                            RichText::new(
+                            crate::i18n::rich(
                                 "Quark vérifie le SHA-256, l'architecture x86_64 et la version du \
                                  binaire avant de remplacer l'exécutable, puis se relance. \
                                  L'ancien binaire reste sauvegardé à côté jusqu'au prochain \
@@ -1532,7 +1742,7 @@ impl QuarkApp {
                         );
                         ui.add_space(4.0);
                         ui.label(
-                            RichText::new(
+                            crate::i18n::rich(
                                 "Clavier : flèches pour changer de jeu, Entrée pour lancer, \
                                  Ctrl+F pour chercher, Échap pour vider la recherche, \
                                  Ctrl+Q pour quitter complètement.",
@@ -1544,19 +1754,26 @@ impl QuarkApp {
                         section(ui, "RESSOURCES", &pal);
                         ui.horizontal(|ui| {
                             let memory = config::resident_mb()
-                                .map(|mb| format!("{mb} Mo"))
+                                .map(|mb| {
+                                    if crate::i18n::is_english() {
+                                        format!("{mb} MB")
+                                    } else {
+                                        format!("{mb} Mo")
+                                    }
+                                })
                                 .unwrap_or_else(|| "—".to_string());
                             ui.label(
-                                RichText::new(format!("Mémoire résidente : {memory}"))
+                                crate::i18n::rich(format!("Mémoire résidente : {memory}"))
                                     .size(11.5)
                                     .color(pal.text_dim),
                             );
                             ui.add_space(14.0);
                             ui.label(
-                                RichText::new(format!(
-                                    "{} texture(s) en cache",
-                                    self.textures.len()
-                                ))
+                                crate::i18n::rich(if crate::i18n::is_english() {
+                                    format!("{} texture(s) cached", self.textures.len())
+                                } else {
+                                    format!("{} texture(s) en cache", self.textures.len())
+                                })
                                 .size(11.0)
                                 .color(pal.text_faint),
                             );
@@ -1591,30 +1808,33 @@ impl QuarkApp {
                         );
                     }
                     }
-                });
-                if let Some(tab) = next_tab {
-                    self.settings_tab = tab;
-                }
-            });
+                                });
+                            });
+                        });
 
-            ui.add_space(12.0);
-            ui.horizontal(|ui| {
-                if widgets::accent_button(ui, Vec2::new(140.0, 34.0), "Fermer", &pal, true, Icon::None)
-                    .clicked()
-                {
-                    close_requested = true;
-                }
-                ui.add_space(8.0);
-                ui.label(
-                    RichText::new("Échap ferme cette fenêtre")
-                        .size(10.5)
-                        .color(pal.text_faint),
-                );
+                        ui.add_space(12.0);
+                        ui.horizontal(|ui| {
+                            if widgets::accent_button(
+                                ui,
+                                Vec2::new(140.0, 34.0),
+                                "Fermer",
+                                &pal,
+                                true,
+                                Icon::None,
+                            )
+                            .clicked()
+                            {
+                                close_requested = true;
+                            }
+                            ui.add_space(8.0);
+                            ui.label(
+                                crate::i18n::rich("Échap ferme cette fenêtre")
+                                    .size(10.5)
+                                    .color(pal.text_faint),
+                            );
+                        });
+                    });
             });
-        });
-        if modal.should_close() {
-            close_requested = true;
-        }
 
         if redetect {
             self.runtimes = proton::detect_runtimes();
@@ -1692,12 +1912,12 @@ impl QuarkApp {
             ui.add_space(22.0);
             metric(ui, pal, "Cette semaine", &config::human_playtime(this_week));
             ui.add_space(22.0);
-            metric(
-                ui,
-                pal,
-                "Série en cours",
-                &format!("{streak} jour{}", if streak > 1 { "s" } else { "" }),
-            );
+            let streak_label = if crate::i18n::is_english() {
+                format!("{streak} day{}", if streak > 1 { "s" } else { "" })
+            } else {
+                format!("{streak} jour{}", if streak > 1 { "s" } else { "" })
+            };
+            metric(ui, pal, "Série en cours", &streak_label);
             ui.add_space(22.0);
             metric(ui, pal, "Sessions", &format!("{}", sessions.len()));
         });
@@ -1705,7 +1925,7 @@ impl QuarkApp {
         if sessions.is_empty() {
             ui.add_space(12.0);
             ui.label(
-                RichText::new(
+                crate::i18n::rich(
                     "Aucune session enregistrée : lance un jeu, ses heures apparaîtront ici.",
                 )
                 .size(12.0)
@@ -1761,10 +1981,17 @@ impl QuarkApp {
             if let Some(report) = &self.disk_report {
                 ui.add_space(14.0);
                 ui.label(
-                    RichText::new(format!(
-                        "Total mesuré : {}",
-                        disk::format_bytes(report.total)
-                    ))
+                    crate::i18n::rich(if crate::i18n::is_english() {
+                        format!(
+                            "Measured total: {}",
+                            disk::format_bytes(report.total, crate::i18n::is_english())
+                        )
+                    } else {
+                        format!(
+                            "Total mesuré : {}",
+                            disk::format_bytes(report.total, crate::i18n::is_english())
+                        )
+                    })
                     .size(13.0)
                     .strong()
                     .color(pal.text),
@@ -1780,7 +2007,7 @@ impl QuarkApp {
                 ui.spinner();
                 ui.add_space(6.0);
                 ui.label(
-                    RichText::new("Mesure en cours…")
+                    crate::i18n::rich("Mesure en cours…")
                         .size(12.0)
                         .color(pal.text_dim),
                 );
@@ -1808,17 +2035,17 @@ impl QuarkApp {
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     ui.set_width(430.0);
-                    ui.label(RichText::new(&label).size(12.5).color(pal.text));
-                    ui.label(RichText::new(&detail).size(10.5).color(pal.text_faint));
+                    ui.label(crate::i18n::rich(&label).size(12.5).color(pal.text));
+                    ui.label(crate::i18n::rich(&detail).size(10.5).color(pal.text_faint));
                     ui.label(
-                        RichText::new(path.display().to_string())
+                        crate::i18n::rich(path.display().to_string())
                             .size(10.0)
                             .color(pal.text_faint),
                     );
                 });
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.label(
-                        RichText::new(disk::format_bytes(bytes))
+                        crate::i18n::rich(disk::format_bytes(bytes, crate::i18n::is_english()))
                             .size(12.5)
                             .color(pal.text),
                     );
@@ -1866,17 +2093,17 @@ impl QuarkApp {
         let modal = egui::Modal::new(egui::Id::new("quark_steam_import")).show(ctx, |ui| {
             ui.set_min_width(760.0);
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Importer depuis Steam").size(17.0).color(pal.text));
+                ui.label(crate::i18n::rich("Importer depuis Steam").size(17.0).color(pal.text));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.label(
-                        RichText::new("appmanifest_*.acf")
+                        crate::i18n::rich("appmanifest_*.acf")
                             .size(10.5)
                             .color(pal.text_faint),
                     );
                 });
             });
             ui.label(
-                RichText::new(
+                crate::i18n::rich(
                     "Jeux installés trouvés dans tes bibliothèques Steam. Les jeux déjà dans \
                      Quark ne sont pas dupliqués ; l'exécutable est cherché dans le dossier du jeu.",
                 )
@@ -1890,26 +2117,26 @@ impl QuarkApp {
                         ui.spinner();
                         ui.add_space(6.0);
                         ui.label(
-                            RichText::new("Lecture des bibliothèques Steam…")
+                            crate::i18n::rich("Lecture des bibliothèques Steam…")
                                 .size(12.0)
                                 .color(pal.text_dim),
                         );
                     });
                 }
                 if let Some(err) = &import.error {
-                    ui.label(RichText::new(err).size(12.0).color(pal.danger));
+                    ui.label(crate::i18n::rich(err).size(12.0).color(pal.danger));
                 }
                 if !import.games.is_empty() {
                     ui.horizontal(|ui| {
                         ui.add(
                             egui::TextEdit::singleline(&mut import.filter)
-                                .hint_text("Filtrer par nom…")
+                                .hint_text(crate::i18n::tr("Filtrer par nom…"))
                                 .desired_width(240.0),
                         );
                         ui.add_space(8.0);
                         let available = import.games.iter().filter(|game| !game.owned).count();
                         ui.label(
-                            RichText::new(format!("{available} disponible(s)"))
+                            crate::i18n::rich(format!("{available} disponible(s)"))
                                 .size(11.0)
                                 .color(pal.text_faint),
                         );
@@ -1936,7 +2163,7 @@ impl QuarkApp {
                                     }
                                     ui.vertical(|ui| {
                                         ui.label(
-                                            RichText::new(&game.name).size(13.0).color(
+                                            crate::i18n::rich(&game.name).size(13.0).color(
                                                 if game.owned { pal.text_faint } else { pal.text },
                                             ),
                                         )
@@ -1949,7 +2176,7 @@ impl QuarkApp {
                                                 "exécutable non détecté".to_string()
                                             });
                                         ui.label(
-                                            RichText::new(format!(
+                                            crate::i18n::rich(format!(
                                                 "AppID {} · {exe}",
                                                 game.app_id
                                             ))
@@ -1960,7 +2187,7 @@ impl QuarkApp {
                                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                         if game.owned {
                                             ui.label(
-                                                RichText::new("déjà importé")
+                                                crate::i18n::rich("déjà importé")
                                                     .size(10.5)
                                                     .color(pal.text_faint),
                                             );
@@ -2054,7 +2281,7 @@ impl QuarkApp {
         let modal = egui::Modal::new(egui::Id::new("quark_game_settings")).show(ctx, |ui| {
                 ui.set_min_width(660.0);
                 ui.label(
-                    RichText::new(format!("Paramètres · {}", game.name))
+                    crate::i18n::rich(format!("Paramètres · {}", game.name))
                         .size(17.0)
                         .color(pal.text),
                 );
@@ -2066,14 +2293,14 @@ impl QuarkApp {
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
                 section(ui, "LANCEMENT", &pal);
-                ui.label(RichText::new("Nom affiché").size(12.5).color(pal.text_dim));
+                ui.label(crate::i18n::rich("Nom affiché").size(12.5).color(pal.text_dim));
                 ui.add(
                     egui::TextEdit::singleline(&mut game.name)
                         .font(FontId::proportional(15.0))
                         .desired_width(f32::INFINITY),
                 );
                 ui.add_space(8.0);
-                ui.label(RichText::new("Exécutable").size(12.5).color(pal.text_dim));
+                ui.label(crate::i18n::rich("Exécutable").size(12.5).color(pal.text_dim));
                 ui.horizontal(|ui| {
                     let field = (ui.available_width() - 130.0).max(200.0);
                     ui.add(egui::TextEdit::singleline(&mut game.exe).desired_width(field));
@@ -2082,16 +2309,16 @@ impl QuarkApp {
                     }
                 });
                 ui.add_space(8.0);
-                ui.label(RichText::new("Arguments (optionnel)").size(12.5).color(pal.text_dim));
+                ui.label(crate::i18n::rich("Arguments (optionnel)").size(12.5).color(pal.text_dim));
                 ui.add(
                     egui::TextEdit::singleline(&mut game.args)
-                        .hint_text("--fullscreen")
+                        .hint_text(crate::i18n::tr("--fullscreen"))
                         .desired_width(f32::INFINITY),
                 );
 
                 section(ui, "MA FICHE", &pal);
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Statut").size(12.5).color(pal.text_dim));
+                    ui.label(crate::i18n::rich("Statut").size(12.5).color(pal.text_dim));
                     widgets::info_button(
                         ui,
                         &pal,
@@ -2105,7 +2332,7 @@ impl QuarkApp {
                         let (r, g, b) = option.color();
                         if widgets::chip_colored(
                             ui,
-                            option.label(),
+                            &option.label(),
                             selected,
                             &pal,
                             egui::Color32::from_rgb(r, g, b),
@@ -2117,10 +2344,10 @@ impl QuarkApp {
                 ui.add_space(8.0);
                 tags_editor(ui, &pal, &mut game.tags);
                 ui.add_space(8.0);
-                ui.label(RichText::new("Notes personnelles").size(12.5).color(pal.text_dim));
+                ui.label(crate::i18n::rich("Notes personnelles").size(12.5).color(pal.text_dim));
                 ui.add(
                     egui::TextEdit::multiline(&mut game.notes)
-                        .hint_text("Où j'en suis, ce que je veux retenir…")
+                        .hint_text(crate::i18n::tr("Où j'en suis, ce que je veux retenir…"))
                         .desired_rows(2)
                         .desired_width(f32::INFINITY),
                 );
@@ -2128,7 +2355,7 @@ impl QuarkApp {
                 section(ui, "FICHE STEAM", &pal);
                 ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new(if game.steam_app_id.is_some() {
+                        crate::i18n::rich(if game.steam_app_id.is_some() {
                             "Développeur, genres, date de sortie et description viennent de l'API \
                              appdetails."
                                 .to_string()
@@ -2153,7 +2380,7 @@ impl QuarkApp {
                 });
                 ui.add_space(8.0);
                 ui.label(
-                    RichText::new(
+                    crate::i18n::rich(
                         "Lie ce jeu à une fiche Steam ou SteamGridDB pour récupérer sa jaquette, \
                          sa bannière, son logo et son icône.",
                     )
@@ -2165,7 +2392,7 @@ impl QuarkApp {
                     let field = (ui.available_width() - 128.0).max(180.0);
                     ui.add(
                         egui::TextEdit::singleline(&mut link_query)
-                            .hint_text("Rechercher un jeu (Steam, SteamGridDB)…")
+                            .hint_text(crate::i18n::tr("Rechercher un jeu (Steam, SteamGridDB)…"))
                             .desired_width(field),
                     );
                     if widgets::ghost_button(ui, "Rechercher", &pal, Icon::Search).clicked() {
@@ -2176,7 +2403,7 @@ impl QuarkApp {
                     ui.horizontal(|ui| {
                         ui.add(egui::Spinner::new().size(12.0));
                         ui.label(
-                            RichText::new("Recherche des fiches…")
+                            crate::i18n::rich("Recherche des fiches…")
                                 .size(11.0)
                                 .color(pal.text_dim),
                         );
@@ -2205,14 +2432,14 @@ impl QuarkApp {
                                                     ui.spacing_mut().item_spacing.y = 0.0;
                                                     ui.horizontal(|ui| {
                                                         ui.label(
-                                                            RichText::new(hit.source.label())
+                                                            crate::i18n::rich(hit.source.label())
                                                                 .size(9.5)
                                                                 .strong()
                                                                 .color(pal.text_faint),
                                                         );
                                                         ui.add(
                                                             egui::Label::new(
-                                                                RichText::new(&hit.title)
+                                                                crate::i18n::rich(&hit.title)
                                                                     .size(12.0)
                                                                     .color(pal.text),
                                                             )
@@ -2221,7 +2448,7 @@ impl QuarkApp {
                                                     });
                                                     if !hit.detail.is_empty() {
                                                         ui.label(
-                                                            RichText::new(&hit.detail)
+                                                            crate::i18n::rich(&hit.detail)
                                                                 .size(9.5)
                                                                 .color(pal.text_faint),
                                                         );
@@ -2241,7 +2468,7 @@ impl QuarkApp {
                 }
                 if !link_warnings.is_empty() {
                     ui.label(
-                        RichText::new(link_warnings.join(" · "))
+                        crate::i18n::rich(link_warnings.join(" · "))
                             .size(10.0)
                             .color(pal.text_faint),
                     );
@@ -2296,7 +2523,7 @@ impl QuarkApp {
                         let field = (ui.available_width() - 130.0).max(200.0);
                         ui.add(
                             egui::TextEdit::singleline(prefix)
-                                .hint_text("~/Games/prefixes/mon-jeu")
+                                .hint_text(crate::i18n::tr("~/Games/prefixes/mon-jeu"))
                                 .desired_width(field),
                         );
                         if widgets::ghost_button(ui, "Parcourir…", &pal, Icon::Folder).clicked() {
@@ -2307,7 +2534,7 @@ impl QuarkApp {
                 ui.add_space(6.0);
                 let effective = game.prefix_path(&self.lib.settings);
                 ui.label(
-                    RichText::new(format!("Préfixe utilisé : {}", effective.display()))
+                    crate::i18n::rich(format!("Préfixe utilisé : {}", effective.display()))
                         .size(11.0)
                         .color(pal.text_faint),
                 );
@@ -2390,7 +2617,7 @@ impl QuarkApp {
                     }
                     match proton::anticheat_runtime(&self.runtimes, keyword) {
                         Some(runtime) => ui.label(
-                            RichText::new(format!(
+                            crate::i18n::rich(format!(
                                 "{label} : trouvé — {} (variable {})",
                                 runtime.dir().display(),
                                 proton::anticheat_env_name(keyword)
@@ -2399,7 +2626,7 @@ impl QuarkApp {
                             .color(pal.text_dim),
                         ),
                         None => ui.label(
-                            RichText::new(format!(
+                            crate::i18n::rich(format!(
                                 "{label} : non détecté (dossiers vus : {})",
                                 proton::anticheat_summary(&self.runtimes)
                             ))
@@ -2424,10 +2651,10 @@ impl QuarkApp {
                     (None, Some(sgdb)) => format!("SteamGridDB #{sgdb}"),
                     (None, None) => "aucune source (assets manuels)".to_string(),
                 };
-                ui.label(RichText::new(sources).size(12.0).color(pal.text_dim));
+                ui.label(crate::i18n::rich(sources).size(12.0).color(pal.text_dim));
                 section(ui, "DONNÉES", &pal);
                 ui.label(
-                    RichText::new(format!(
+                    crate::i18n::rich(format!(
                         "Temps de jeu : {} · dernière session : {}",
                         game.playtime_label(),
                         game.last_played_label()
@@ -2474,7 +2701,7 @@ impl QuarkApp {
                 });
                 ui.add_space(4.0);
                 ui.label(
-                    RichText::new("Les fichiers du jeu et le préfixe Proton ne sont jamais supprimés.")
+                    crate::i18n::rich("Les fichiers du jeu et le préfixe Proton ne sont jamais supprimés.")
                         .size(11.0)
                         .color(pal.text_faint),
                 );
@@ -2609,13 +2836,13 @@ impl QuarkApp {
         let modal = egui::Modal::new(egui::Id::new("quark_customize")).show(ctx, |ui| {
             ui.set_min_width(700.0);
             ui.label(
-                RichText::new(format!("Personnaliser · {}", game.name))
+                crate::i18n::rich(format!("Personnaliser · {}", game.name))
                     .size(17.0)
                     .color(pal.text),
             );
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Images").size(12.0).color(pal.text_dim));
+                ui.label(crate::i18n::rich("Images").size(12.0).color(pal.text_dim));
                 widgets::info_button(
                     ui,
                     &pal,
@@ -2631,7 +2858,7 @@ impl QuarkApp {
                 ui.painter_at(rect).rect_filled(rect, 3.0, accent);
                 ui.add_space(4.0);
                 ui.label(
-                    RichText::new("Couleur du jeu, déduite de la couverture")
+                    crate::i18n::rich("Couleur du jeu, déduite de la couverture")
                         .size(11.0)
                         .color(pal.text_faint),
                 );
@@ -2666,7 +2893,7 @@ impl QuarkApp {
                             ui.add_space(12.0);
                             ui.vertical(|ui| {
                                 ui.label(
-                                    RichText::new(asset.label().to_uppercase())
+                                    crate::i18n::rich(asset.label().to_uppercase())
                                         .size(11.0)
                                         .color(pal.text_faint),
                                 );
@@ -2707,7 +2934,7 @@ impl QuarkApp {
                                     ui.add_space(3.0);
                                     ui.horizontal_wrapped(|ui| {
                                         ui.label(
-                                            RichText::new("Depuis la boutique :")
+                                            crate::i18n::rich("Depuis la boutique :")
                                                 .size(10.5)
                                                 .color(pal.text_faint),
                                         );
@@ -2735,7 +2962,7 @@ impl QuarkApp {
                                 ui.horizontal(|ui| {
                                     ui.spinner();
                                     ui.label(
-                                        RichText::new("Recherche des propositions\u{2026}")
+                                        crate::i18n::rich("Recherche des propositions\u{2026}")
                                             .size(12.0)
                                             .color(pal.text_dim),
                                     );
@@ -2744,7 +2971,7 @@ impl QuarkApp {
                                 let urls = plan.candidates(*asset);
                                 if urls.is_empty() {
                                     ui.label(
-                                        RichText::new("aucune proposition trouvée")
+                                        crate::i18n::rich("aucune proposition trouvée")
                                             .size(11.5)
                                             .color(pal.text_faint),
                                     );
@@ -2765,7 +2992,7 @@ impl QuarkApp {
                     }
 
                     if let Some(message) = &error {
-                        ui.label(RichText::new(message).size(11.5).color(pal.danger));
+                        ui.label(crate::i18n::rich(message).size(11.5).color(pal.danger));
                     }
                 });
 
@@ -2851,11 +3078,11 @@ impl QuarkApp {
 
         let modal = egui::Modal::new(egui::Id::new("quark_confirm_remove")).show(ctx, |ui| {
                 ui.set_min_width(520.0);
-                ui.label(RichText::new(title).size(14.0));
+                ui.label(crate::i18n::rich(title).size(14.0));
                 if names.len() > 1 {
                     ui.add_space(4.0);
                     ui.label(
-                        RichText::new(names.join("  \u{b7}  "))
+                        crate::i18n::rich(names.join("  \u{b7}  "))
                             .size(12.0)
                             .color(pal.text_dim),
                     );
@@ -2863,7 +3090,7 @@ impl QuarkApp {
                 ui.add_space(6.0);
                 if linked.is_empty() {
                     ui.label(
-                        RichText::new(
+                        crate::i18n::rich(
                             "Le temps de jeu et les réglages du jeu seront perdus. Les fichiers du jeu \
                              et le préfixe Proton ne sont pas touchés ; les artworks mis en cache sont supprimés.",
                         )
@@ -2872,7 +3099,7 @@ impl QuarkApp {
                     );
                 } else {
                     ui.label(
-                        RichText::new(
+                        crate::i18n::rich(
                             "Le temps de jeu et les réglages du jeu seront perdus. Le jeu est \
                              installé depuis une boutique : tu peux aussi supprimer ses fichiers.",
                         )
@@ -2974,13 +3201,13 @@ impl QuarkApp {
         let modal = egui::Modal::new(egui::Id::new("quark_confirm_uninstall")).show(ctx, |ui| {
             ui.set_min_width(520.0);
             ui.label(
-                RichText::new(format!("Désinstaller « {title} » ?"))
+                crate::i18n::rich(format!("Désinstaller « {title} » ?"))
                     .size(14.0)
                     .color(pal.text),
             );
             ui.add_space(6.0);
             ui.label(
-                RichText::new(format!(
+                crate::i18n::rich(format!(
                     "Le dossier de {provider} sera supprimé du disque. Tes sauvegardes, ton \
                      préfixe Proton et la fiche Quark restent en place."
                 ))
@@ -2988,7 +3215,7 @@ impl QuarkApp {
                 .color(pal.text_faint),
             );
             ui.add_space(4.0);
-            ui.label(RichText::new(path).size(10.5).color(pal.text_dim));
+            ui.label(crate::i18n::rich(path).size(10.5).color(pal.text_dim));
             ui.add_space(14.0);
             ui.horizontal(|ui| {
                 if widgets::danger_button(
@@ -3035,7 +3262,7 @@ fn env_editor(ui: &mut egui::Ui, pal: &Palette, vars: &mut Vec<EnvVar>) -> bool 
 
     if vars.is_empty() {
         ui.label(
-            RichText::new("aucune variable")
+            crate::i18n::rich("aucune variable")
                 .size(11.5)
                 .color(pal.text_faint),
         );
@@ -3050,7 +3277,7 @@ fn env_editor(ui: &mut egui::Ui, pal: &Palette, vars: &mut Vec<EnvVar>) -> bool 
             let name_width = ((width - 96.0) * 0.32).max(110.0);
             let name = ui.add_sized(
                 Vec2::new(name_width, 26.0),
-                egui::TextEdit::singleline(&mut vars[index].name).hint_text("NOM"),
+                egui::TextEdit::singleline(&mut vars[index].name).hint_text(crate::i18n::tr("NOM")),
             );
             if name.changed() {
                 changed = true;
@@ -3063,11 +3290,12 @@ fn env_editor(ui: &mut egui::Ui, pal: &Palette, vars: &mut Vec<EnvVar>) -> bool 
                     changed = true;
                 }
             }
-            ui.label(RichText::new("=").size(12.0).color(pal.text_faint));
+            ui.label(crate::i18n::rich("=").size(12.0).color(pal.text_faint));
             let value_width = (width - name_width - 66.0).max(150.0);
             let value = ui.add_sized(
                 Vec2::new(value_width, 26.0),
-                egui::TextEdit::singleline(&mut vars[index].value).hint_text("valeur"),
+                egui::TextEdit::singleline(&mut vars[index].value)
+                    .hint_text(crate::i18n::tr("valeur")),
             );
             if value.changed() {
                 changed = true;
@@ -3107,8 +3335,8 @@ fn env_editor(ui: &mut egui::Ui, pal: &Palette, vars: &mut Vec<EnvVar>) -> bool 
 /// Grand chiffre du résumé (valeur + libellé).
 fn metric(ui: &mut egui::Ui, pal: &Palette, label: &str, value: &str) {
     ui.vertical(|ui| {
-        ui.label(RichText::new(label).size(10.5).color(pal.text_faint));
-        ui.label(RichText::new(value).size(19.0).strong().color(pal.text));
+        ui.label(crate::i18n::rich(label).size(10.5).color(pal.text_faint));
+        ui.label(crate::i18n::rich(value).size(19.0).strong().color(pal.text));
     });
 }
 
@@ -3163,7 +3391,7 @@ pub(crate) fn week_chart(ui: &mut egui::Ui, pal: &Palette, sessions: &[config::P
             painter.text(
                 Pos2::new(bar.center().x, base + 4.0),
                 Align2::CENTER_TOP,
-                stats::date_label(*start),
+                stats::date_label(*start, crate::i18n::is_english()),
                 FontId::proportional(9.0),
                 pal.text_faint,
             );
@@ -3192,7 +3420,7 @@ fn heatmap_chart(ui: &mut egui::Ui, pal: &Palette, sessions: &[config::PlaySessi
                 rect.top() + 16.0 + day as f32 * (cell + gap) + cell / 2.0,
             ),
             Align2::LEFT_CENTER,
-            stats::weekday_label(day),
+            stats::weekday_label(day, crate::i18n::is_english()),
             FontId::proportional(9.0),
             pal.text_faint,
         );
@@ -3203,7 +3431,7 @@ fn heatmap_chart(ui: &mut egui::Ui, pal: &Palette, sessions: &[config::PlaySessi
     let mut last_label_week: i64 = -8;
     for (week, days) in map.cells.iter().enumerate() {
         let monday = map.first_day + week as i64 * 7;
-        let month = stats::month_short(monday);
+        let month = stats::month_short(monday, crate::i18n::is_english());
         if month != last_month {
             if week as i64 - last_label_week >= 4 {
                 painter.text(
@@ -3253,7 +3481,7 @@ fn heatmap_chart(ui: &mut egui::Ui, pal: &Palette, sessions: &[config::PlaySessi
                 );
                 response.on_hover_text(format!(
                     "{} · joué {}",
-                    stats::date_label(monday + day as i64),
+                    stats::date_label(monday + day as i64, crate::i18n::is_english()),
                     stats::human(*secs)
                 ));
             }
@@ -3264,10 +3492,10 @@ fn heatmap_chart(ui: &mut egui::Ui, pal: &Palette, sessions: &[config::PlaySessi
 /// Ligne « jeu · durée » avec une barre proportionnelle.
 fn game_bar(ui: &mut egui::Ui, pal: &Palette, name: &str, secs: u64, max: u64) {
     ui.horizontal(|ui| {
-        ui.label(RichText::new(name).size(12.0).color(pal.text));
+        ui.label(crate::i18n::rich(name).size(12.0).color(pal.text));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.label(
-                RichText::new(config::human_playtime(secs))
+                crate::i18n::rich(config::human_playtime(secs))
                     .size(11.5)
                     .color(pal.text_dim),
             );
@@ -3296,7 +3524,7 @@ fn tags_editor(ui: &mut egui::Ui, pal: &Palette, tags: &mut Vec<String>) {
 
     ui.horizontal(|ui| {
         ui.label(
-            RichText::new("Tags personnels")
+            crate::i18n::rich("Tags personnels")
                 .size(12.5)
                 .color(pal.text_dim),
         );
@@ -3309,7 +3537,11 @@ fn tags_editor(ui: &mut egui::Ui, pal: &Palette, tags: &mut Vec<String>) {
     });
     let mut remove: Option<usize> = None;
     if tags.is_empty() {
-        ui.label(RichText::new("aucun tag").size(11.0).color(pal.text_faint));
+        ui.label(
+            crate::i18n::rich("aucun tag")
+                .size(11.0)
+                .color(pal.text_faint),
+        );
     } else {
         ui.horizontal_wrapped(|ui| {
             for (index, tag) in tags.iter().enumerate() {
@@ -3325,7 +3557,7 @@ fn tags_editor(ui: &mut egui::Ui, pal: &Palette, tags: &mut Vec<String>) {
     ui.horizontal(|ui| {
         let response = ui.add(
             egui::TextEdit::singleline(&mut buffer)
-                .hint_text("coop, détente, à finir…")
+                .hint_text(crate::i18n::tr("coop, détente, à finir…"))
                 .desired_width(240.0),
         );
         let enter = response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
@@ -3344,34 +3576,94 @@ fn tags_editor(ui: &mut egui::Ui, pal: &Palette, tags: &mut Vec<String>) {
     ui.data_mut(|data| data.insert_temp(buffer_id, buffer));
 }
 
+fn theme_card(ui: &mut egui::Ui, mode: ThemeMode, selected: bool) -> bool {
+    let preview = theme::palette(mode);
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(166.0, 78.0), Sense::click());
+    let painter = ui.painter_at(rect);
+    let border = if selected {
+        preview.accent
+    } else if response.hovered() {
+        preview.text_dim
+    } else {
+        preview.border
+    };
+    painter.rect_filled(rect, 7.0, preview.bg);
+    painter.rect_stroke(
+        rect,
+        7.0,
+        Stroke::new(if selected { 2.0 } else { 1.0 }, border),
+        egui::StrokeKind::Inside,
+    );
+    painter.rect_filled(
+        Rect::from_min_size(
+            Pos2::new(rect.left() + 12.0, rect.top() + 12.0),
+            Vec2::new(44.0, 8.0),
+        ),
+        3.0,
+        preview.accent,
+    );
+    painter.rect_filled(
+        Rect::from_min_size(
+            Pos2::new(rect.left() + 12.0, rect.top() + 26.0),
+            Vec2::new(76.0, 6.0),
+        ),
+        3.0,
+        preview.surface_hover,
+    );
+    painter.rect_filled(
+        Rect::from_min_size(
+            Pos2::new(rect.left() + 12.0, rect.top() + 38.0),
+            Vec2::new(58.0, 5.0),
+        ),
+        2.0,
+        preview.text_dim,
+    );
+    painter.text(
+        Pos2::new(rect.left() + 12.0, rect.bottom() - 10.0),
+        Align2::LEFT_BOTTOM,
+        mode.label(),
+        FontId::proportional(11.5),
+        preview.text,
+    );
+    response.clicked()
+}
+
 fn section(ui: &mut egui::Ui, title: &str, pal: &Palette) {
-    ui.add_space(12.0);
-    ui.label(RichText::new(title).size(11.0).color(pal.text_faint));
-    ui.add_space(2.0);
+    ui.add_space(22.0);
+    ui.horizontal(|ui| {
+        let (bar, _) = ui.allocate_exact_size(Vec2::new(3.0, 15.0), Sense::hover());
+        ui.painter().rect_filled(bar, 1.5, pal.accent);
+        ui.add_space(7.0);
+        ui.label(crate::i18n::rich(title).size(11.5).strong().color(pal.text));
+    });
+    ui.add_space(5.0);
     ui.separator();
-    ui.add_space(8.0);
+    ui.add_space(10.0);
 }
 
 /// Titre de section avec son ⓘ : l'explication reste disponible au survol au
 /// lieu d'occuper une ligne de texte gris sous chaque réglage.
 fn section_hint(ui: &mut egui::Ui, title: &str, pal: &Palette, hint: &str) {
-    ui.add_space(12.0);
+    ui.add_space(22.0);
     ui.horizontal(|ui| {
-        ui.label(RichText::new(title).size(11.0).color(pal.text_faint));
+        let (bar, _) = ui.allocate_exact_size(Vec2::new(3.0, 15.0), Sense::hover());
+        ui.painter().rect_filled(bar, 1.5, pal.accent);
+        ui.add_space(7.0);
+        ui.label(crate::i18n::rich(title).size(11.5).strong().color(pal.text));
         widgets::info_button(ui, pal, hint);
     });
-    ui.add_space(2.0);
+    ui.add_space(5.0);
     ui.separator();
-    ui.add_space(8.0);
+    ui.add_space(10.0);
 }
 
 fn info_line(ui: &mut egui::Ui, label: &str, value: &str, pal: &Palette) {
     ui.horizontal(|ui| {
         ui.add_sized(
             Vec2::new(120.0, 18.0),
-            egui::Label::new(RichText::new(label).size(11.5).color(pal.text_dim)),
+            egui::Label::new(crate::i18n::rich(label).size(11.5).color(pal.text_dim)),
         );
-        ui.label(RichText::new(value).size(11.5).color(pal.text));
+        ui.label(crate::i18n::rich(value).size(11.5).color(pal.text));
     });
 }
 
@@ -3405,8 +3697,8 @@ fn runtime_combo(
 ) -> bool {
     let before = mode.clone();
     let selected_text = match mode {
-        ProtonMode::Default => "Automatique (recommandé)".to_string(),
-        ProtonMode::Native => "Linux (natif)".to_string(),
+        ProtonMode::Default => crate::i18n::tr("Automatique (recommandé)"),
+        ProtonMode::Native => crate::i18n::tr("Linux (natif)"),
         ProtonMode::Runtime(key) => runtimes
             .iter()
             .find(|runtime| &runtime.key == key)
@@ -3429,9 +3721,13 @@ fn runtime_combo(
         .selected_text(selected_text)
         .width(380.0)
         .show_ui(ui, |ui| {
-            ui.selectable_value(mode, ProtonMode::Default, "Automatique (recommandé)");
+            ui.selectable_value(
+                mode,
+                ProtonMode::Default,
+                crate::i18n::tr("Automatique (recommandé)"),
+            );
             if allow_native {
-                ui.selectable_value(mode, ProtonMode::Native, "Linux (natif)");
+                ui.selectable_value(mode, ProtonMode::Native, crate::i18n::tr("Linux (natif)"));
             }
             if !protons.is_empty() {
                 ui.separator();
@@ -3446,7 +3742,7 @@ fn runtime_combo(
             if !anticheat.is_empty() {
                 ui.separator();
                 ui.label(
-                    RichText::new("ANTI-TRICHE (BattlEye / EasyAntiCheat)")
+                    crate::i18n::rich("ANTI-TRICHE (BattlEye / EasyAntiCheat)")
                         .size(10.0)
                         .color(pal.text_faint),
                 );
@@ -3618,7 +3914,7 @@ fn scan_row(ui: &mut egui::Ui, pal: &Palette, candidate: &mut crate::app::ScanCa
                             .font(FontId::proportional(13.5)),
                     );
                     ui.label(
-                        RichText::new(candidate.exe.display().to_string())
+                        crate::i18n::rich(candidate.exe.display().to_string())
                             .size(10.5)
                             .color(pal.text_faint),
                     );
@@ -3627,15 +3923,13 @@ fn scan_row(ui: &mut egui::Ui, pal: &Palette, candidate: &mut crate::app::ScanCa
                     } else {
                         candidate.detail.clone()
                     };
-                    ui.label(
-                        RichText::new(detail)
-                            .size(11.0)
-                            .color(if candidate.hit.is_some() {
-                                pal.text_dim
-                            } else {
-                                pal.text_faint
-                            }),
-                    );
+                    ui.label(crate::i18n::rich(detail).size(11.0).color(
+                        if candidate.hit.is_some() {
+                            pal.text_dim
+                        } else {
+                            pal.text_faint
+                        },
+                    ));
                 });
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if widgets::ghost_button(ui, "Rechercher", pal, Icon::Refresh).clicked() {
@@ -3643,7 +3937,10 @@ fn scan_row(ui: &mut egui::Ui, pal: &Palette, candidate: &mut crate::app::ScanCa
                     }
                     ui.add_space(6.0);
                     let mut is_game = candidate.include;
-                    if ui.selectable_label(is_game, "C'est un jeu").clicked() {
+                    if ui
+                        .selectable_label(is_game, crate::i18n::tr("C'est un jeu"))
+                        .clicked()
+                    {
                         is_game = true;
                     }
                     if ui
@@ -3672,9 +3969,9 @@ impl QuarkApp {
             .map(|p| p.display().to_string())
             .unwrap_or_default();
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Dossier").size(12.0).color(pal.text_dim));
+            ui.label(crate::i18n::rich("Dossier").size(12.0).color(pal.text_dim));
             ui.add_space(6.0);
-            ui.label(RichText::new(folder).size(12.0).color(pal.text));
+            ui.label(crate::i18n::rich(folder).size(12.0).color(pal.text));
         });
         ui.add_space(8.0);
 
@@ -3682,16 +3979,16 @@ impl QuarkApp {
             ui.horizontal(|ui| {
                 ui.spinner();
                 ui.label(
-                    RichText::new("Analyse du dossier et recherche des titres…")
+                    crate::i18n::rich("Analyse du dossier et recherche des titres…")
                         .size(12.5)
                         .color(pal.text_dim),
                 );
             });
         } else if let Some(error) = self.add.scan.error.clone() {
-            ui.label(RichText::new(error).size(12.0).color(pal.danger));
+            ui.label(crate::i18n::rich(error).size(12.0).color(pal.danger));
         } else if self.add.scan.candidates.is_empty() {
             ui.label(
-                RichText::new(
+                crate::i18n::rich(
                     "Aucun exécutable de jeu trouvé ici. Choisis le dossier qui contient le jeu \
                      lui-même (pas la racine de ta bibliothèque).",
                 )
@@ -3700,7 +3997,7 @@ impl QuarkApp {
             );
         } else {
             ui.label(
-                RichText::new(
+                crate::i18n::rich(
                     "Vérifie les titres proposés, corrige-les si besoin puis relance la recherche.",
                 )
                 .size(11.0)
@@ -3820,7 +4117,7 @@ impl QuarkApp {
                 ui.set_max_width((ctx.screen_rect().width() - 160.0).clamp(420.0, 720.0));
                 ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new(format!("Succès \u{b7} {title}"))
+                        crate::i18n::rich(format!("Succès \u{b7} {title}"))
                             .size(17.0)
                             .color(pal.text),
                     );
@@ -3838,7 +4135,7 @@ impl QuarkApp {
                             ui.add(egui::Spinner::new().size(15.0));
                             ui.add_space(6.0);
                             ui.label(
-                                RichText::new(format!(
+                                crate::i18n::rich(format!(
                                     "Lecture des succès auprès de {provider_label}\u{2026}"
                                 ))
                                 .size(12.0)
@@ -3848,10 +4145,10 @@ impl QuarkApp {
                         ctx.request_repaint_after(std::time::Duration::from_millis(200));
                     }
                     Some(crate::app::AchievementsState::Failed(message)) => {
-                        ui.label(RichText::new(message).size(12.5).color(pal.text_dim));
+                        ui.label(crate::i18n::rich(message).size(12.5).color(pal.text_dim));
                         ui.add_space(6.0);
                         ui.label(
-                            RichText::new(format!(
+                            crate::i18n::rich(format!(
                                 "Les succès {provider_label} demandent une session connectée \
                                  (Paramètres \u{2192} Boutiques & outils) et un jeu qui en publie."
                             ))
@@ -3860,7 +4157,7 @@ impl QuarkApp {
                         );
                         if provider == crate::providers::Provider::Epic {
                             ui.label(
-                                RichText::new(
+                                crate::i18n::rich(
                                     "Un jeu peut aussi déclarer ses succès pendant la partie via \
                                      QUARK_ACHIEVEMENTS_URL : ils apparaissent marqués « session ».",
                                 )
@@ -3872,7 +4169,7 @@ impl QuarkApp {
                     Some(crate::app::AchievementsState::Ready(info)) => {
                         if info.total == 0 {
                             ui.label(
-                                RichText::new("Ce jeu ne publie aucun succès.")
+                                crate::i18n::rich("Ce jeu ne publie aucun succès.")
                                     .size(12.5)
                                     .color(pal.text_dim),
                             );
@@ -3880,7 +4177,7 @@ impl QuarkApp {
                             let ratio = info.unlocked as f32 / info.total as f32;
                             ui.horizontal(|ui| {
                                 ui.label(
-                                    RichText::new(format!(
+                                    crate::i18n::rich(format!(
                                         "{} / {} succès débloqués",
                                         info.unlocked, info.total
                                     ))
@@ -3891,7 +4188,7 @@ impl QuarkApp {
                                     Layout::right_to_left(Align::Center),
                                     |ui| {
                                         ui.label(
-                                            RichText::new(format!(
+                                            crate::i18n::rich(format!(
                                                 "{:.0} %",
                                                 ratio * 100.0
                                             ))
@@ -3919,7 +4216,7 @@ impl QuarkApp {
 
                             if info.rows.iter().any(|row| row.rarity.is_some()) {
                                 ui.label(
-                                    RichText::new("Triés du plus rare au plus courant")
+                                    crate::i18n::rich("Triés du plus rare au plus courant")
                                         .size(10.0)
                                         .color(pal.text_faint),
                                 );
@@ -3967,7 +4264,7 @@ impl QuarkApp {
                                                 ui.spacing_mut().item_spacing.y = 1.0;
                                                 ui.horizontal(|ui| {
                                                     ui.label(
-                                                        RichText::new(&row.name)
+                                                        crate::i18n::rich(&row.name)
                                                             .size(12.5)
                                                             .strong()
                                                             .color(if row.unlocked {
@@ -3984,7 +4281,7 @@ impl QuarkApp {
                                                                 .replace('.', ",")
                                                         };
                                                         ui.label(
-                                                            RichText::new(text)
+                                                            crate::i18n::rich(text)
                                                                 .size(9.5)
                                                                 .color(pal.text_faint),
                                                         )
@@ -3995,7 +4292,7 @@ impl QuarkApp {
                                                 });
                                                 if !row.description.is_empty() {
                                                     ui.label(
-                                                        RichText::new(&row.description)
+                                                        crate::i18n::rich(&row.description)
                                                             .size(11.0)
                                                             .color(pal.text_dim),
                                                     );
@@ -4003,7 +4300,7 @@ impl QuarkApp {
                                                 ui.horizontal(|ui| {
                                                     if row.session {
                                                         ui.label(
-                                                            RichText::new(format!(
+                                                            crate::i18n::rich(format!(
                                                                 "session{}",
                                                                 if row.key.is_empty() {
                                                                     String::new()
@@ -4018,7 +4315,7 @@ impl QuarkApp {
                                                     }
                                                     if !row.unlocked && row.progress > 0.0 {
                                                         ui.label(
-                                                            RichText::new(format!(
+                                                            crate::i18n::rich(format!(
                                                                 "progression {:.0} %",
                                                                 row.progress * 100.0
                                                             ))
@@ -4089,7 +4386,7 @@ impl QuarkApp {
                 ui.set_max_width((ctx.screen_rect().width() - 120.0).clamp(520.0, 980.0));
                 ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new(format!("Journal · {name}"))
+                        crate::i18n::rich(format!("Journal · {name}"))
                             .size(17.0)
                             .color(pal.text),
                     );
@@ -4097,7 +4394,7 @@ impl QuarkApp {
                         ui.add_space(8.0);
                         ui.spinner();
                         ui.label(
-                            RichText::new("session en cours")
+                            crate::i18n::rich("session en cours")
                                 .size(11.0)
                                 .color(pal.text_dim),
                         );
@@ -4105,7 +4402,7 @@ impl QuarkApp {
                 });
                 ui.add_space(4.0);
                 ui.label(
-                    RichText::new(path.display().to_string())
+                    crate::i18n::rich(path.display().to_string())
                         .size(10.5)
                         .color(pal.text_faint),
                 );
@@ -4125,10 +4422,10 @@ impl QuarkApp {
                     .stick_to_bottom(true)
                     .show(ui, |ui| {
                         if let Some(message) = &error {
-                            ui.label(RichText::new(message).size(11.5).color(pal.danger));
+                            ui.label(crate::i18n::rich(message).size(11.5).color(pal.danger));
                             ui.add_space(6.0);
                             ui.label(
-                                RichText::new("Le journal est créé au premier lancement du jeu.")
+                                crate::i18n::rich("Le journal est créé au premier lancement du jeu.")
                                     .size(11.5)
                                     .color(pal.text_faint),
                             );
@@ -4136,7 +4433,7 @@ impl QuarkApp {
                         }
                         if truncated {
                             ui.label(
-                                RichText::new("début du journal tronqué à l'affichage")
+                                crate::i18n::rich("début du journal tronqué à l'affichage")
                                     .size(10.5)
                                     .color(pal.text_faint),
                             );
@@ -4144,14 +4441,14 @@ impl QuarkApp {
                         }
                         if lines.is_empty() {
                             ui.label(
-                                RichText::new("journal vide")
+                                crate::i18n::rich("journal vide")
                                     .size(11.5)
                                     .color(pal.text_faint),
                             );
                         } else {
                             ui.add(
                                 egui::Label::new(
-                                    RichText::new(lines.join("\n"))
+                                    crate::i18n::rich(lines.join("\n"))
                                         .monospace()
                                         .size(11.0)
                                         .color(pal.text_dim),
@@ -4274,7 +4571,11 @@ fn launch_options_editor(
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new("Résolution").size(11.5).color(pal.text_dim));
+                    ui.label(
+                        crate::i18n::rich("Résolution")
+                            .size(11.5)
+                            .color(pal.text_dim),
+                    );
                     changed |= ui
                         .add(
                             egui::DragValue::new(&mut launch.gamescope_width)
@@ -4283,7 +4584,7 @@ fn launch_options_editor(
                                 .suffix(" px"),
                         )
                         .changed();
-                    ui.label(RichText::new("×").size(11.0).color(pal.text_dim));
+                    ui.label(crate::i18n::rich("×").size(11.0).color(pal.text_dim));
                     changed |= ui
                         .add(
                             egui::DragValue::new(&mut launch.gamescope_height)
@@ -4293,7 +4594,7 @@ fn launch_options_editor(
                         )
                         .changed();
                     ui.add_space(14.0);
-                    ui.label(RichText::new("Limite").size(11.5).color(pal.text_dim));
+                    ui.label(crate::i18n::rich("Limite").size(11.5).color(pal.text_dim));
                     changed |= ui
                         .add(
                             egui::DragValue::new(&mut launch.gamescope_fps)
@@ -4342,14 +4643,14 @@ fn launch_options_editor(
         if let Some(id) = umu_game_id.as_deref_mut() {
             ui.horizontal(|ui| {
                 ui.add_space(10.0);
-                ui.label(RichText::new("GAMEID").size(11.5).color(pal.text_dim));
+                ui.label(crate::i18n::rich("GAMEID").size(11.5).color(pal.text_dim));
                 ui.add(
                     egui::TextEdit::singleline(id)
-                        .hint_text("0")
+                        .hint_text(crate::i18n::tr("0"))
                         .desired_width(120.0),
                 );
                 ui.label(
-                    RichText::new("AppID ProtonDB · « 0 » pour un jeu inconnu")
+                    crate::i18n::rich("AppID ProtonDB · « 0 » pour un jeu inconnu")
                         .size(10.5)
                         .color(pal.text_faint),
                 );
@@ -4360,7 +4661,7 @@ fn launch_options_editor(
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.label(
-            RichText::new("Commande wrapper")
+            crate::i18n::rich("Commande wrapper")
                 .size(12.5)
                 .color(pal.text_dim),
         );
@@ -4375,7 +4676,7 @@ fn launch_options_editor(
     changed |= ui
         .add(
             egui::TextEdit::singleline(&mut launch.wrapper)
-                .hint_text("%command%")
+                .hint_text(crate::i18n::tr("%command%"))
                 .desired_width(f32::INFINITY),
         )
         .changed();
