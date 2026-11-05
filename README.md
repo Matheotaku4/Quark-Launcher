@@ -6,7 +6,7 @@ own, launches Windows games through Proton (or umu-launcher), and stays out of
 the way with an AMOLED interface, a store page, save snapshots and an in-game
 overlay.
 
-This is the **1.3.0** documentation. Older release notes are kept on the GitHub
+This is the **1.3.1** documentation. Older release notes are kept on the GitHub
 releases page; `docs/release-notes.md` only describes the release currently
 being published.
 
@@ -27,23 +27,22 @@ The wiki is published from the versioned source in [`wiki/`](wiki/) by the
 | --- | --- |
 | ![Onboarding](docs/images/onboarding-fr.png) | ![What's new](docs/images/whats-new-fr.png) |
 
-## What's new in 1.3.0
+## What's new in 1.3.1
 
-- **PlayStation 2 with PCSX2.** Add an `.iso`, `.chd`, `.cso`, `.bin/.cue` or `.gz`
-  image as a game; Quark detects PCSX2, reads the serial from uncompressed ISO
-  files, launches the emulator without Proton and fetches covers from
-  [xlenore/ps2-covers](https://github.com/xlenore/ps2-covers) by serial number.
-- **RetroAchievements progress.** Set your username and Web API key in Settings,
-  then open the PlayStation 2 tab of a game to find its RetroAchievements entry
-  by title and see progress in the game page and the in-game overlay. PCSX2
-  still signs in and unlocks achievements itself; Quark only reads them.
-- **A DLL overrides tab for every game.** Pick a source folder, select its DLLs
-  and choose **n** (native), **b** (builtin) or both. Existing
-  `WINEDLLOVERRIDES` entries are loaded, preserved and written back.
-- **Grey placeholder suggestions.** The proposed values in Tags and Arguments
-  now use the faint text colour instead of looking like typed input.
-- **An English wiki.** Every wiki page, including the new PlayStation 2 guide,
-  is now written in English.
+- **RetroAchievements in the library.** A compact `RA 3/12` badge appears
+  directly in the game list and on cover tiles. Progress loads in the
+  background for PS2 games linked to a RetroAchievements entry.
+- **A PlayStation 2 panel in My Games.** Every PS2 game with an RA entry gets
+  its own progress bar and counter, with a shortcut to open its library page.
+- **A complete PS2 achievements view.** The game header shows the RA counter and
+  the Achievements tab reads RetroAchievements instead of asking for a store
+  link. Achievements are now sorted from least rare to rarest everywhere,
+  including the in-game overlay.
+- **A PCSX2 launch regression test.** A fake PCSX2 binary and a synthetic ISO
+  verify the serial, the ISO argument, custom environment variables and the
+  removal of Wine DLL overrides, without requiring the real emulator.
+- **Compatible updates.** Existing configurations load without a reset; no
+  migration is required.
 
 | PlayStation 2 |
 | --- |
@@ -51,7 +50,7 @@ The wiki is published from the versioned source in [`wiki/`](wiki/) by the
 
 ## Table of contents
 
-1. [What's new in 1.3.0](#whats-new-in-130)
+1. [What's new in 1.3.1](#whats-new-in-131)
 2. [What Quark does](#what-quark-does)
 3. [Installation](#installation)
 4. [First launch](#first-launch)
@@ -109,8 +108,8 @@ Download `quark-<version>-linux-x86_64.tar.gz` and its `.sha256` file from the
 then verify and unpack it:
 
 ```bash
-sha256sum -c quark-1.3.0-linux-x86_64.tar.gz.sha256
-tar -xzf quark-1.3.0-linux-x86_64.tar.gz
+sha256sum -c quark-1.3.1-linux-x86_64.tar.gz.sha256
+tar -xzf quark-1.3.1-linux-x86_64.tar.gz
 ./quark/quark
 ```
 
@@ -152,7 +151,7 @@ A new configuration opens a three-step welcome guide. It is not blocking:
 **Skip** closes it. The guide changes the interface language, startup page,
 theme and hero background live, then offers to add a first game. Existing
 configurations are marked as already welcomed, so updating from 1.1.4 never
-shows it unexpectedly; they still see the 1.3.0 summary once.
+shows it unexpectedly; they still see the 1.3.1 summary once.
 
 1. Open **Settings → Stores & tools** and install Legendary and/or gogdl with
    **Install / update**. Quark verifies the SHA-256 digest published by GitHub

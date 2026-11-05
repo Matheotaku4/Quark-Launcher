@@ -5,7 +5,7 @@ games and your Steam, Epic Games and GOG libraries together, launches Windows
 games through Proton or umu-launcher, and adds an in-game overlay, screenshots,
 achievements and verified local saves.
 
-This documentation describes **Quark 1.3.0**. It is also versioned in the
+This documentation describes **Quark 1.3.1**. It is also versioned in the
 repository under [`wiki/`](https://github.com/Matheotaku4/Quark-Launcher/tree/main/wiki).
 
 ![Quark home](https://raw.githubusercontent.com/Matheotaku4/Quark-Launcher/main/docs/images/home-en.png)

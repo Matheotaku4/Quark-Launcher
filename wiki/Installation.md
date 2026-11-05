@@ -19,13 +19,13 @@ Quark needs no Quark account and sends no telemetry.
 
 ## Release archive
 
-1. Download `quark-1.3.0-linux-x86_64.tar.gz` and its `.sha256` file from the
+1. Download `quark-1.3.1-linux-x86_64.tar.gz` and its `.sha256` file from the
    [latest release](https://github.com/Matheotaku4/Quark-Launcher/releases/latest).
 2. Verify the archive **before** extracting it:
 
    ```bash
-   sha256sum -c quark-1.3.0-linux-x86_64.tar.gz.sha256
-   tar -xzf quark-1.3.0-linux-x86_64.tar.gz
+   sha256sum -c quark-1.3.1-linux-x86_64.tar.gz.sha256
+   tar -xzf quark-1.3.1-linux-x86_64.tar.gz
    ./quark/quark
    ```
 
@@ -47,7 +47,7 @@ in `quark.desktop`.
 
 ## Update from 1.1.4 or later
 
-Quark 1.3.0 keeps the `config.json` format used by 1.1.4 and adds fields with
+Quark 1.3.1 keeps the `config.json` format used by 1.1.4 and adds fields with
 default values. Updating does not require resetting the library and does not
 force the welcome guide on existing installations.
 
@@ -67,12 +67,12 @@ executable is kept until the next successful start.
 
 If automatic updates are disabled or fail:
 
-1. Quit Quark, then download the 1.3.0 archive and its checksum.
+1. Quit Quark, then download the 1.3.1 archive and its checksum.
 2. Verify the checksum, then replace only the binary:
 
    ```bash
-   sha256sum -c quark-1.3.0-linux-x86_64.tar.gz.sha256
-   tar -xzf quark-1.3.0-linux-x86_64.tar.gz
+   sha256sum -c quark-1.3.1-linux-x86_64.tar.gz.sha256
+   tar -xzf quark-1.3.1-linux-x86_64.tar.gz
    install -Dm755 quark/quark ~/.local/bin/quark
    ```
 
@@ -80,7 +80,7 @@ If automatic updates are disabled or fail:
 
 Your games, prefixes, saves, artwork, Legendary/gogdl accounts and statistics
 stay in the same folders. The welcome guide is skipped for an existing library;
-the **What's new in 1.3.0** summary appears once.
+the **What's new in 1.3.1** summary appears once.
 
 > Do not delete `~/.config/quark/config.json` to "repair" an update. If the file
 > cannot be read, Quark keeps a `config.json.corrompu-<timestamp>` copy and

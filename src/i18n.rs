@@ -200,21 +200,21 @@ fn dynamic_english(text: &str) -> String {
 pub fn release_summary() -> [&'static str; 6] {
     if is_english() {
         [
-            "PlayStation 2 games are launched by PCSX2; Quark reads the serial from the ISO and fetches the cover from ps2-covers.",
-            "RetroAchievements progress is shown on the PS2 game page and in the overlay, while PCSX2 keeps handling unlocks.",
-            "A DLL overrides tab lists the DLLs in the game folder and writes native or builtin choices into WINEDLLOVERRIDES.",
-            "Existing WINEDLLOVERRIDES entries are loaded and preserved, including entries written without a mode.",
-            "Placeholder suggestions in Tags and Arguments are now grey instead of looking like entered values.",
-            "The wiki is now entirely in English; existing configurations load without a reset.",
+            "RetroAchievements progress is now shown directly in the library list and on cover tiles.",
+            "My Games groups PS2 games in a RetroAchievements panel with one progress bar per game.",
+            "A PS2 game page shows its RA counter, and its Achievements tab now reads RetroAchievements.",
+            "Achievements are sorted from least rare to rarest in game pages and the overlay.",
+            "PCSX2 launching is covered by a test using a fake binary and a synthetic ISO, without a real emulator.",
+            "Existing configurations remain compatible; no migration is required.",
         ]
     } else {
         [
-            "Les jeux PlayStation 2 sont lancés par PCSX2 ; Quark lit le numéro de série de l'ISO et récupère la jaquette depuis ps2-covers.",
-            "La progression RetroAchievements s'affiche dans la fiche PS2 et dans l'overlay, PCSX2 continuant de gérer les déblocages.",
-            "Un onglet DLL overrides liste les DLL du dossier du jeu et écrit les choix native ou builtin dans WINEDLLOVERRIDES.",
-            "Les entrées WINEDLLOVERRIDES existantes sont reprises et conservées, y compris celles écrites sans mode.",
-            "Les suggestions des champs Tags et Arguments sont désormais grises au lieu de ressembler à une valeur saisie.",
-            "Le wiki passe entièrement en anglais ; les configurations existantes se chargent sans réinitialisation.",
+            "La progression RetroAchievements s'affiche directement dans la liste et sur les jaquettes de la bibliothèque.",
+            "La vue Mes jeux regroupe les jeux PS2 dans un panneau RetroAchievements avec une barre par jeu.",
+            "La fiche d'un jeu PS2 affiche son compteur RA et son onglet Succès utilise RetroAchievements.",
+            "Les succès sont triés du moins rare au plus rare dans les fiches et l'overlay.",
+            "Le lancement PCSX2 est couvert par un test avec un faux binaire et une ISO synthétique, sans émulateur réel.",
+            "Les configurations existantes restent compatibles ; aucune migration n'est nécessaire.",
         ]
     }
 }
@@ -268,11 +268,11 @@ mod tests {
     fn le_resume_de_version_suit_la_langue() {
         let _guard = language_lock();
         set_language(UiLanguage::French);
-        assert!(release_summary()[0].starts_with("Les jeux PlayStation 2"));
-        assert!(release_summary()[1].starts_with("La progression RetroAchievements"));
+        assert!(release_summary()[0].starts_with("La progression RetroAchievements"));
+        assert!(release_summary()[1].starts_with("La vue Mes jeux"));
         set_language(UiLanguage::English);
-        assert!(release_summary()[0].starts_with("PlayStation 2 games"));
-        assert!(release_summary()[1].starts_with("RetroAchievements progress"));
+        assert!(release_summary()[0].starts_with("RetroAchievements progress"));
+        assert!(release_summary()[1].starts_with("My Games groups PS2"));
         assert!(release_title().starts_with("What's new"));
         set_language(UiLanguage::French);
     }

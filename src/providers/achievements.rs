@@ -107,14 +107,14 @@ pub fn rarity_percent(value: Option<&serde_json::Value>) -> Option<f32> {
     (number.is_finite() && (0.0..=100.0).contains(&number)).then_some(number as f32)
 }
 
-/// Ordre d'affichage des succès : les plus rares d'abord (pourcentage
-/// d'obtention croissant), puis les succès débloqués, puis le nom. Les succès
-/// sans pourcentage connu restent en fin de liste.
+/// Ordre d'affichage des succès : du moins rare au plus rare (pourcentage
+/// d'obtention décroissant), puis les succès débloqués, puis le nom. Les
+/// succès sans pourcentage connu restent en fin de liste.
 pub fn sorted_rows(rows: &[AchievementRow]) -> Vec<&AchievementRow> {
     let mut sorted: Vec<&AchievementRow> = rows.iter().collect();
     sorted.sort_by(|left, right| {
         match (left.rarity, right.rarity) {
-            (Some(a), Some(b)) => a.total_cmp(&b),
+            (Some(a), Some(b)) => b.total_cmp(&a),
             (Some(_), None) => std::cmp::Ordering::Less,
             (None, Some(_)) => std::cmp::Ordering::Greater,
             (None, None) => std::cmp::Ordering::Equal,
@@ -345,7 +345,7 @@ mod tests {
     }
 
     #[test]
-    fn les_succes_sont_tries_du_plus_rare_au_plus_courant() {
+    fn les_succes_sont_tries_du_moins_rare_au_plus_rare() {
         let mut rare_locked = row("rare_locked", "Rare verrouillé", false);
         rare_locked.rarity = Some(2.5);
         let mut rare_unlocked = row("rare_unlocked", "Rare débloqué", true);
@@ -361,9 +361,9 @@ mod tests {
         assert_eq!(
             names,
             vec![
+                "Courant",
                 "Rare débloqué",
                 "Rare verrouillé",
-                "Courant",
                 "Sans pourcentage"
             ]
         );

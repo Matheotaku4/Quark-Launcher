@@ -567,6 +567,23 @@ pub enum AchievementsState {
     Failed(String),
 }
 
+/// Nombre de succès RetroAchievements obtenus, pour les badges de liste.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Ps2Progress {
+    pub unlocked: u32,
+    pub total: u32,
+}
+
+impl Ps2Progress {
+    pub(crate) fn ratio(self) -> f32 {
+        if self.total == 0 {
+            0.0
+        } else {
+            (self.unlocked as f32 / self.total as f32).clamp(0.0, 1.0)
+        }
+    }
+}
+
 /// Bannière en cours de fondu : l'image du jeu précédent reste dessinée
 /// par-dessus la nouvelle pendant quelques dixièmes de seconde, si bien que la
 /// fiche change de jeu sans à-coup.
@@ -6435,6 +6452,41 @@ impl QuarkApp {
         });
         self.ps2_search_job = Some((game_id.to_string(), rx));
         ctx.request_repaint_after(Duration::from_millis(150));
+    }
+
+    /// Progression RetroAchievements connue d'un jeu PS2, pour les badges de
+    /// liste. Un jeu sans fiche RA, ou dont la lecture a échoué, n'affiche rien.
+    pub(crate) fn ps2_progress(&self, game: &Game) -> Option<Ps2Progress> {
+        game.ps2.as_ref()?.ra_game_id?;
+        match self.ps2_ra.get(&game.id) {
+            Some(AchievementsState::Ready(info)) if info.total > 0 => Some(Ps2Progress {
+                unlocked: info.unlocked.min(info.total),
+                total: info.total,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Charge les progressions RA des jeux visibles, une requête à la fois.
+    /// L'API n'accepte pas de lot pour les fiches complètes ; les appels
+    /// restent donc espacés et ne se répètent pas une fois le résultat reçu.
+    pub(crate) fn prefetch_ps2_progress(&mut self, ctx: &egui::Context, ids: &[String]) {
+        if self.ps2_ra_job.is_some() || !crate::ps2::ra_configured(&self.lib.settings) {
+            return;
+        }
+        for id in ids {
+            let Some(game) = self.lib.get(id) else {
+                continue;
+            };
+            let Some(ra_game_id) = game.ps2.as_ref().and_then(|ps2| ps2.ra_game_id) else {
+                continue;
+            };
+            if self.ps2_ra.contains_key(id) {
+                continue;
+            }
+            self.request_ps2_ra(ctx, id, ra_game_id);
+            break;
+        }
     }
 
     /// Demande la progression RetroAchievements d'un jeu PS2.

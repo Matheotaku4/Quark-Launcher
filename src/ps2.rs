@@ -555,6 +555,42 @@ pub fn check_launch(game: &Game, settings: &Settings) -> Result<PathBuf, String>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{EnvVar, Ps2Config};
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
+    fn synthetic_iso(serial: &str) -> Vec<u8> {
+        let compact: String = serial
+            .chars()
+            .filter(|ch| ch.is_ascii_alphanumeric())
+            .collect();
+        assert_eq!(compact.len(), 9);
+        let boot = format!("{}_{}.{}", &compact[..4], &compact[4..7], &compact[7..]);
+        let content = format!("BOOT2 = cdrom0:\\{boot};1\n");
+        let mut image = vec![0u8; 24 * 2048];
+        // PVD au secteur 16.
+        let pvd = 16 * 2048;
+        image[pvd] = 1;
+        image[pvd + 1..pvd + 6].copy_from_slice(b"CD001");
+        // Enregistrement du répertoire racine : secteur 18, 2048 octets.
+        let root = pvd + 156;
+        image[root] = 34;
+        image[root + 2..root + 6].copy_from_slice(&18u32.to_le_bytes());
+        image[root + 10..root + 14].copy_from_slice(&2048u32.to_le_bytes());
+        // Entrée SYSTEM.CNF dans le répertoire racine.
+        let dir = 18 * 2048;
+        let entry = dir;
+        image[entry] = 34 + 11;
+        image[entry + 2..entry + 6].copy_from_slice(&20u32.to_le_bytes());
+        image[entry + 10..entry + 14].copy_from_slice(&(content.len() as u32).to_le_bytes());
+        image[entry + 32] = 11;
+        image[entry + 33..entry + 44].copy_from_slice(b"SYSTEM.CNF;");
+        // Contenu de SYSTEM.CNF.
+        let cnf = 20 * 2048;
+        image[cnf..cnf + content.len()].copy_from_slice(content.as_bytes());
+        image[cnf + content.len()] = 0;
+        image
+    }
 
     #[test]
     fn un_boot2_devient_un_numero_de_serie() {
@@ -595,30 +631,6 @@ mod tests {
 
     #[test]
     fn un_petit_iso_livre_son_serial() {
-        let mut image = vec![0u8; 24 * 2048];
-        // PVD au secteur 16.
-        let pvd = 16 * 2048;
-        image[pvd] = 1;
-        image[pvd + 1..pvd + 6].copy_from_slice(b"CD001");
-        // Enregistrement du répertoire racine : secteur 18, 2048 octets.
-        let root = pvd + 156;
-        image[root] = 34;
-        image[root + 2..root + 6].copy_from_slice(&18u32.to_le_bytes());
-        image[root + 10..root + 14].copy_from_slice(&2048u32.to_le_bytes());
-        // Entrée SYSTEM.CNF dans le répertoire racine.
-        let dir = 18 * 2048;
-        let entry = dir;
-        image[entry] = 34 + 11;
-        image[entry + 2..entry + 6].copy_from_slice(&20u32.to_le_bytes());
-        image[entry + 10..entry + 14].copy_from_slice(&27u32.to_le_bytes());
-        image[entry + 32] = 11;
-        image[entry + 33..entry + 44].copy_from_slice(b"SYSTEM.CNF;");
-        // Contenu de SYSTEM.CNF.
-        let cnf = 20 * 2048;
-        let content = b"BOOT2 = cdrom0:\\SLUS_200.62;1\n";
-        image[cnf..cnf + content.len()].copy_from_slice(content);
-        image[cnf + content.len()] = 0;
-
         let path = std::env::temp_dir().join(format!(
             "quark-ps2-{}-{}.iso",
             std::process::id(),
@@ -627,8 +639,93 @@ mod tests {
                 .map(|time| time.subsec_nanos())
                 .unwrap_or(0)
         ));
-        std::fs::write(&path, image).unwrap();
+        std::fs::write(&path, synthetic_iso("SLUS-20062")).unwrap();
         assert_eq!(serial_from_iso(&path).as_deref(), Ok("SLUS-20062"));
         let _ = std::fs::remove_file(path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lance_pcsx2_avec_un_faux_binaire_et_une_iso_synthetique() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|time| time.subsec_nanos())
+            .unwrap_or(0);
+        let dir =
+            std::env::temp_dir().join(format!("quark-ps2-launch-{}-{stamp}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let iso = dir.join("Jeu Test (USA).iso");
+        std::fs::write(&iso, synthetic_iso("SLUS-20062")).unwrap();
+
+        // Faux PCSX2 : il note ses arguments et les variables reçues, puis sort.
+        let fake = dir.join("pcsx2-fake");
+        std::fs::write(
+            &fake,
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\nprintf '%s\\n' \"${QUARK_TEST:-}\" > \"$0.env\"\nprintf '%s\\n' \"${WINEDLLOVERRIDES:-}\" > \"$0.dll\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let mut game = Game::new("Jeu Test", iso.display().to_string());
+        game.ps2 = Some(Ps2Config {
+            serial: "SLUS-20062".to_string(),
+            ra_game_id: Some(238),
+        });
+        game.env = vec![
+            EnvVar::new("QUARK_TEST", "oui"),
+            EnvVar::new("WINEDLLOVERRIDES", "winmm=n,b"),
+        ];
+        let mut settings = Settings::default();
+        settings.pcsx2_path = fake.display().to_string();
+
+        let resolved =
+            crate::proton::resolve_with(&game, &settings, &[], crate::proton::Tools::default())
+                .unwrap();
+        assert_eq!(resolved.kind, crate::proton::LaunchKind::Emulator);
+        assert_eq!(resolved.spec.program, fake);
+        assert_eq!(resolved.spec.args, vec![iso.as_os_str().to_owned()]);
+        assert!(
+            resolved
+                .spec
+                .env
+                .iter()
+                .any(|(name, value)| { name == "QUARK_TEST" && value == "oui" })
+        );
+        assert!(
+            !resolved
+                .spec
+                .env
+                .iter()
+                .any(|(name, _)| name == "WINEDLLOVERRIDES"),
+            "PCSX2 ne doit pas recevoir les DLL overrides Wine"
+        );
+
+        let status = Command::new(&resolved.spec.program)
+            .args(&resolved.spec.args)
+            .envs(resolved.spec.env.iter().cloned())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("pcsx2-fake.args"))
+                .unwrap()
+                .trim(),
+            iso.display().to_string()
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("pcsx2-fake.env"))
+                .unwrap()
+                .trim(),
+            "oui"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("pcsx2-fake.dll"))
+                .unwrap()
+                .trim(),
+            ""
+        );
+        assert_eq!(serial_from_iso(&iso).as_deref(), Ok("SLUS-20062"));
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

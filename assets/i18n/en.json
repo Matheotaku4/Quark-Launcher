@@ -254,7 +254,7 @@
   "Aucun succès à afficher.": "No achievements to display.",
   "Aucun succès chargé pour ce jeu.": "No achievements loaded for this game.",
   "Lecture des succès…": "Reading achievements…",
-  "Triés du plus rare au plus courant": "Sorted from rarest to most common",
+  "Triés du plus courant au plus rare": "Sorted from most common to rarest",
   "Pourcentage de joueurs ayant obtenu ce succès": "Percentage of players who unlocked this achievement",
   "Rare verrouillé": "Rare locked",
   "Rare débloqué": "Rare unlocked",
@@ -359,7 +359,7 @@
   "Steam Cloud reste géré par le client Steam : Quark ne l'interroge pas.": "Steam Cloud remains managed by the Steam client: Quark does not query it.",
   "Epic utilise legendary sync-saves ; GOG utilise gogdl save-sync. La sauvegarde la plus récente gagne, et le dossier GOG se choisit dans la fiche du jeu.": "Epic uses legendary sync-saves; GOG uses gogdl save-sync. The newest save wins, and the GOG folder is chosen in the game page.",
   "L'overlay est une fenêtre au-dessus du jeu. Il reste fermé par défaut : Maj+Retour arrière l'ouvre et le referme, sans quitter la partie.": "The overlay is a window above the game. It stays closed by default: Shift+Backspace opens and closes it without leaving the game.",
-  "Choisis ce que l'overlay affiche. Le tri reste celui de la fiche : les succès les plus rares d'abord.": "Choose what the overlay shows. Sorting stays as on the game page: rarest achievements first.",
+  "Choisis ce que l'overlay affiche. Le tri reste celui de la fiche : les succès les plus courants d'abord.": "Choose what the overlay shows. Sorting stays as on the game page: most common achievements first.",
   "Format X11 : Shift, Ctrl, Alt ou Super, puis le nom de la touche. Maj+Retour arrière s'écrit Shift+BackSpace.": "X11 format: Shift, Ctrl, Alt or Super, then the key name. Shift+Backspace is written Shift+BackSpace.",
   "F1–F12, Print… · appliquée au prochain lancement": "F1–F12, Print… · applied on next launch",
   "SAUVEGARDES CLOUD": "CLOUD SAVES",
@@ -569,5 +569,14 @@
   "numéro de série à saisir dans la fiche du jeu": "serial number to enter on the game page",
   "Recherche RetroAchievements interrompue": "RetroAchievements search interrupted",
   "Lecture RetroAchievements interrompue": "RetroAchievements read interrupted",
-  "Aucune fiche RetroAchievements trouvée pour ce titre : ajuste le titre ou saisis l'identifiant à la main": "No RetroAchievements entry found for this title: adjust the title or enter the ID by hand"
+  "Aucune fiche RetroAchievements trouvée pour ce titre : ajuste le titre ou saisis l'identifiant à la main": "No RetroAchievements entry found for this title: adjust the title or enter the ID by hand",
+  "Ouvrir": "Open",
+  "aucun succès": "no achievements",
+  "lecture…": "reading…",
+  "indisponible": "unavailable",
+  "Associe une fiche RetroAchievements au jeu dans sa fiche PS2 pour afficher sa progression.": "Link a RetroAchievements page to the game in its PS2 tab to show its progress.",
+  "Pseudo et clé Web API RetroAchievements à renseigner dans Paramètres → Boutiques & outils.": "Set your RetroAchievements username and Web API key in Settings → Stores & tools.",
+  "Vérifie le pseudo et la clé Web API dans Paramètres → Boutiques & outils.": "Check the username and Web API key in Settings → Stores & tools.",
+  "Progression lue depuis RetroAchievements ; PCSX2 gère les déblocages.": "Progress read from RetroAchievements; PCSX2 handles unlocks.",
+  "Ouvrir la fiche du jeu dans la bibliothèque": "Open the game page in the library"
 }

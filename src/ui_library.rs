@@ -20,6 +20,10 @@ impl QuarkApp {
     pub(crate) fn library_tab(&mut self, ctx: &egui::Context) {
         let pal = self.pal;
         let view = self.lib.settings.view;
+        // La progression RA est visible dès la liste : on la demande pour les
+        // jeux affichés, sans attendre l'ouverture de la fiche PS2.
+        let progress_ids = self.display_ids();
+        self.prefetch_ps2_progress(ctx, &progress_ids);
         // Vue grille : **seulement** la grille. La fiche du jeu s'ouvre en
         // surimpression, avec sa croix, et se ferme d'un clic à côté.
         let grid_only = view == ViewMode::Grid;
@@ -236,6 +240,9 @@ impl QuarkApp {
                                     4.0,
                                     Color32::from_rgb(r, g, b),
                                 );
+                            }
+                            if let Some(progress) = self.ps2_progress(&game) {
+                                draw_ra_badge(&painter, cover, &pal, progress);
                             }
                             if response.clicked() {
                                 opened = Some(id.clone());
@@ -481,10 +488,12 @@ impl QuarkApp {
                                     if appear < 1.0 {
                                         ui.ctx().request_repaint();
                                     }
+                                    let ps2_progress = self.ps2_progress(&game);
                                     let response = game_tile(
                                         ui,
                                         &tile_pal,
                                         &game,
+                                        ps2_progress,
                                         Vec2::new(tile_w, tile_h),
                                         selected,
                                         marked,
@@ -573,10 +582,12 @@ impl QuarkApp {
         let marked = self.is_marked(id);
         let running = self.is_running(id);
         let row_pal = pal.with_accent(self.game_accent(&game));
+        let ps2_progress = self.ps2_progress(&game);
         let response = game_row(
             ui,
             &row_pal,
             &game,
+            ps2_progress,
             selected,
             marked,
             running,
@@ -631,6 +642,7 @@ impl QuarkApp {
         };
         // Le jeu impose sa couleur : bouton Jouer, liserés, ligne sélectionnée.
         let pal = self.pal.with_accent(self.game_accent(&game));
+        let ps2_progress = self.ps2_progress(&game);
 
         let settings = self.lib.settings.clone();
         let resolved = proton::resolve(&game, &settings, &self.runtimes);
@@ -1018,6 +1030,21 @@ impl QuarkApp {
                                     ui.add_space(14.0);
                                     status_chip(ui, &pal, game.status);
                                 }
+                                if let Some(progress) = ps2_progress {
+                                    ui.add_space(14.0);
+                                    ui.label(
+                                        crate::i18n::rich(format!(
+                                            "RetroAchievements · {}/{}",
+                                            progress.unlocked, progress.total
+                                        ))
+                                        .size(11.5)
+                                        .strong()
+                                        .color(pal.accent),
+                                    )
+                                    .on_hover_text(
+                                        "Progression lue depuis RetroAchievements ; PCSX2 gère les déblocages.",
+                                    );
+                                }
                             },
                         );
 
@@ -1165,7 +1192,7 @@ impl QuarkApp {
                 match self.detail_tab {
                     crate::app::DetailTab::News => self.news_section(ui, &game, &pal, width),
                     crate::app::DetailTab::Achievements => {
-                        self.achievements_section(ui, store_record.as_ref(), &pal, width);
+                        self.achievements_section(ui, &game, store_record.as_ref(), &pal, width);
                     }
                     crate::app::DetailTab::History => {
                         self.history_section(ui, &game, &pal, width);
@@ -1657,16 +1684,227 @@ impl QuarkApp {
         ui.add_space(6.0);
     }
 
+    /// Succès RetroAchievements d'un jeu PlayStation 2, dans sa fiche.
+    /// PCSX2 reste seul responsable des déblocages ; Quark relit la même
+    /// progression avec la clé Web API.
+    fn ps2_achievements_section(
+        &mut self,
+        ui: &mut egui::Ui,
+        game: &Game,
+        pal: &Palette,
+        width: f32,
+    ) {
+        let Some(ra_game_id) = game.ps2.as_ref().and_then(|ps2| ps2.ra_game_id) else {
+            ui.horizontal(|ui| {
+                ui.add_space(32.0);
+                ui.vertical(|ui| {
+                    ui.set_max_width((width - 64.0).max(200.0));
+                    ui.label(
+                        crate::i18n::rich(
+                            "Associe une fiche RetroAchievements au jeu dans sa fiche PS2 pour \
+                             afficher sa progression.",
+                        )
+                        .size(11.5)
+                        .color(pal.text_dim),
+                    );
+                });
+            });
+            return;
+        };
+        if !crate::ps2::ra_configured(&self.lib.settings) {
+            ui.horizontal(|ui| {
+                ui.add_space(32.0);
+                ui.vertical(|ui| {
+                    ui.set_max_width((width - 64.0).max(200.0));
+                    ui.label(
+                        crate::i18n::rich(
+                            "Pseudo et clé Web API RetroAchievements à renseigner dans \
+                             Paramètres → Boutiques & outils.",
+                        )
+                        .size(11.5)
+                        .color(pal.text_dim),
+                    );
+                });
+            });
+            return;
+        }
+
+        let mut state = self.ps2_ra.get(&game.id).cloned();
+        if state.is_none() {
+            self.request_ps2_ra(ui.ctx(), &game.id, ra_game_id);
+            state = self.ps2_ra.get(&game.id).cloned();
+        }
+        let mut refresh = false;
+        ui.horizontal(|ui| {
+            ui.add_space(32.0);
+            ui.vertical(|ui| {
+                ui.set_max_width((width - 64.0).max(200.0));
+                ui.label(
+                    crate::i18n::rich("RETROACHIEVEMENTS")
+                        .size(11.0)
+                        .color(pal.text_faint),
+                );
+                if let Some(crate::app::AchievementsState::Ready(info)) = &state
+                    && info.total > 0
+                {
+                    ui.add_space(4.0);
+                    ui.label(
+                        crate::i18n::rich(format!(
+                            "{} / {} succès débloqués",
+                            info.unlocked, info.total
+                        ))
+                        .size(15.0)
+                        .strong()
+                        .color(pal.text),
+                    );
+                    ui.add_space(6.0);
+                    let (bar, _) = ui.allocate_exact_size(
+                        Vec2::new((width - 190.0).max(200.0), 5.0),
+                        Sense::hover(),
+                    );
+                    ui.painter().rect_filled(bar, 2.5, pal.border);
+                    let ratio = info.unlocked as f32 / info.total as f32;
+                    ui.painter().rect_filled(
+                        Rect::from_min_size(
+                            bar.min,
+                            Vec2::new(bar.width() * ratio.clamp(0.0, 1.0), bar.height()),
+                        ),
+                        2.5,
+                        pal.accent,
+                    );
+                }
+            });
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.add_space(32.0);
+                if widgets::ghost_button(ui, "Actualiser", pal, Icon::Refresh).clicked() {
+                    refresh = true;
+                }
+            });
+        });
+        if refresh {
+            self.ps2_ra.remove(&game.id);
+            self.request_ps2_ra(ui.ctx(), &game.id, ra_game_id);
+        }
+        ui.add_space(12.0);
+
+        match state {
+            None | Some(crate::app::AchievementsState::Loading) => {
+                ui.horizontal(|ui| {
+                    ui.add_space(32.0);
+                    ui.add(egui::Spinner::new().size(14.0));
+                    ui.add_space(6.0);
+                    ui.label(
+                        crate::i18n::rich("Lecture de la progression RetroAchievements…")
+                            .size(11.5)
+                            .color(pal.text_dim),
+                    );
+                });
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(200));
+            }
+            Some(crate::app::AchievementsState::Failed(message)) => {
+                ui.horizontal(|ui| {
+                    ui.add_space(32.0);
+                    ui.vertical(|ui| {
+                        ui.set_max_width((width - 64.0).max(200.0));
+                        ui.label(crate::i18n::rich(message).size(11.5).color(pal.danger));
+                        ui.add_space(4.0);
+                        ui.label(
+                            crate::i18n::rich(
+                                "Vérifie le pseudo et la clé Web API dans Paramètres → \
+                                 Boutiques & outils.",
+                            )
+                            .size(10.5)
+                            .color(pal.text_faint),
+                        );
+                    });
+                });
+            }
+            Some(crate::app::AchievementsState::Ready(info)) if info.total == 0 => {
+                ui.horizontal(|ui| {
+                    ui.add_space(32.0);
+                    ui.label(
+                        crate::i18n::rich("Cette fiche ne publie aucun succès.")
+                            .size(11.5)
+                            .color(pal.text_dim),
+                    );
+                });
+            }
+            Some(crate::app::AchievementsState::Ready(info)) => {
+                if info.rows.iter().any(|row| row.rarity.is_some()) {
+                    ui.horizontal(|ui| {
+                        ui.add_space(32.0);
+                        ui.label(
+                            crate::i18n::rich("Triés du plus courant au plus rare")
+                                .size(10.0)
+                                .color(pal.text_faint),
+                        );
+                    });
+                    ui.add_space(4.0);
+                }
+                for row in crate::providers::achievements::sorted_rows(&info.rows) {
+                    ui.horizontal(|ui| {
+                        ui.add_space(32.0);
+                        let (dot, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+                        ui.painter().circle_filled(
+                            dot.center(),
+                            4.0,
+                            if row.unlocked { pal.accent } else { pal.border },
+                        );
+                        ui.vertical(|ui| {
+                            ui.set_max_width((width - 80.0).max(200.0));
+                            ui.spacing_mut().item_spacing.y = 1.0;
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(
+                                    crate::i18n::rich(&row.name)
+                                        .size(12.5)
+                                        .strong()
+                                        .color(if row.unlocked { pal.text } else { pal.text_dim }),
+                                );
+                                if let Some(rarity) = row.rarity {
+                                    let text = if rarity < 0.1 {
+                                        "< 0,1 %".to_string()
+                                    } else if crate::i18n::is_english() {
+                                        format!("{rarity:.1} %")
+                                    } else {
+                                        format!("{rarity:.1} %").replace('.', ",")
+                                    };
+                                    ui.label(
+                                        crate::i18n::rich(text).size(9.5).color(pal.text_faint),
+                                    )
+                                    .on_hover_text("Pourcentage de joueurs ayant obtenu ce succès");
+                                }
+                            });
+                            if !row.description.is_empty() {
+                                ui.label(
+                                    crate::i18n::rich(&row.description)
+                                        .size(11.0)
+                                        .color(pal.text_dim),
+                                );
+                            }
+                        });
+                    });
+                    ui.add_space(6.0);
+                }
+            }
+        }
+    }
+
     /// Succès du jeu, dans la fiche et non dans une fenêtre : même source que
     /// la fenêtre de « Mes jeux », fusionnée avec les déblocages de session.
     fn achievements_section(
         &mut self,
         ui: &mut egui::Ui,
+        game: &Game,
         record: Option<&crate::providers::ProviderGame>,
         pal: &Palette,
         width: f32,
     ) {
         ui.add_space(27.0);
+        if game.ps2.is_some() {
+            self.ps2_achievements_section(ui, game, pal, width);
+            return;
+        }
         let Some(record) = record else {
             ui.horizontal(|ui| {
                 ui.add_space(32.0);
@@ -1816,7 +2054,7 @@ impl QuarkApp {
                     ui.horizontal(|ui| {
                         ui.add_space(32.0);
                         ui.label(
-                            crate::i18n::rich("Triés du plus rare au plus courant")
+                            crate::i18n::rich("Triés du plus courant au plus rare")
                                 .size(10.0)
                                 .color(pal.text_faint),
                         );
@@ -2275,6 +2513,7 @@ fn game_row(
     ui: &mut egui::Ui,
     pal: &Palette,
     game: &Game,
+    ps2_progress: Option<crate::app::Ps2Progress>,
     selected: bool,
     marked: bool,
     running: bool,
@@ -2362,11 +2601,33 @@ fn game_row(
     } else {
         theme::lerp_color(pal.text_dim, pal.text, mark.max(hover * 0.7))
     };
+    let indicators = if running || status_color(game.status).is_some() {
+        42.0
+    } else {
+        0.0
+    };
+    let mut title_right = rect.right() - 14.0 - indicators;
+    if let Some(progress) = ps2_progress {
+        let label = ra_progress_label(progress);
+        let color = if progress.unlocked >= progress.total {
+            pal.accent
+        } else {
+            pal.text_faint
+        };
+        let galley = painter.layout_no_wrap(label, FontId::proportional(10.0), color);
+        title_right -= galley.size().x + 8.0;
+        painter.galley(
+            Pos2::new(title_right, rect.center().y - galley.size().y / 2.0),
+            galley,
+            color,
+        );
+        title_right -= 8.0;
+    }
     let job = single_line(
         &game.name,
         13.5,
         title_color,
-        (rect.right() - 14.0 - title_x).max(24.0),
+        (title_right - title_x).max(24.0),
     );
     let galley = painter.layout_job(job);
     painter.galley(
@@ -2406,11 +2667,39 @@ fn game_row(
     response
 }
 
+/// Libellé compact de progression RetroAchievements dans une liste.
+fn ra_progress_label(progress: crate::app::Ps2Progress) -> String {
+    format!("RA {}/{}", progress.unlocked, progress.total)
+}
+
+/// Pastille de progression RA posée sur une jaquette.
+fn draw_ra_badge(
+    painter: &egui::Painter,
+    cover: Rect,
+    pal: &Palette,
+    progress: crate::app::Ps2Progress,
+) {
+    let label = ra_progress_label(progress);
+    let galley = painter.layout_no_wrap(label, FontId::proportional(9.5), pal.text);
+    let size = Vec2::new(galley.size().x + 10.0, 16.0);
+    let badge = Rect::from_min_size(
+        Pos2::new(cover.left() + 5.0, cover.bottom() - size.y - 5.0),
+        size,
+    );
+    painter.rect_filled(badge, 3.0, Color32::from_black_alpha(180));
+    painter.galley(
+        Pos2::new(badge.left() + 5.0, badge.center().y - galley.size().y / 2.0),
+        galley,
+        pal.text,
+    );
+}
+
 /// Tuile de la vue grille (couverture verticale 2:3).
 fn game_tile(
     ui: &mut egui::Ui,
     pal: &Palette,
     game: &Game,
+    ps2_progress: Option<crate::app::Ps2Progress>,
     size: Vec2,
     selected: bool,
     marked: bool,
@@ -2478,6 +2767,9 @@ fn game_tile(
             egui::Stroke::new(2.0_f32, pal.danger),
             egui::StrokeKind::Inside,
         );
+    }
+    if let Some(progress) = ps2_progress {
+        draw_ra_badge(&painter, cover_rect, pal, progress);
     }
     if running {
         let badge = Rect::from_min_size(

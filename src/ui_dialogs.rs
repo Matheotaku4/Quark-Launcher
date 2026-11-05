@@ -1094,7 +1094,7 @@ impl QuarkApp {
                             "SUCCÈS",
                             &pal,
                             "Choisis ce que l'overlay affiche. Le tri reste celui de la fiche : \
-                             les succès les plus rares d'abord.",
+                             les succès les plus courants d'abord.",
                         );
                         if widgets::setting_toggle(
                             ui,
@@ -4964,7 +4964,7 @@ impl QuarkApp {
 
                             if info.rows.iter().any(|row| row.rarity.is_some()) {
                                 ui.label(
-                                    crate::i18n::rich("Triés du plus rare au plus courant")
+                                    crate::i18n::rich("Triés du plus courant au plus rare")
                                         .size(10.0)
                                         .color(pal.text_faint),
                                 );

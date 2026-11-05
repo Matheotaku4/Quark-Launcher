@@ -15,8 +15,8 @@ it with **PCSX2** instead of Proton. For a PS2 game:
 - the serial number is read from the disc when possible;
 - the cover is downloaded from the community
   [ps2-covers](https://github.com/xlenore/ps2-covers) repository;
-- RetroAchievements progress can be displayed on the game page and in the
-  overlay.
+- RetroAchievements progress appears in the library list, in **My Games**, on
+  the game page and in the overlay.
 
 PCSX2 remains responsible for emulation, its own settings and RetroAchievements
 sign-in and unlocks. Quark is only a launcher and a reader.
@@ -117,9 +117,12 @@ identifier stays editable. Once saved, the RA ID is kept with the game.
 
 ### What is displayed
 
-- total and unlocked achievement counts;
+- a compact `RA 3/12` badge in the library list and on cover tiles;
+- a PlayStation 2 progress panel in **My Games**, with one bar per game;
+- total and unlocked achievement counts on the game page;
 - each achievement's name, description and unlock state;
 - rarity when the API publishes the number of players and awards;
+- achievements sorted from least rare to rarest;
 - the same list in the in-game overlay when the game is launched with an RA ID.
 
 Achievements are read from

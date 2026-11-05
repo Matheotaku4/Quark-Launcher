@@ -33,6 +33,15 @@ impl QuarkApp {
 
         let busy = self.steam_sync_loading || self.epic_sync_loading || self.gog_sync_loading;
         let all_games = self.lib.provider_library.games.clone();
+        let ps2_games: Vec<crate::config::Game> = self
+            .lib
+            .games
+            .iter()
+            .filter(|game| game.ps2.as_ref().and_then(|ps2| ps2.ra_game_id).is_some())
+            .cloned()
+            .collect();
+        let ps2_ids: Vec<String> = ps2_games.iter().map(|game| game.id.clone()).collect();
+        self.prefetch_ps2_progress(ctx, &ps2_ids);
         let counts = [
             all_games.len(),
             all_games
@@ -186,6 +195,7 @@ impl QuarkApp {
                                 ui.add_space(10.0);
 
                                 self.provider_install_panel(ui, &pal);
+                                self.ps2_ra_panel(ui, &pal, &ps2_games);
                                 let needle = self.my_games_query.trim().to_string();
                                 let games = visible_games(&all_games, selected, &needle);
                                 if games.is_empty() {
@@ -395,6 +405,137 @@ impl QuarkApp {
             // L'ouverture de l'URI n'étant pas une preuve, cette synchronisation
             // détecte seulement les manifestes déjà présents et ne force aucun état.
             self.start_steam_sync(ctx);
+        }
+    }
+
+    /// Progression RetroAchievements des jeux PS2, dans « Mes jeux ».
+    ///
+    /// Ces jeux ne viennent pas d'une boutique : ils sont affichés à part pour
+    /// que leur avancement RA reste visible sans ouvrir la bibliothèque.
+    fn ps2_ra_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        pal: &crate::theme::Palette,
+        games: &[crate::config::Game],
+    ) {
+        if games.is_empty() {
+            return;
+        }
+        let rows: Vec<(
+            String,
+            String,
+            Option<crate::app::Ps2Progress>,
+            Option<crate::app::AchievementsState>,
+        )> = games
+            .iter()
+            .map(|game| {
+                (
+                    game.id.clone(),
+                    game.name.clone(),
+                    self.ps2_progress(game),
+                    self.ps2_ra.get(&game.id).cloned(),
+                )
+            })
+            .collect();
+        let total_unlocked: u32 = rows
+            .iter()
+            .filter_map(|(_, _, progress, _)| *progress)
+            .map(|progress| progress.unlocked)
+            .sum();
+        let total: u32 = rows
+            .iter()
+            .filter_map(|(_, _, progress, _)| *progress)
+            .map(|progress| progress.total)
+            .sum();
+        let mut open_game: Option<String> = None;
+
+        egui::Frame::new()
+            .fill(pal.surface)
+            .stroke(egui::Stroke::new(1.0_f32, pal.border))
+            .corner_radius(8.0)
+            .inner_margin(12.0)
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.label(
+                        crate::i18n::rich("PLAYSTATION 2 · RETROACHIEVEMENTS")
+                            .size(10.5)
+                            .strong()
+                            .color(pal.accent),
+                    );
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if total > 0 {
+                            ui.label(
+                                crate::i18n::rich(format!(
+                                    "{total_unlocked} / {total} succès débloqués"
+                                ))
+                                .size(10.0)
+                                .color(pal.text_faint),
+                            );
+                        }
+                    });
+                });
+                ui.add_space(6.0);
+                if !crate::ps2::ra_configured(&self.lib.settings) {
+                    ui.label(
+                        crate::i18n::rich(
+                            "Pseudo et clé Web API RetroAchievements à renseigner dans \
+                             Paramètres → Boutiques & outils.",
+                        )
+                        .size(10.5)
+                        .color(pal.text_dim),
+                    );
+                    return;
+                }
+                for (id, name, progress, state) in &rows {
+                    let (status, color) = match state {
+                        Some(crate::app::AchievementsState::Ready(info)) if info.total > 0 => {
+                            (format!("{}/{}", info.unlocked, info.total), pal.text)
+                        }
+                        Some(crate::app::AchievementsState::Ready(_)) => {
+                            ("aucun succès".to_string(), pal.text_faint)
+                        }
+                        Some(crate::app::AchievementsState::Loading) | None => {
+                            ("lecture…".to_string(), pal.text_faint)
+                        }
+                        Some(crate::app::AchievementsState::Failed(_)) => {
+                            ("indisponible".to_string(), pal.danger)
+                        }
+                    };
+                    ui.horizontal(|ui| {
+                        ui.label(crate::i18n::rich(name).size(12.0).strong().color(pal.text));
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui
+                                .small_button(crate::i18n::tr("Ouvrir"))
+                                .on_hover_text("Ouvrir la fiche du jeu dans la bibliothèque")
+                                .clicked()
+                            {
+                                open_game = Some(id.clone());
+                            }
+                            ui.label(crate::i18n::rich(status).size(10.5).color(color));
+                        });
+                    });
+                    let (bar, _) = ui
+                        .allocate_exact_size(Vec2::new(ui.available_width(), 4.0), Sense::hover());
+                    ui.painter().rect_filled(bar, 2.0, pal.border);
+                    if let Some(progress) = progress {
+                        ui.painter().rect_filled(
+                            Rect::from_min_size(
+                                bar.min,
+                                Vec2::new(bar.width() * progress.ratio(), bar.height()),
+                            ),
+                            2.0,
+                            pal.accent,
+                        );
+                    }
+                    ui.add_space(7.0);
+                }
+            });
+        ui.add_space(10.0);
+        if let Some(id) = open_game {
+            self.selected = Some(id);
+            self.tab = crate::app::Tab::Library;
+            self.home = false;
         }
     }
 

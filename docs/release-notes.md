@@ -1,60 +1,44 @@
-## Quark 1.3.0 — PlayStation 2, DLL overrides et wiki anglais
+## Quark 1.3.1 — Progression RetroAchievements dans toute l'interface
 
-### PlayStation 2 avec PCSX2
+### Progression dans la bibliothèque
 
-- Une image disque `.iso`, `.chd`, `.cso`, `.bin/.cue` ou `.gz` peut être ajoutée
-  comme un jeu. Quark détecte PCSX2 dans le `PATH`, dans les exports Flatpak et
-  dans les emplacements courants ; un chemin explicite est disponible dans
-  **Paramètres → Boutiques & outils**.
-- Pour les ISO non compressés, Quark lit `SYSTEM.CNF` et extrait le numéro de
-  série (`SLUS-20062`, `SCES-…`) sans outil externe. Le lancement passe
-  directement par PCSX2, sans Proton ni préfixe Wine.
-- La jaquette est téléchargée depuis le dépôt communautaire
-  [xlenore/ps2-covers](https://github.com/xlenore/ps2-covers), avec l'URL
-  `covers/default/<SÉRIE>.jpg`. Les formats compressés restent utilisables avec
-  un numéro de série saisi à la main.
-- Un onglet **PlayStation 2** dans la fiche du jeu permet de relire l'ISO, de
-  corriger le numéro de série, de recharger la jaquette et de gérer la fiche
-  RetroAchievements.
+- La progression RetroAchievements apparaît directement dans la liste des jeux,
+  sous la forme compacte `RA 3/12`. Les jaquettes de la grille affichent le même
+  badge.
+- La lecture démarre en arrière-plan dès que la bibliothèque affiche un jeu PS2
+  associé à une fiche RA, sans attendre l'ouverture de sa fiche détaillée.
+- La fiche d'un jeu PS2 rappelle son compteur à côté de **Jouer**, et son onglet
+  **Succès** lit désormais RetroAchievements au lieu d'indiquer qu'aucune
+  boutique n'est liée.
 
-### RetroAchievements
+### Mes jeux
 
-- Le pseudo et la clé Web API RetroAchievements se renseignent dans les
-  paramètres. PCSX2 continue de se connecter et de débloquer les succès ; Quark
-  lit la même progression avec l'API officielle.
-- La fiche PS2 recherche la fiche RetroAchievements par titre, propose
-  l'identifiant le plus proche et permet de le corriger. L'API ne fournit pas de
-  correspondance directe entre numéro de série et identifiant de jeu.
-- La progression, les descriptions et la rareté sont affichées dans la fiche et
-  dans l'overlay en jeu. Les déblocages restent gérés par PCSX2 : Quark ne les
-  réécrit jamais.
+- Un panneau **PlayStation 2 · RetroAchievements** regroupe les jeux PS2 avec
+  une barre de progression et un compteur par jeu.
+- Chaque ligne indique si la progression est en cours de lecture, indisponible
+  ou chargée, et permet d'ouvrir directement la fiche du jeu dans la
+  bibliothèque.
 
-### DLL overrides par jeu
+### Tri des succès
 
-- Un onglet **DLL overrides** liste les DLL du dossier source, permet de choisir
-  un autre dossier et coche chaque DLL en **n** (native), **b** (builtin) ou les
-  deux. Les choix sont écrits dans `WINEDLLOVERRIDES`.
-- Les entrées déjà présentes sont reprises telles quelles, y compris une entrée
-  sans `=` comme `steam_api64`, et ne sont pas supprimées par un changement de
-  dossier.
+- Les succès sont triés du moins rare au plus rare dans les fiches, les fenêtres
+  de succès et l'overlay en jeu.
+- Les succès sans pourcentage de rareté publié restent en fin de liste.
+- Les libellés français et anglais décrivent le nouveau tri.
 
-### Suggestions grisées
+### Validation PCSX2
 
-- Les propositions des champs Tags et Arguments utilisent maintenant la couleur
-  discrète des textes d'aide. Elles ne se confondent plus avec une valeur
-  réellement saisie.
-
-### Documentation
-
-- Le wiki est entièrement traduit en anglais, avec une page dédiée à
-  l'émulation PS2 et à RetroAchievements.
-- Le README et les notes de version décrivent PCSX2, les formats acceptés, la
-  source des jaquettes et la configuration RetroAchievements.
+- Un test automatisé lance un faux binaire PCSX2 avec une ISO synthétique
+  contenant `SYSTEM.CNF`.
+- Le test vérifie le numéro de série lu dans l'image, le chemin de l'ISO transmis
+  à l'émulateur, la conservation des variables personnalisées et le retrait de
+  `WINEDLLOVERRIDES`, qui ne doit pas être transmis à PCSX2.
+- Aucun émulateur, BIOS ou compte RetroAchievements réel n'est nécessaire pour
+  ce test.
 
 ### Mise à jour
 
-- Une configuration **1.2.1** se charge sans réinitialisation : jeux,
-  installations, vues, temps de jeu, préfixes, artworks, DLL overrides et
-  sauvegardes locales sont conservés.
-- Le champ `ps2` et les réglages PCSX2/RetroAchievements sont optionnels ; une
-  ancienne configuration reste valide telle quelle.
+- Une configuration **1.3.0** se charge sans réinitialisation. Le format de
+  `config.json` ne change pas et aucune migration n'est nécessaire.
+- Les jeux PS2, identifiants RA, réglages PCSX2/RetroAchievements, DLL
+  overrides, artworks et sauvegardes locales sont conservés.
