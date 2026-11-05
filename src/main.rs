@@ -21,6 +21,7 @@ mod process;
 mod proton;
 mod protondb;
 mod providers;
+mod ps2;
 mod saves;
 mod scan;
 mod session;

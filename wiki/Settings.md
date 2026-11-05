@@ -1,136 +1,134 @@
-# Réglages
+# Settings
 
-> [Accueil](Home) · [Thèmes et apparence](Themes-and-Appearance) ·
-> **Réglages** · [Proton et Wine](Proton-Wine-and-Launch-Options)
+> [Home](Home) · [Themes and appearance](Themes-and-Appearance) ·
+> **Settings** · [Proton and Wine](Proton-Wine-and-Launch-Options)
 
-![Réglages](https://raw.githubusercontent.com/Matheotaku4/Quark-Launcher/main/docs/images/settings-fr.png)
+![Settings](https://raw.githubusercontent.com/Matheotaku4/Quark-Launcher/main/docs/images/settings-en.png)
 
-Depuis la 1.2, les réglages occupent toute la fenêtre, avec une navigation
-latérale et des sections séparées. Chaque modification est enregistrée
-automatiquement, sans bouton **Appliquer**.
+Since 1.2, settings fill the whole window, with side navigation and separate
+sections. Every change is saved automatically; there is no **Apply** button.
 
-## Apparence
+## Appearance
 
-- **Langue de l'interface** : français ou anglais, appliqué immédiatement.
-- **Thème** : 13 palettes, appliquées immédiatement.
-- **Fond hero aléatoire** et **Flou** : bannière floutée derrière l'accueil et
-  la bibliothèque, tirée une fois par session.
-- **Démarrage** : page d'ouverture (Accueil, Bibliothèque, Boutique, Mes jeux).
-- **Bibliothèque** : vue liste ou grille.
-- **Accueil** : tri du carrousel, défilement automatique et intervalle.
-- **Zone de notification** : garder Quark dans l'icône au lieu de quitter.
+- **Interface language**: French or English, applied immediately.
+- **Theme**: thirteen palettes, applied immediately.
+- **Random hero background** and **Blur**: a blurred banner behind Home and
+  Library, picked once per session.
+- **Startup**: startup page (Home, Library, Store, My games).
+- **Library**: list or grid layout.
+- **Home**: carousel sort, automatic advance and interval.
+- **Notification area**: keep Quark in the tray icon instead of quitting.
 
-Détails et captures : [Thèmes et apparence](Themes-and-Appearance).
+Details and screenshots: [Themes and appearance](Themes-and-Appearance).
 
-## En jeu
+## In game
 
-- **Overlay** : activation, raccourci global et affichage des succès verrouillés,
-  compacts, avec progression et rareté.
-- **Captures** : touche de capture, notifications.
-- **Sauvegardes cloud** : synchronisation Epic/GOG après installation et à la
-  fermeture.
-- **Overlay Epic (EOS)** : téléchargement et activation de l'overlay EOS dans le
-  préfixe du jeu, quand il est disponible.
+- **Overlay**: enable it, choose the global shortcut and show locked, compact
+  achievements with progress and rarity.
+- **Screenshots**: capture key and notifications.
+- **Cloud saves**: Epic/GOG synchronization after installation and on exit.
+- **Epic overlay (EOS)**: download and enable the EOS overlay in the game prefix
+  when available.
 
-Les raccourcis par défaut sont `Maj+Retour arrière` pour l'overlay et `F12` pour
-les captures. Voir [Overlay et succès](Overlay-and-Achievements).
+The defaults are `Shift+Backspace` for the overlay and `F12` for screenshots.
+See [Overlay and achievements](Overlay-and-Achievements).
 
-## Nouveaux jeux
+## New games
 
-Cette page ne contient **pas** des réglages globaux. Ce sont des valeurs
-recopiées dans un jeu au moment de son ajout. Chaque jeu garde ensuite les
-siennes ; modifier un défaut ne change aucun jeu existant, et modifier un jeu ne
-touche pas les autres.
+This page does **not** contain global settings. These values are copied into a
+game when it is added. Each game then keeps its own; changing a default does not
+affect existing games, and changing one game does not affect the others.
 
-- **Préfixe Proton** : dossier transmis tel quel. Vide = préfixe automatique
-  sous `~/.local/share/quark/prefixes/<jeu>`.
-- **Dossier d'installation des boutiques** : parent proposé pour Epic/GOG. Vide
-  = `~/Games`.
-- **Arguments** : arguments par défaut passés après l'exécutable.
-- **Runtime Proton** : runtime préféré ; **Automatique** laisse Quark choisir.
-- **Anti-triche** : BattlEye et EasyAntiCheat, deux options indépendantes.
-- **Options de lancement** : GameMode, MangoHud, gamescope, PRIME, wrapper,
-  PROTON_LOG, umu.
-- **Variables d'environnement** : format `NOM=valeur`, recopiées dans chaque
-  nouveau jeu.
+- **Proton prefix**: folder used as-is. Empty = automatic prefix under
+  `~/.local/share/quark/prefixes/<game>`.
+- **Store installation folder**: parent proposed for Epic/GOG. Empty = `~/Games`.
+- **Arguments**: default arguments passed after the executable.
+- **Proton runtime**: preferred runtime; **Automatic** lets Quark choose.
+- **Anti-cheat**: BattlEye and EasyAntiCheat, two independent options.
+- **Launch options**: GameMode, MangoHud, gamescope, PRIME, wrapper, PROTON_LOG,
+  umu.
+- **Environment variables**: format `NAME=value`, copied into each new game.
 
-Les runtimes détectés et leur nombre sont affichés dans cette page, avec
-**Redétecter**. Voir [Proton, Wine et options](Proton-Wine-and-Launch-Options)
-pour le sens de chaque case et de chaque variable.
+Detected runtimes and their count are shown on this page, with **Detect again**.
+See [Proton, Wine and options](Proton-Wine-and-Launch-Options) for what each
+option and variable does.
 
-## Artworks
+## Artwork
 
-- **Sources** : SteamGridDB, Steam, boutique et fichier local.
-- **Clé SteamGridDB** : facultative, stockée dans la configuration locale.
-- **Téléchargement et remplacement** des couvertures, héros, logos et icônes.
-- **Cache** : les images téléchargées sont conservées dans
-  `~/.local/share/quark/artwork/`.
+- **Sources**: SteamGridDB, Steam, store and local file.
+- **SteamGridDB key**: optional, stored in the local configuration.
+- **Download and replace** covers, heroes, logos and icons.
+- **Cache**: downloaded images are kept in `~/.local/share/quark/artwork/`.
 
-La fiche d'un jeu propose aussi **Personnaliser** pour choisir une image
-précise, y compris un fichier local.
+A game page also offers **Customize** to choose a specific image, including a
+local file.
 
-## Boutiques & outils
+## Stores & tools
 
-- **Synchronisation** : importer ou actualiser la bibliothèque Steam, Epic, GOG.
-- **Comptes** : connexion et déconnexion Epic/GOG, clé Steam facultative.
-- **Connexions** : état des sessions et actions de synchronisation.
-- **Outils gérés par Quark** : Legendary, gogdl, Ludusavi ; installation,
-  mise à jour et vérification SHA-256.
-- **Overlay Epic (EOS)** : téléchargement et activation.
+- **Synchronization**: import or refresh the Steam, Epic and GOG libraries.
+- **Accounts**: connect and disconnect Epic/GOG, optional Steam key.
+- **Connections**: session state and synchronization actions.
+- **Tools managed by Quark**: Legendary, gogdl, Ludusavi; install, update and
+  SHA-256 verification.
+- **Epic overlay (EOS)**: download and activation.
+- **PlayStation 2 · PCSX2**: emulator binary, automatic detection and Flatpak
+  export.
+- **RetroAchievements**: username and Web API key used to read PS2 progress.
 
-Voir [Boutiques et sauvegardes](Stores-and-Saves).
+See [Stores and saves](Stores-and-Saves) and
+[PlayStation 2 and RetroAchievements](PlayStation-2-and-RetroAchievements).
 
-## Statistiques
+## Statistics
 
-- Temps de jeu total, temps de la semaine et série de jours.
-- Barres des douze dernières semaines.
-- Carte de chaleur sur 26 semaines.
-- Jeux les plus joués.
+- Total playtime, playtime this week and day streak.
+- Bars for the last twelve weeks.
+- A 26-week heat map.
+- Most played games.
 
-Les statistiques viennent de l'historique local des sessions. Un temps de jeu
-fourni par une boutique peut être affiché sur la fiche, mais l'historique
-détaillé reste celui que Quark a observé.
+Statistics come from the local session history. Playtime published by a store
+can be shown on the game page, but the detailed history remains what Quark
+observed.
 
-## Espace disque
+## Disk space
 
-Mesure en arrière-plan :
+Background measurement of:
 
-- préfixes Proton ;
-- cache d'artworks ;
-- journaux ;
-- archives de mise à jour ;
-- dossiers de jeux.
+- Proton prefixes;
+- artwork cache;
+- logs;
+- update archives;
+- game folders.
 
-La mesure peut prendre du temps sur une grande bibliothèque. Elle ne supprime
-rien et ne propose pas de nettoyage automatique : le bouton dossier ouvre
-l'emplacement pour que vous puissiez décider vous-même quoi retirer.
+The measurement can take time on a large library. It deletes nothing and offers
+no automatic cleanup: the folder button opens the location so you can decide
+what to remove.
 
-## À propos
+## About
 
-- Version installée.
-- **Vérifier les mises à jour**, état de la dernière vérification, taille de
-  l'archive et installation.
-- **Installer les mises à jour au démarrage**.
-- **Revoir le guide de démarrage** : rouvre le parcours de bienvenue.
-- **Revoir les nouveautés** : rouvre le résumé de la version.
-- **Page de la release**, ressources et dossiers de données.
+- Installed version.
+- **Check for updates**, last check state, archive size and installation.
+- **Install updates on startup**.
+- **Review the getting-started guide**: reopen the welcome guide.
+- **Review what's new**: reopen the version summary.
+- **Release page**, resources and data folders.
 
-Les mises à jour vérifient la somme SHA-256 et refusent un binaire qui ne
-correspond pas au tag attendu. Voir [Installation](Installation).
+Updates verify the SHA-256 and refuse a binary that does not match the expected
+tag. See [Installation](Installation).
 
-## Fermer les réglages
+## Close settings
 
-Le bouton **×** en haut à droite ferme la page. `Échap` ferme aussi les
-panneaux. Les réglages n'interrompent pas un téléchargement, une analyse de
-disque ou une synchronisation déjà lancée.
+The **×** button in the top right closes the page. `Escape` also closes panels.
+Settings do not interrupt an already started download, disk scan or
+synchronization.
 
-## Voir aussi
+## See also
 
-- [Thèmes et apparence](Themes-and-Appearance)
-- [Proton, Wine et options de lancement](Proton-Wine-and-Launch-Options)
-- [Boutiques et sauvegardes](Stores-and-Saves)
-- [Dépannage](Troubleshooting)
+- [Themes and appearance](Themes-and-Appearance)
+- [Proton, Wine and launch options](Proton-Wine-and-Launch-Options)
+- [Stores and saves](Stores-and-Saves)
+- [PlayStation 2 and RetroAchievements](PlayStation-2-and-RetroAchievements)
+- [Troubleshooting](Troubleshooting)
 
 ---
 
-[Accueil](Home) · [Thèmes](Themes-and-Appearance) · [Proton](Proton-Wine-and-Launch-Options) · [Dépannage](Troubleshooting)
+[Home](Home) · [Themes](Themes-and-Appearance) · [Proton](Proton-Wine-and-Launch-Options) · [Troubleshooting](Troubleshooting)

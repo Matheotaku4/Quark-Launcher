@@ -6,7 +6,7 @@ own, launches Windows games through Proton (or umu-launcher), and stays out of
 the way with an AMOLED interface, a store page, save snapshots and an in-game
 overlay.
 
-This is the **1.2.1** documentation. Older release notes are kept on the GitHub
+This is the **1.3.0** documentation. Older release notes are kept on the GitHub
 releases page; `docs/release-notes.md` only describes the release currently
 being published.
 
@@ -27,31 +27,31 @@ The wiki is published from the versioned source in [`wiki/`](wiki/) by the
 | --- | --- |
 | ![Onboarding](docs/images/onboarding-fr.png) | ![What's new](docs/images/whats-new-fr.png) |
 
-## What's new in 1.2.1
+## What's new in 1.3.0
 
-- **A single Filters menu** on Home and in the Library, like Steam: status,
-  Steam genre and personal tags now live in one popup. The button counts active
-  filters, the menu stays open while selecting, and **Clear all** resets them.
-- **A first-run guide** in three steps: discover Quark, change language, theme,
-  startup page and random hero background, then add a first game. Existing
-  libraries are marked as already welcomed and are not interrupted.
-- **A short release summary** once per version, with a **Review what's new**
-  action in Settings → About.
-- **French and English** across the whole interface, switched live from
-  Appearance. The interface language is separate from the Steam API language.
-- **Thirteen dark themes**: AMOLED, Graphite, Catppuccin Mocha, Macchiato and
-  Frappé, Dracula, Nord, Gruvbox Dark, Tokyo Night, Rosé Pine, Everforest, One
-  Dark and Kanagawa.
-- **A random blurred hero background** behind Home and Library, picked once per
-  session, with a 2–30 px blur slider.
-- **Full-screen Settings** with a sidebar and clearer sections instead of a
-  small dialog.
-- **Documentation**: a detailed wiki source in `wiki/`, screenshots in
-  `docs/images/`, and every Proton/Wine/umu variable explained.
+- **PlayStation 2 with PCSX2.** Add an `.iso`, `.chd`, `.cso`, `.bin/.cue` or `.gz`
+  image as a game; Quark detects PCSX2, reads the serial from uncompressed ISO
+  files, launches the emulator without Proton and fetches covers from
+  [xlenore/ps2-covers](https://github.com/xlenore/ps2-covers) by serial number.
+- **RetroAchievements progress.** Set your username and Web API key in Settings,
+  then open the PlayStation 2 tab of a game to find its RetroAchievements entry
+  by title and see progress in the game page and the in-game overlay. PCSX2
+  still signs in and unlocks achievements itself; Quark only reads them.
+- **A DLL overrides tab for every game.** Pick a source folder, select its DLLs
+  and choose **n** (native), **b** (builtin) or both. Existing
+  `WINEDLLOVERRIDES` entries are loaded, preserved and written back.
+- **Grey placeholder suggestions.** The proposed values in Tags and Arguments
+  now use the faint text colour instead of looking like typed input.
+- **An English wiki.** Every wiki page, including the new PlayStation 2 guide,
+  is now written in English.
+
+| PlayStation 2 |
+| --- |
+| ![PlayStation 2 settings](docs/images/ps2-tab-en.png) |
 
 ## Table of contents
 
-1. [What's new in 1.2.1](#whats-new-in-121)
+1. [What's new in 1.3.0](#whats-new-in-130)
 2. [What Quark does](#what-quark-does)
 3. [Installation](#installation)
 4. [First launch](#first-launch)
@@ -59,15 +59,16 @@ The wiki is published from the versioned source in [`wiki/`](wiki/) by the
 6. [One game, several installations](#one-game-several-installations)
 7. [Stores, accounts and cloud saves](#stores-accounts-and-cloud-saves)
 8. [Achievements and the in-game overlay](#achievements-and-the-in-game-overlay)
-9. [Proton, umu and launch options](#proton-umu-and-launch-options)
-10. [Local saves and snapshots](#local-saves-and-snapshots)
-11. [Settings](#settings)
-12. [Command line](#command-line)
-13. [Files, data and privacy](#files-data-and-privacy)
-14. [Project layout](#project-layout)
-15. [Development and tests](#development-and-tests)
-16. [Known limitations](#known-limitations)
-17. [Licence](#licence)
+9. [PlayStation 2 with PCSX2](#playstation-2-with-pcsx2)
+10. [Proton, umu and launch options](#proton-umu-and-launch-options)
+11. [Local saves and snapshots](#local-saves-and-snapshots)
+12. [Settings](#settings)
+13. [Command line](#command-line)
+14. [Files, data and privacy](#files-data-and-privacy)
+15. [Project layout](#project-layout)
+16. [Development and tests](#development-and-tests)
+17. [Known limitations](#known-limitations)
+18. [Licence](#licence)
 
 ## What Quark does
 
@@ -80,6 +81,9 @@ The wiki is published from the versioned source in [`wiki/`](wiki/) by the
 - **Proton without command lines.** Per-game runtime, prefix, GameMode,
   MangoHud, gamescope, PRIME offload, a free wrapper command, environment
   variables, BattlEye/EasyAntiCheat runtimes and umu-launcher.
+- **PlayStation 2 through PCSX2.** Disc images become ordinary library entries:
+  serial detection, community covers and RetroAchievements progress, without
+  creating a Wine prefix for the emulator.
 - **A real in-game overlay.** Press `Shift+Backspace` to open a Steam-like
   panel over the game and read its achievements. `F12` takes a screenshot.
 - **Cloud saves for Epic and GOG.** The account save is fetched after an
@@ -105,8 +109,8 @@ Download `quark-<version>-linux-x86_64.tar.gz` and its `.sha256` file from the
 then verify and unpack it:
 
 ```bash
-sha256sum -c quark-1.2.1-linux-x86_64.tar.gz.sha256
-tar -xzf quark-1.2.1-linux-x86_64.tar.gz
+sha256sum -c quark-1.3.0-linux-x86_64.tar.gz.sha256
+tar -xzf quark-1.3.0-linux-x86_64.tar.gz
 ./quark/quark
 ```
 
@@ -148,7 +152,7 @@ A new configuration opens a three-step welcome guide. It is not blocking:
 **Skip** closes it. The guide changes the interface language, startup page,
 theme and hero background live, then offers to add a first game. Existing
 configurations are marked as already welcomed, so updating from 1.1.4 never
-shows it unexpectedly; they still see the 1.2.1 summary once.
+shows it unexpectedly; they still see the 1.3.0 summary once.
 
 1. Open **Settings → Stores & tools** and install Legendary and/or gogdl with
    **Install / update**. Quark verifies the SHA-256 digest published by GitHub
@@ -351,6 +355,44 @@ The X11 global shortcut covers Proton games through XWayland. On native Wayland,
 the desktop's global-shortcut policy may prevent a global key; the overlay still
 works with the close button and the in-app screenshot path. The shortcut thread
 is stopped when the game ends or when the key changes.
+
+## PlayStation 2 with PCSX2
+
+Quark treats a PS2 disc image as a native game entry: there is no Wine prefix
+and no Proton runtime. Install PCSX2 (from your distribution, pcsx2.net or
+Flathub) and Quark finds `pcsx2-qt`, `pcsx2` or the Flatpak export
+`net.pcsx2.PCSX2`. If the emulator lives elsewhere, set its binary in
+**Settings → Stores & tools**.
+
+Use **+ → PlayStation 2 game (ISO)…** and pick an image. Supported formats are
+`.iso`, `.chd`, `.cso`, `.bin/.cue` and `.gz`; the serial number is read
+automatically from `SYSTEM.CNF` in uncompressed `.iso` files. For other formats,
+open the game's **PlayStation 2** tab and enter the serial by hand
+(`SLUS-20062`). The tab can also re-read the ISO, reload the cover and manage
+the RetroAchievements entry.
+
+Covers come from the community repository
+[xlenore/ps2-covers](https://github.com/xlenore/ps2-covers), at
+`covers/default/<SERIAL>.jpg`. A missing cover only leaves the monogram; it
+never blocks the launch.
+
+### RetroAchievements
+
+PCSX2 has its own RetroAchievements integration and remains responsible for
+signing in and unlocking achievements. Quark uses the official Web API only to
+read the same progress:
+
+1. Create an account on [retroachievements.org](https://retroachievements.org)
+   and copy the **Web API key** from your profile → **Keys**.
+2. Enter the username and key in **Settings → Stores & tools**.
+3. Open a PS2 game, then **PlayStation 2 → Search by title**. Quark queries the
+   PlayStation 2 game list and proposes the closest title; correct the RA ID if
+   needed (the API has no serial-number lookup).
+4. **Show achievements** loads the list in the game page. The in-game overlay
+   uses the same data the next time the game is launched.
+
+The key is stored locally in `config.json`, like the SteamGridDB key, and is
+only sent to `retroachievements.org`.
 
 ## Proton, umu and launch options
 

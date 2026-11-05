@@ -70,6 +70,8 @@ jobs:
             "dialog-install:--dialog install --providers-demo" \
             "dialog-updates:--dialog updates" \
             "dialog-game:--dialog game" \
+            "dialog-game-dll:--dialog game-dll" \
+            "dialog-game-ps2:--dialog game-ps2" \
             "dialog-logs:--dialog logs" \
             "dialog-add:--dialog add" \
             "dialog-artwork:--dialog artwork" \

@@ -1,85 +1,90 @@
-# Overlay, captures et succès
+# Overlay, screenshots and achievements
 
-> [Accueil](Home) · [Boutiques](Stores-and-Saves) · **Overlay et succès** ·
-> [Réglages](Settings) · [Dépannage](Troubleshooting)
+> [Home](Home) · [Stores](Stores-and-Saves) · **Overlay and achievements** ·
+> [Settings](Settings) · [Troubleshooting](Troubleshooting)
 
-## Overlay en jeu
+## In-game overlay
 
-Lancez un jeu depuis Quark, puis appuyez sur **`Maj+Retour arrière`**. Un panneau
-plein écran apparaît au-dessus du jeu avec :
+Launch a game from Quark, then press **`Shift+Backspace`**. A full-screen panel
+appears above the game with:
 
-- le nom du jeu et la boutique ;
-- le chronomètre de session ;
-- la progression des succès ;
-- la liste des succès, verrouillés ou non selon le réglage ;
-- la rareté et la progression quand la boutique les publie ;
-- un indicateur des captures récentes.
+- the game name and store;
+- the session timer;
+- achievement progress;
+- the achievement list, locked or not depending on the setting;
+- rarity and progress when the store publishes them;
+- an indicator for recent screenshots.
 
-Le même raccourci, `Échap` ou le bouton de fermeture referme l'overlay.
+The same shortcut, `Escape` or the close button dismisses the overlay.
 
-L'overlay n'est pas une fenêtre qui vole les clics en permanence : fermé, il
-reste transparent à la souris. Il n'est proposé que pour un jeu lancé par Quark,
-car Quark doit connaître le processus et la session.
+The overlay is not a window that constantly captures clicks: when closed, it
+stays transparent to the mouse. It is only offered for a game launched by Quark,
+because Quark must know the process and session.
 
-### Réglages
+### Settings
 
-**Paramètres → En jeu** :
+**Settings → In game**:
 
-- activer ou désactiver l'overlay ;
-- choisir le raccourci global ;
-- afficher ou masquer les succès verrouillés ;
-- utiliser des lignes compactes sans description ;
-- afficher ou masquer la progression et la rareté.
+- enable or disable the overlay;
+- choose the global shortcut;
+- show or hide locked achievements;
+- use compact rows without descriptions;
+- show or hide progress and rarity.
 
-Un outil global X11 est utilisé pour intercepter le raccourci. Les jeux Proton
-passent par XWayland et bénéficient du même chemin. Sur Wayland natif, le
-compositeur peut interdire les raccourcis globaux : l'overlay reste accessible
-par le bouton de fermeture et les captures intégrées, mais le raccourci peut ne
-pas fonctionner.
+A global X11 helper intercepts the shortcut. Proton games run through XWayland
+and use the same path. On native Wayland, the compositor may forbid global
+shortcuts: the overlay remains available through the close button and built-in
+screenshots, but the shortcut may not work.
 
-## Captures d'écran
+## Screenshots
 
-**`F12`** prend une capture du jeu en cours. Le fichier est écrit dans :
+**`F12`** takes a screenshot of the running game. The file is written to:
 
 ```text
-~/.local/share/quark/screenshots/<jeu>/
+~/.local/share/quark/screenshots/<game>/
 ```
 
-- Les captures Epic et GOG déclenchent un son court et une notification de
-  bureau.
-- Les captures Steam restent silencieuses.
-- La touche est modifiable dans **Paramètres → En jeu**.
-- La capture passe par le chemin X11/XWayland ; sur Wayland natif, le
-  compositeur peut demander une autorisation ou refuser.
+- Epic and GOG screenshots play a short sound and show a desktop notification.
+- Steam screenshots stay silent.
+- The key can be changed in **Settings → In game**.
+- Capture goes through X11/XWayland; on native Wayland the compositor may ask
+  for permission or refuse.
 
-Les captures ne sont pas envoyées sur un serveur. Elles restent des fichiers
-locaux.
+Screenshots are never uploaded to a server. They remain local files.
 
-## Succès Epic
+## Epic achievements
 
-Epic utilise Legendary :
+Epic uses Legendary:
 
 ```bash
 legendary achievements <app> --json
 ```
 
-Le parseur accepte du JSON entouré de lignes de journal, une liste nulle et
-l'ancien tableau texte (`Total achievements`, `Completed`, `In progress`). Si le
-cache de métadonnées est incomplet, Quark lance `legendary info` puis réessaie
-une fois. Une session absente ou un jeu sans succès produit un message explicite
-au lieu d'une erreur illisible.
+The parser accepts JSON surrounded by log lines, a null list and the older text
+table (`Total achievements`, `Completed`, `In progress`). If the metadata cache
+is incomplete, Quark runs `legendary info` and retries once. A missing session
+or a game without achievements produces an explicit message instead of an
+unreadable error.
 
-## Succès GOG
+## GOG achievements
 
-GOG interroge `gameplay.gog.com` avec la session gogdl. Les deux sources sont
-normalisées vers les mêmes lignes : icône, nom, description, date de
-déblocage, rareté et progression. Les icônes sont mises en cache localement.
+GOG queries `gameplay.gog.com` with the gogdl session. Both sources are
+normalized to the same rows: icon, name, description, unlock date, rarity and
+progress. Icons are cached locally.
 
-Un succès débloqué pendant la session peut porter un badge **session**.
+An achievement unlocked during the session can carry a **session** badge.
 
-## API de succès locale
+## PlayStation 2 and RetroAchievements
 
-Un jeu ou un script peut signaler un déblocage via le petit serveur local :
+A PS2 game with a RetroAchievements ID shows its progress in the same overlay.
+PCSX2 signs in and unlocks achievements itself; Quark reads the list through the
+official Web API. Configure the username and Web API key in **Settings → Stores
+& tools**, then link the game by title from its **PlayStation 2** tab. See
+[PlayStation 2 and RetroAchievements](PlayStation-2-and-RetroAchievements).
+
+## Local achievements API
+
+A game or script can report an unlock through the small local server:
 
 ```bash
 curl -X POST "$QUARK_ACHIEVEMENTS_URL" \
@@ -87,50 +92,51 @@ curl -X POST "$QUARK_ACHIEVEMENTS_URL" \
   -d '{"game":"'"$QUARK_GAME_ID"'","achievement":"ACH_FIRST","name":"First step"}'
 ```
 
-- Le serveur n'écoute que sur `127.0.0.1`.
-- Le jeton change à chaque lancement et est masqué dans le journal de session.
-- Les variables `QUARK_ACHIEVEMENTS_URL`, `QUARK_ACHIEVEMENTS_TOKEN` et
-  `QUARK_GAME_ID` sont fournies au jeu lancé.
-- Le jeu ne doit jamais journaliser le jeton.
+- The server listens only on `127.0.0.1`.
+- The token changes on every launch and is masked in the session log.
+- The launched game receives `QUARK_ACHIEVEMENTS_URL`,
+  `QUARK_ACHIEVEMENTS_TOKEN` and `QUARK_GAME_ID`.
+- The game must never log the token.
 
-Cette API est destinée aux jeux qui ne fournissent pas de source de succès
-exploitable. Elle ne remplace pas les succès officiels Steam.
+This API is for games that have no usable achievement source. It does not
+replace official Steam achievements.
 
-## Overlay Epic (EOS)
+## Epic overlay (EOS)
 
-Dans **Paramètres → Boutiques & outils → Overlay Epic (EOS)**, Quark peut
-télécharger une fois l'overlay EOS et l'activer dans le préfixe du jeu. C'est le
-mécanisme utilisé par Heroic : l'overlay Epic s'affiche en jeu avec
-`Maj+F3`, indépendamment de l'overlay Quark.
+In **Settings → Stores & tools → Epic overlay (EOS)**, Quark can download the EOS
+overlay once and enable it in the game prefix. This is the mechanism Heroic
+uses: the Epic overlay appears in-game with `Shift+F3`, independently of the
+Quark overlay.
 
-Cette fonctionnalité dépend du jeu, du préfixe et de la version d'EOS. Elle
-n'est pas nécessaire pour les succès : ceux-ci sont lus via Legendary, même
-sans overlay EOS.
+This feature depends on the game, prefix and EOS version. It is not required for
+achievements: they are read through Legendary even without the EOS overlay.
 
-## Succès Steam
+## Steam achievements
 
-Steam ne fournit pas de source lisible des succès sans session Steam. Quark
-affiche l'onglet Steam uniquement lorsqu'une source exploitable existe. Steam
-Cloud et les succès Steam restent gérés par le client Steam.
+Steam provides no readable achievement source without a Steam session. Quark
+shows the Steam tab only when a usable source exists. Steam Cloud and Steam
+achievements remain managed by the Steam client.
 
-## Dépannage
+## Troubleshooting
 
-| Problème | Piste |
+| Problem | Check |
 | --- | --- |
-| Le raccourci n'ouvre rien | Vérifier que le jeu a été lancé par Quark, puis le raccourci dans **En jeu**. Sur Wayland natif, essayer XWayland. |
-| L'overlay apparaît mais pas les succès | Vérifier la connexion Epic/GOG et le cache de métadonnées ; actualiser la fiche. |
-| `F12` ne fait rien | Vérifier la touche et les permissions X11/Wayland ; essayer une capture via le compositeur. |
-| Les captures ne sont pas au bon endroit | Vérifier `~/.local/share/quark/screenshots/` et les permissions du dossier. |
-| Un succès local n'arrive pas | Vérifier l'URL, le jeton et `QUARK_GAME_ID` ; le serveur n'écoute que sur la boucle locale. |
-| EOS ne s'affiche pas | Vérifier le préfixe actif, réinstaller l'overlay EOS, tester le jeu hors overlay Quark. |
+| The shortcut does nothing | Check that the game was launched by Quark, then the shortcut in **In game**. On native Wayland, try XWayland. |
+| The overlay appears but not achievements | Check the Epic/GOG connection and metadata cache; refresh the game page. |
+| `F12` does nothing | Check the key and X11/Wayland permissions; try a compositor screenshot. |
+| Screenshots are not where expected | Check `~/.local/share/quark/screenshots/` and folder permissions. |
+| A local achievement does not arrive | Check the URL, token and `QUARK_GAME_ID`; the server only listens on loopback. |
+| EOS does not appear | Check the active prefix, reinstall the EOS overlay and test the game without the Quark overlay. |
+| PS2 achievements are missing | Check the RA ID, the username and Web API key in **Stores & tools**. |
 
-## Voir aussi
+## See also
 
-- [Boutiques et sauvegardes](Stores-and-Saves)
-- [Proton, Wine et options](Proton-Wine-and-Launch-Options)
-- [Réglages](Settings)
-- [Dépannage](Troubleshooting)
+- [Stores and saves](Stores-and-Saves)
+- [PlayStation 2 and RetroAchievements](PlayStation-2-and-RetroAchievements)
+- [Proton, Wine and options](Proton-Wine-and-Launch-Options)
+- [Settings](Settings)
+- [Troubleshooting](Troubleshooting)
 
 ---
 
-[Accueil](Home) · [Boutiques](Stores-and-Saves) · [Réglages](Settings) · [Dépannage](Troubleshooting)
+[Home](Home) · [Stores](Stores-and-Saves) · [PlayStation 2](PlayStation-2-and-RetroAchievements) · [Settings](Settings)

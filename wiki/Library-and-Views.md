@@ -1,151 +1,142 @@
-# Bibliothèque et vues
+# Library and views
 
-> [Accueil](Home) · [Premier démarrage](Getting-Started) · **Bibliothèque** ·
-> [Boutiques](Stores-and-Saves) · [Réglages](Settings)
+> [Home](Home) · [Getting started](Getting-Started) · **Library** ·
+> [Stores](Stores-and-Saves) · [Settings](Settings)
 
-![Bibliothèque en liste](https://raw.githubusercontent.com/Matheotaku4/Quark-Launcher/main/docs/images/library-fr.png)
+![Library in list view](https://raw.githubusercontent.com/Matheotaku4/Quark-Launcher/main/docs/images/library-fr.png)
 
-## Deux présentations
+## Two layouts
 
-La bibliothèque se présente en **liste** ou en **grille**. Le choix est conservé
-dans la configuration et se change avec les deux icônes de la barre supérieure
-ou dans **Paramètres → Apparence → Affichage de la bibliothèque**.
+The library can be shown as a **list** or a **grid**. The choice is stored in
+the configuration and can be changed with the two top-bar icons or in
+**Settings → Appearance → Library layout**.
 
-- **Liste** : une ligne par jeu, avec icône carrée, nom, temps de jeu, dernier
-  usage, pastille de statut et marqueur de sélection. Les groupes peuvent être
-  repliés.
-- **Grille** : uniquement les couvertures, pour parcourir une grande
-  bibliothèque. Un clic ouvre la fiche du jeu en surimpression.
+- **List**: one row per game, with a square icon, name, playtime, last use,
+  status dot and selection marker. Groups can be collapsed.
+- **Grid**: covers only, for browsing a large library. Clicking opens the game
+  page as an overlay.
 
-Les jeux dont l'exécutable est introuvable sont signalés en rouge. Un jeu
-marqué comme en cours d'exécution garde son état visible même après un
-changement de page.
+Games whose executable is missing are shown in red. A game marked as running
+keeps that state visible after switching pages.
 
-## Rechercher
+## Search
 
-- `Ctrl+F` ou `/` place le curseur dans la recherche.
-- `Échap` vide la recherche.
-- La recherche ignore les accents et compare séparément le titre, le
-  développeur, les tags et les genres. Une requête ne peut donc pas correspondre
-  en dispersant ses lettres entre plusieurs champs.
-- Le bouton **Filtres** ouvre un panneau unique pour le statut, le genre Steam
-  et les tags personnels. Le nombre de filtres actifs apparaît sur le bouton et
-  **Tout effacer** les retire d'un coup.
+- `Ctrl+F` or `/` focuses the search field.
+- `Escape` clears the search.
+- Search ignores accents and compares the title, developer, tags and genres
+  separately. A query cannot match by scattering its letters across fields.
+- The **Filters** button opens one panel for status, Steam genre and personal
+  tags. The number of active filters appears on the button, and **Clear all**
+  removes them at once.
 
-## Trier, filtrer, grouper
+## Sort, filter, group
 
-**Tri** : nom, dernière session, date d'ajout ou temps de jeu.
+**Sort**: name, last session, date added or playtime.
 
-**Filtres** : le bouton en forme d'entonnoir, au-dessus de la liste, regroupe
-le statut (`À jouer`, `En cours`, `Terminé`, `Abandonné`), le genre Steam et le
-tag personnel. Les filtres se combinent, restent ouverts pendant la sélection et
-le bouton indique leur nombre. **Tout effacer** remet la liste complète. La
-recherche libre reste dans la barre du haut.
+**Filters**: the funnel button above the list groups status (`To play`,
+`Playing`, `Completed`, `Dropped`), Steam genre and personal tag. Filters
+combine, stay open while selecting and show their count on the button. **Clear
+all** restores the full library. Free-text search stays in the top bar.
 
-**Groupement** de la liste :
+List **grouping**:
 
-- par **statut** ;
-- par **boutique** ;
-- par **genre** ;
-- par **année de sortie** ;
-- ou aucun groupe, pour une liste continue.
+- by **status**;
+- by **store**;
+- by **genre**;
+- by **release year**;
+- or no group, for one continuous list.
 
-Les en-têtes de groupe affichent un compteur et peuvent être repliés. Le
-regroupement ne modifie pas l'ordre des jeux à l'intérieur d'un groupe.
+Group headers show a count and can be collapsed. Grouping does not change the
+order of games inside a group.
 
-## Vues enregistrées
+## Saved views
 
-Le menu **Vues** enregistre l'état courant : recherche, filtres, tri et
-groupement. Une vue peut être appliquée ou supprimée plus tard.
+The **Views** menu saves the current state: search, filters, sort and grouping.
+A view can be applied or deleted later.
 
-Trois vues de départ sont créées une seule fois : **À jouer**, **En cours** et
-**Terminés**. Si vous les supprimez, elles ne sont pas recréées au démarrage
-suivant. Les vues vides, les doublons et les filtres pointant vers un tag ou un
-genre supprimé sont nettoyés au chargement et à l'enregistrement. La liste est
-limitée à 32 vues.
+Three starter views are created once: **To play**, **Playing** and
+**Completed**. If you delete them, they are not recreated on the next start.
+Empty views, duplicates and filters pointing to a deleted tag or genre are
+cleaned on load and save. The list is limited to 32 views.
 
-## Accueil
+## Home
 
-L'accueil affiche un carrousel des jeux récemment joués, puis la bibliothèque en
-couvertures. Le carrousel peut défiler automatiquement ; le délai se règle dans
-**Paramètres → Apparence → Accueil**.
+Home shows a carousel of recently played games, then the library as covers. The
+carousel can advance automatically; the delay is set in
+**Settings → Appearance → Home**.
 
-Le bouton principal devient **Arrêter** quand le jeu tourne. Le temps de jeu, la
-dernière session, la note ProtonDB et le badge Linux natif sont visibles sur la
-bannière.
+The main button becomes **Stop** while the game is running. Playtime, last
+session, ProtonDB rating and the native Linux badge are visible on the banner.
 
-**Fond hero aléatoire** : quand l'option est active, Quark choisit une bannière
-de la bibliothèque au démarrage, la floute et l'affiche derrière l'accueil et la
-bibliothèque. Le rayon se règle de 2 à 30 px. Le tirage est fait une fois par
-session ; redémarrer Quark change l'image. Voir
-[Thèmes et apparence](Themes-and-Appearance).
+**Random hero background**: when enabled, Quark picks a banner from the library
+at startup, blurs it and draws it behind Home and Library. The radius is set
+from 2 to 30 px. The pick is made once per session; restarting Quark changes the
+image. See [Themes and appearance](Themes-and-Appearance).
 
-## Fiche d'un jeu
+## Game page
 
-La fiche montre :
+The game page shows:
 
-- la bannière, le logo ou le titre et les badges ProtonDB/Linux ;
-- le bouton **Jouer/Arrêter**, le temps de jeu et la dernière session ;
-- les onglets **Actualités**, **Succès** et **Historique** ;
-- les actions **Journaux**, **Informations**, **Personnaliser** et
-  **Paramètres du jeu**.
+- the banner, logo or title and the ProtonDB/Linux badges;
+- the **Play/Stop** button, playtime and last session;
+- the **News**, **Achievements** and **History** tabs;
+- the **Logs**, **Information**, **Customize** and **Game settings** actions.
 
-**Historique** résume les sessions, affiche les douze dernières semaines et
-liste les dernières parties. Un temps de jeu venant d'Epic ou GOG remplace le
-temps local quand la boutique le fournit ; Steam Cloud reste géré par Steam.
+**History** summarizes sessions, shows the last twelve weeks and lists recent
+play sessions. Playtime published by Epic or GOG replaces local playtime when
+the store provides it; Steam Cloud remains managed by Steam.
 
-**Personnaliser** permet de remplacer ou supprimer couverture, héros, logo et
-icône depuis SteamGridDB, Steam, la boutique ou un fichier local.
+**Customize** replaces or removes the cover, hero, logo and icon from
+SteamGridDB, Steam, the store or a local file.
 
-## Plusieurs installations pour un même jeu
+## Several installations for one game
 
-Un jeu possède des données communes (nom, artworks, notes, tags, statut,
-statistiques) et une ou plusieurs **installations**. Chaque installation porte
-sa boutique, son dossier, son exécutable, son préfixe, son dossier de
-sauvegarde cloud et son état d'installation.
+A game has shared data (name, artwork, notes, tags, status, statistics) and one
+or more **installations**. Each installation carries its store, folder,
+executable, prefix, cloud save folder and install state.
 
-- Sélectionner une installation change l'exécutable et le préfixe utilisés par
-  **Jouer**, sans toucher aux autres éditions.
-- Lorsqu'un ancien préfixe `~/.local/share/quark/prefixes/<jeu>` existe déjà, il
-  est réutilisé pour ne pas rendre les sauvegardes invisibles.
-- Une véritable seconde installation reçoit un préfixe `<jeu>-<boutique>`.
-- Les instantanés Ludusavi sont séparés par installation : deux éditions du
-  même titre ne partagent jamais un snapshot.
+- Selecting an installation changes the executable and prefix used by **Play**
+  without touching the other editions.
+- When an older `~/.local/share/quark/prefixes/<game>` prefix already exists, it
+  is reused so saves do not become invisible.
+- A real second installation gets a `<game>-<store>` prefix.
+- Ludusavi snapshots are separated by installation: two editions of the same
+  game never share a snapshot.
 
-## Sélection multiple et suppression
+## Multi-selection and removal
 
-`Ctrl+clic` marque plusieurs jeux. Le bouton de suppression ouvre une
-confirmation pour la sélection. La suppression d'une fiche ne supprime pas les
-fichiers du jeu : elle retire seulement l'entrée de la bibliothèque. Les
-préfixes, sauvegardes et installations restent sur le disque, sauf action
-explicite dans les outils concernés.
+`Ctrl+click` marks several games. The delete button opens a confirmation for the
+selection. Removing an entry does not delete the game files: it only removes the
+library entry. Prefixes, saves and installations stay on disk unless you
+explicitly remove them in the relevant tools.
 
-## Palette de commandes
+## Command palette
 
-`Ctrl+K` ouvre une palette qui cherche les pages, les actions et les jeux.
+`Ctrl+K` opens a palette that searches pages, actions and games.
 
-- Tapez pour filtrer ; les accents sont ignorés.
-- `↑`/`↓` déplacent la sélection, `Entrée` ouvre, `Échap` ferme.
-- Les actions dépendent du contexte : ouvrir les réglages, changer de page,
-  lancer un jeu, actualiser une boutique.
+- Type to filter; accents are ignored.
+- `↑`/`↓` move the selection, `Enter` opens, `Escape` closes.
+- Actions depend on context: open settings, switch page, launch a game or
+  refresh a store.
 
-## Raccourcis de la bibliothèque
+## Library shortcuts
 
-| Touche | Action |
+| Key | Action |
 | --- | --- |
-| `↑` / `↓` | Sélectionner le jeu précédent ou suivant |
-| `Entrée` | Lancer le jeu sélectionné |
-| `Ctrl+F` ou `/` | Rechercher |
-| `Échap` | Vider la recherche ou fermer un panneau |
-| `Ctrl+K` | Palette de commandes |
-| `Ctrl+Q` | Quitter Quark |
+| `↑` / `↓` | Select the previous or next game |
+| `Enter` | Launch the selected game |
+| `Ctrl+F` or `/` | Search |
+| `Escape` | Clear search or close a panel |
+| `Ctrl+K` | Command palette |
+| `Ctrl+Q` | Quit Quark |
 
-## Aller plus loin
+## Going further
 
-- [Boutiques et sauvegardes](Stores-and-Saves)
-- [Proton, Wine et options de lancement](Proton-Wine-and-Launch-Options)
-- [Réglages](Settings)
+- [Stores and saves](Stores-and-Saves)
+- [PlayStation 2 and RetroAchievements](PlayStation-2-and-RetroAchievements)
+- [Proton, Wine and launch options](Proton-Wine-and-Launch-Options)
+- [Settings](Settings)
 
 ---
 
-[Accueil](Home) · [Premier démarrage](Getting-Started) · [Boutiques](Stores-and-Saves) · [Réglages](Settings)
+[Home](Home) · [Getting started](Getting-Started) · [Stores](Stores-and-Saves) · [Settings](Settings)

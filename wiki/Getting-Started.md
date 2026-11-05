@@ -1,127 +1,135 @@
-# Premier démarrage
+# Getting started
 
-> [Accueil](Home) · [Installation](Installation) · **Premier démarrage** ·
-> [Bibliothèque](Library-and-Views) · [Réglages](Settings)
+> [Home](Home) · [Installation](Installation) · **Getting started** ·
+> [Library](Library-and-Views) · [Settings](Settings)
 
-![Parcours de bienvenue](https://raw.githubusercontent.com/Matheotaku4/Quark-Launcher/main/docs/images/onboarding-fr.png)
+![Welcome guide](https://raw.githubusercontent.com/Matheotaku4/Quark-Launcher/main/docs/images/onboarding-en.png)
 
-## Le parcours de bienvenue
+## The welcome guide
 
-Une configuration neuve ouvre un guide en trois étapes. Il n'est pas bloquant :
-**Passer** le ferme immédiatement.
+A new configuration opens a three-step guide. It is not blocking: **Skip**
+closes it immediately.
 
-1. **Découvrir** — ce que Quark réunit : bibliothèque locale et boutiques,
-   lancement Windows, boutiques, personnalisation.
-2. **Personnaliser** — langue de l'interface, page d'ouverture, thème, fond hero
-   aléatoire et son flou. Les changements sont appliqués en direct.
-3. **Commencer** — ajout du premier jeu, raccourcis clavier et bouton
-   **Terminer**.
+1. **Discover** — what Quark brings together: local games and stores, Windows
+   launch options, stores and customization.
+2. **Customize** — interface language, startup page, theme, random hero
+   background and its blur. Changes apply live.
+3. **Start** — add the first game, see the keyboard shortcuts and finish with
+   **Finish**.
 
-Le guide est marqué comme terminé dès qu'il est fermé ou terminé. Pour le
-revoir : **Paramètres → À propos → Revoir le guide de démarrage**.
+The guide is marked as done when it is closed or completed. To see it again:
+**Settings → About → Review the getting-started guide**.
 
-### Langue et page d'ouverture
+### Language and startup page
 
-- **Langue de l'interface** : français ou anglais. Ce réglage est distinct de la
-  langue demandée aux API Steam, qui sert aux descriptions de boutique.
-- **Page d'ouverture** : Accueil (par défaut), Bibliothèque, Boutique ou Mes
-  jeux. Elle est lue au démarrage suivant, pas à chaque clic.
-- Ces deux réglages restent modifiables dans **Paramètres → Apparence**.
+- **Interface language**: French or English. This is separate from the language
+  requested from Steam APIs, which controls store descriptions.
+- **Startup page**: Home (default), Library, Store or My games. It is read on the
+  next launch, not on every click.
+- Both settings remain available in **Settings → Appearance**.
 
-### Le résumé de version
+### The release summary
 
-Après une mise à jour, Quark affiche **Nouveautés de la version** une seule fois
-par version. Il résume les changements concrets en quelques phrases, sans
-journal de commits. Une fois fermé, la version lue est enregistrée dans
-`last_seen_version`. Pour le revoir : **Paramètres → À propos → Revoir les
-nouveautés**.
+After an update, Quark shows **What's new** once per version. It summarizes the
+concrete changes in a few sentences, not a commit log. Once closed, the version
+is stored in `last_seen_version`. To see it again: **Settings → About → Review
+what's new**.
 
-![Nouveautés de la 1.2.1](https://raw.githubusercontent.com/Matheotaku4/Quark-Launcher/main/docs/images/whats-new-fr.png)
+![What's new in 1.3.0](https://raw.githubusercontent.com/Matheotaku4/Quark-Launcher/main/docs/images/whats-new-en.png)
 
-## Ajouter un jeu
+## Add a game
 
-Le bouton **+** de la barre supérieure ouvre le formulaire d'ajout.
+The **+** button in the top bar opens the add form.
 
-### Jeu local
+### Local game
 
-1. Choisissez le nom : Quark peut le déduire du dossier.
-2. Sélectionnez l'exécutable. Un `.exe`, `.bat` ou `.msi` est reconnu comme jeu
-   Windows ; un binaire Linux est lancé nativement.
-3. Vérifiez le runtime : **Automatique** convient dans la plupart des cas.
-4. Ajoutez éventuellement des arguments, un préfixe, un anti-triche ou des
-   options graphiques.
-5. **Ajouter**. La fiche peut ensuite recevoir des artworks et des tags.
+1. Choose a name: Quark can infer it from the folder.
+2. Select the executable. A `.exe`, `.bat` or `.msi` is treated as a Windows
+   game; a Linux binary runs natively.
+3. Check the runtime: **Automatic** is right in most cases.
+4. Optionally add arguments, a prefix, anti-cheat or graphics options.
+5. **Add**. The game page can then receive artwork and tags.
 
-### Scanner un dossier
+### PlayStation 2 game
 
-**Ajouter → Scanner un dossier** parcourt un répertoire et propose les jeux
-détectés. Le scan ne déplace rien et n'installe rien : il crée des fiches vers
-les exécutables trouvés. Vérifiez toujours l'exécutable proposé avant d'ajouter,
-car un dossier peut contenir un lanceur, un installateur ou une version
-serveur.
+Use **+ → PlayStation 2 game (ISO)…** and pick an image. Quark reads the serial
+number from `SYSTEM.CNF` for uncompressed `.iso` files, fetches the community
+cover and launches PCSX2. `.chd`, `.cso`, `.bin/.cue` and `.gz` images are
+accepted with a serial entered by hand in the game's **PlayStation 2** tab.
 
-### Importer Steam
+See [PlayStation 2 and RetroAchievements](PlayStation-2-and-RetroAchievements).
 
-**Mes jeux** lit les bibliothèques Steam déjà installées et permet d'importer
-une fiche. Steam reste la source des fichiers ; Quark ne copie pas le jeu. Les
-jeux Steam qui ont un manifeste mais ne sont pas installés apparaissent comme
-non installés.
+### Scan a folder
 
-### Ajouter depuis Epic ou GOG
+**Add → Choose a folder…** walks a directory and proposes detected games. The
+scan moves and installs nothing: it creates entries pointing at the executables
+it found. Always check the proposed executable before adding, because a folder
+can contain a launcher, an installer or a server build.
 
-1. Installez Legendary et/ou gogdl depuis **Paramètres → Boutiques & outils**.
-2. Connectez le compte avec le code fourni par la page du navigateur.
-3. Ouvrez **Mes jeux**, choisissez la boutique, puis installez ou ouvrez le jeu.
+### Import Steam
 
-Les identifiants sont écrits par Legendary/gogdl dans leurs propres fichiers,
-jamais envoyés à un serveur Quark.
+**My games** reads already installed Steam libraries and lets you import an
+entry. Steam remains the source of the files; Quark does not copy the game.
+Steam games with a manifest but no installed files appear as not installed.
 
-## Choisir le bon mode de lancement
+### Add from Epic or GOG
 
-| Cas | Réglage |
+1. Install Legendary and/or gogdl from **Settings → Stores & tools**.
+2. Connect the account with the code shown by the browser page.
+3. Open **My games**, choose the store, then install or open the game.
+
+Credentials are written by Legendary/gogdl in their own files and never sent to
+a Quark server.
+
+## Choose the right launch mode
+
+| Case | Setting |
 | --- | --- |
-| Jeu Windows, Proton installé par Steam | **Automatique** ou un runtime Proton précis |
-| Jeu Windows sans Steam | Proton détecté, ou umu-launcher |
-| Jeu Linux natif | **Natif** (aucun Proton) |
-| Jeu ancien ou vidéo qui refuse DXVK | Essayer Proton, puis une variable de compatibilité |
-| Jeu avec anti-triche | Choisir le runtime anti-triche correspondant dans la fiche |
+| Windows game with Proton installed by Steam | **Automatic** or a specific Proton runtime |
+| Windows game without Steam | A detected Proton runtime, or umu-launcher |
+| Native Linux game | **Native** (no Proton) |
+| Old game or video that rejects DXVK | Try Proton, then a compatibility variable |
+| Game with anti-cheat | Choose the matching anti-cheat runtime on the game page |
+| PlayStation 2 disc image | PCSX2, selected automatically for the game |
 
-Le mode automatique regarde l'extension de l'exécutable : un `.exe` part en
-Proton, un binaire Linux reste natif. Pour forcer un choix, ouvrez la fiche du
-jeu puis **Paramètres du jeu**.
+Automatic mode looks at the executable extension: an `.exe` goes through
+Proton, a Linux binary stays native, and a disc image goes through PCSX2. To
+force a choice, open the game page and then **Game settings**.
 
-## Premier lancement utile
+## A useful first launch
 
-1. Ouvre **Paramètres → Nouveaux jeux** et choisis le Proton par défaut ainsi
-   que le dossier d'installation proposé pour Epic/GOG.
-2. Ouvre **Paramètres → En jeu** pour vérifier les raccourcis de l'overlay et
-   des captures.
-3. Installe Ludusavi depuis **Paramètres → Boutiques & outils** si vous voulez
-   des instantanés de sauvegarde locaux.
-4. Ajoute au moins un jeu, puis lance-le. La première création d'un préfixe
-   Proton peut prendre plusieurs dizaines de secondes ; c'est normal.
-5. Si le jeu démarre mais affiche un écran noir, consultez
-   [Proton, Wine et options](Proton-Wine-and-Launch-Options) avant de supprimer
-   le préfixe.
+1. Open **Settings → New games** and choose the default Proton runtime and the
+   installation folder proposed for Epic/GOG.
+2. Open **Settings → In game** to check the overlay and screenshot shortcuts.
+3. Install Ludusavi from **Settings → Stores & tools** if you want local save
+   snapshots.
+4. Add at least one game and launch it. The first Proton prefix can take several
+   tens of seconds to be created; this is normal.
+5. If the game starts but shows a black screen, read
+   [Proton, Wine and options](Proton-Wine-and-Launch-Options) before deleting the
+   prefix.
 
-## Où sont mes réglages ?
+## Where are my settings?
 
-Toutes les pages sont décrites dans [Réglages](Settings). Les plus utiles au
-début :
+Every page is described in [Settings](Settings). The most useful ones at the
+beginning:
 
-- **Apparence** : langue, thème, page d'ouverture, fond aléatoire, accueil.
-- **Nouveaux jeux** : valeurs recopiées dans chaque nouveau jeu. Ce ne sont pas
-  des réglages globaux : modifier un défaut ne change pas les jeux existants.
-- **Boutiques & outils** : comptes, synchronisation, Legendary, gogdl, Ludusavi.
-- **En jeu** : overlay, captures, succès, sauvegardes cloud.
+- **Appearance**: language, theme, startup page, random hero, home page.
+- **New games**: values copied into each new game. These are not global
+  settings: changing a default does not affect existing games.
+- **Stores & tools**: accounts, synchronization, Legendary, gogdl, Ludusavi,
+  PCSX2 and RetroAchievements.
+- **In game**: overlay, screenshots, achievements, cloud saves.
 
-## Et ensuite ?
+## What next?
 
-- [Bibliothèque et vues](Library-and-Views) pour organiser les jeux.
-- [Boutiques et sauvegardes](Stores-and-Saves) pour Epic, GOG et le cloud.
-- [Thèmes et apparence](Themes-and-Appearance) pour les 13 thèmes et le fond
-  hero.
+- [Library and views](Library-and-Views) to organize games.
+- [Stores and saves](Stores-and-Saves) for Epic, GOG and cloud saves.
+- [PlayStation 2 and RetroAchievements](PlayStation-2-and-RetroAchievements) for
+  PCSX2, covers and achievement progress.
+- [Themes and appearance](Themes-and-Appearance) for the thirteen themes and the
+  hero background.
 
 ---
 
-[Accueil](Home) · [Installation](Installation) · [Bibliothèque](Library-and-Views) · [Réglages](Settings)
+[Home](Home) · [Installation](Installation) · [Library](Library-and-Views) · [Settings](Settings)

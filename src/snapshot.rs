@@ -105,7 +105,7 @@ pub const HELP: &str = "\
       [--dialog none|add|artwork|exe|scan|settings|settings-defaults|\n\
       settings-ingame|settings-env|settings-artworks|settings-stats|\n\
       settings-disk|\n\
-      settings-about|game|logs|updates|customize|remove|steam|overlay|install|\n\
+      settings-about|game|game-ps2|game-dll|logs|updates|customize|remove|steam|overlay|install|\n\
       site-search|command|command-search|history|saved-views|onboarding|\n\
       onboarding-settings|whats-new]\n\
       [--hover X,Y] [--click X,Y] [--button left|right]\n\
@@ -862,7 +862,7 @@ fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
             customize.plan = Some(plan);
             app.customize = Some(customize);
         }
-        "game" => {
+        "game" | "game-dll" | "game-ps2" => {
             let id = app
                 .selected
                 .clone()
@@ -887,6 +887,81 @@ fn apply_dialog(app: &mut QuarkApp, dialog: &str) -> Result<(), String> {
             game.launch.prime = true;
             game.launch.wrapper = "env DXVK_HUD=0 %command%".to_string();
             game.proton_log = true;
+            if dialog == "game-ps2" {
+                game.name = "Shadow of the Colossus".to_string();
+                game.exe = "/data/demo-jeux/ps2/Shadow of the Colossus (USA).iso".to_string();
+                game.ps2 = Some(crate::config::Ps2Config {
+                    serial: "SCUS-97472".to_string(),
+                    ra_game_id: Some(238),
+                });
+                game.proton = crate::config::ProtonMode::Native;
+                app.game_dll_for = Some(game.id.clone());
+                app.game_dll_rows = crate::config::dll_overrides_from_env(&game.env);
+                app.game_tab = crate::app::GameTab::Ps2;
+                app.lib.settings.ra_username = "DemoPlayer".to_string();
+                app.lib.settings.ra_api_key = "demo".to_string();
+                // Le rendu hors écran n'a pas PCSX2 : un binaire neutre évite
+                // une alerte rouge qui n'a rien à voir avec la fiche testée.
+                app.lib.settings.pcsx2_path = "/bin/true".to_string();
+                let mut info = crate::providers::AchievementInfo {
+                    total: 3,
+                    unlocked: 1,
+                    rows: vec![
+                        crate::providers::AchievementRow {
+                            key: "1".to_string(),
+                            id: "1".to_string(),
+                            name: "The First Colossus".to_string(),
+                            description: "Topple the first giant.".to_string(),
+                            unlocked: true,
+                            progress: 1.0,
+                            session: false,
+                            rarity: Some(82.0),
+                            icon_url: None,
+                            icon_path: None,
+                        },
+                        crate::providers::AchievementRow {
+                            key: "2".to_string(),
+                            id: "2".to_string(),
+                            name: "Aerial Wanderer".to_string(),
+                            description: "Defeat a colossus without touching the ground."
+                                .to_string(),
+                            unlocked: false,
+                            progress: 0.0,
+                            session: false,
+                            rarity: Some(12.4),
+                            icon_url: None,
+                            icon_path: None,
+                        },
+                        crate::providers::AchievementRow {
+                            key: "3".to_string(),
+                            id: "3".to_string(),
+                            name: "Forbidden Land".to_string(),
+                            description: "Reach the far end of the bridge.".to_string(),
+                            unlocked: false,
+                            progress: 0.0,
+                            session: false,
+                            rarity: Some(47.0),
+                            icon_url: None,
+                            icon_path: None,
+                        },
+                    ],
+                };
+                info.normalize();
+                app.ps2_ra
+                    .insert(game.id.clone(), crate::app::AchievementsState::Ready(info));
+            }
+            if dialog == "game-dll" {
+                // Overrides déjà présents : l'onglet doit les reprendre, y
+                // compris l'entrée sans « = » utilisée par les anciennes configs.
+                game.env = vec![
+                    crate::config::EnvVar::new("DXVK_HUD", "fps"),
+                    crate::config::EnvVar::new("WINEDLLOVERRIDES", "winmm=n,b;steam_api64;dxgi=b"),
+                ];
+                game.dll_source = None;
+                app.game_dll_for = Some(game.id.clone());
+                app.game_dll_rows = crate::config::dll_overrides_from_env(&game.env);
+                app.game_tab = crate::app::GameTab::DllOverrides;
+            }
             app.game_link_for = Some(game.id.clone());
             app.game_link_query = game.name.clone();
             app.game_link_results = vec![
@@ -1465,6 +1540,13 @@ fn demo_library() -> Result<Library, String> {
                 let _ = std::fs::create_dir_all(dir);
             }
             let _ = std::fs::write(&path, b"demo");
+            if game.name == "The Witcher 3: Wild Hunt" {
+                if let Some(dir) = path.parent() {
+                    for dll in ["steam_api64.dll", "dxgi.dll", "d3d11.dll", "winmm.dll"] {
+                        let _ = std::fs::write(dir.join(dll), b"demo");
+                    }
+                }
+            }
         }
         game.exe = path.display().to_string();
     }
@@ -1812,7 +1894,6 @@ fn rasterize(
             if x_start >= x_end || y_start >= y_end {
                 continue;
             }
-
             let colors: [[u8; 4]; 3] = vertices.map(|v| v.color.to_array());
             let uvs = [vertices[0].uv, vertices[1].uv, vertices[2].uv];
             let clockwise = area < 0.0;

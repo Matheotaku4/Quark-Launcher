@@ -2,7 +2,10 @@
 //! confirmation de suppression. Les sélecteurs de fichiers sont ceux du système
 //! (XDG Desktop Portal), ouverts via `QuarkApp::pick_file` / `pick_directory`.
 
-use crate::app::{AddStep, PickerTarget, QuarkApp, SearchState, SettingsTab, UpdateState};
+use crate::app::{
+    AchievementsState, AddStep, GameTab, PickerTarget, QuarkApp, SearchState, SettingsTab,
+    UpdateState,
+};
 use crate::config::{
     self, AssetKind, EnvVar, GameStatus, ProtonMode, StartPage, ThemeMode, ViewMode,
 };
@@ -15,7 +18,7 @@ use crate::widgets::{self, Icon};
 use eframe::egui::{
     self, Align, Align2, Color32, FontId, Layout, Pos2, Rect, RichText, Sense, Stroke, Vec2,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 impl QuarkApp {
@@ -42,6 +45,7 @@ impl QuarkApp {
         let mut browse_exe = false;
         let mut browse_prefix = false;
         let mut browse_folder = false;
+        let mut browse_ps2 = false;
         let mut pick_artwork: Option<(AssetKind, usize)> = None;
         let mut finish_artwork = false;
         let mut scan_action = ScanAction::default();
@@ -54,7 +58,9 @@ impl QuarkApp {
         };
 
         let modal = egui::Modal::new(egui::Id::new("quark_add_game")).show(ctx, |ui| {
-            ui.set_min_width(660.0);
+            // Largeur fixe : une largeur élastique laisse les chemins et les
+            // libellés anglais agrandir la fenêtre au-delà d'un écran 1024 px.
+            ui.set_width((ctx.screen_rect().width() - 100.0).clamp(560.0, 760.0));
             ui.label(crate::i18n::rich(title).size(17.0).color(pal.text));
             ui.add_space(10.0);
 
@@ -175,6 +181,22 @@ impl QuarkApp {
                             &pal,
                             "Analyse un dossier, propose les jeux qu'il contient et te laisse \
                                  confirmer chaque titre (ou dire que ce n'est pas un jeu).",
+                        );
+                    });
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if widgets::ghost_button(ui, "Jeu PlayStation 2 (ISO)…", &pal, Icon::Folder)
+                            .clicked()
+                        {
+                            browse_ps2 = true;
+                        }
+                        widgets::info_button(
+                            ui,
+                            &pal,
+                            "Choisis une image .iso : Quark lit son numéro de série, récupère \
+                             la jaquette PS2 et lance le jeu avec PCSX2. Les formats .chd, \
+                             .cso et .bin/.cue sont acceptés, avec un numéro de série saisi à \
+                             la main.",
                         );
                     });
                 }
@@ -463,6 +485,9 @@ impl QuarkApp {
         if browse_folder {
             self.pick_directory(ctx, config::home_dir(), PickerTarget::ScanFolder);
         }
+        if browse_ps2 {
+            self.pick_file(ctx, config::home_dir(), PickerTarget::AddPs2Iso);
+        }
 
         if submit {
             let name = if self.add.name.trim().is_empty() {
@@ -486,6 +511,21 @@ impl QuarkApp {
                 game.steam_app_id = hit.steam_app_id;
                 game.sgdb_id = hit.sgdb_id;
             }
+            // Une image disque choisie par « Choisir l'exécutable » devient un
+            // jeu PS2 : Proton n'a rien à faire d'un ISO.
+            let ps2_serial = if crate::ps2::is_disc_image(std::path::Path::new(game.exe.trim())) {
+                let serial = crate::ps2::serial_from_iso(std::path::Path::new(game.exe.trim()))
+                    .unwrap_or_default();
+                game.ps2 = Some(crate::config::Ps2Config {
+                    serial: serial.clone(),
+                    ra_game_id: None,
+                });
+                game.proton = config::ProtonMode::Native;
+                game.prefix = None;
+                serial
+            } else {
+                String::new()
+            };
             let id = game.id.clone();
             let hit = self.add.hit.clone();
             self.lib.games.push(game);
@@ -508,6 +548,9 @@ impl QuarkApp {
                     Some(plan) => self.start_chosen_job(ctx, &id, hit.title.clone(), plan),
                     None => self.start_asset_job(ctx, &id, hit),
                 },
+                None if !ps2_serial.is_empty() => {
+                    self.queue_asset_job(ctx, &id, crate::app::AssetSource::Ps2(ps2_serial));
+                }
                 None => self.toast_info("Jeu ajouté sans artwork (assets manuels)"),
             }
         }
@@ -545,6 +588,7 @@ impl QuarkApp {
         let mut browse_prefix = false;
         let mut browse_install_dir = false;
         let mut redetect = false;
+        let mut browse_pcsx2 = false;
         let mut check_updates = false;
         let mut open_steam_import = false;
         let mut save_steam_key = false;
@@ -1503,6 +1547,108 @@ impl QuarkApp {
                         );
 
                         ui.add_space(10.0);
+                        section(ui, "PLAYSTATION 2 · PCSX2", &pal);
+                        ui.label(
+                            crate::i18n::rich(
+                                "Les jeux PS2 ajoutés depuis une image disque sont lancés par PCSX2. \
+                                 La jaquette vient du dépôt communautaire ps2-covers, classée par \
+                                 numéro de série.",
+                            )
+                            .size(11.5)
+                            .color(pal.text_dim),
+                        );
+                        let detected = crate::ps2::detect_emulator(&self.lib.settings);
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(
+                                crate::i18n::rich("Binaire PCSX2").size(12.0).color(pal.text_dim),
+                            );
+                            ui.add_sized(
+                                Vec2::new(360.0, 26.0),
+                                egui::TextEdit::singleline(&mut self.lib.settings.pcsx2_path)
+                                    .hint_text(crate::i18n::tr(
+                                        "auto · pcsx2-qt ou export Flatpak net.pcsx2.PCSX2",
+                                    )),
+                            );
+                            if widgets::ghost_button(ui, "Parcourir…", &pal, Icon::Folder).clicked()
+                            {
+                                browse_pcsx2 = true;
+                            }
+                            if widgets::ghost_button(ui, "Auto", &pal, Icon::Refresh).clicked() {
+                                self.lib.settings.pcsx2_path.clear();
+                                self.touch();
+                            }
+                            widgets::info_button(
+                                ui,
+                                &pal,
+                                "Vide, Quark cherche pcsx2-qt et pcsx2 dans le PATH puis \
+                                 l'export Flatpak net.pcsx2.PCSX2. Indique un chemin si \
+                                 l'émulateur est installé ailleurs.",
+                            );
+                        });
+                        match &detected {
+                            Some(path) => {
+                                ui.label(
+                                    crate::i18n::rich(format!("Détecté : {}", path.display()))
+                                        .size(10.5)
+                                        .color(pal.text_faint),
+                                );
+                            }
+                            None => {
+                                ui.label(
+                                    crate::i18n::rich(
+                                        "Aucun PCSX2 détecté. Installe-le depuis pcsx2.net ou \
+                                         indique son binaire ci-dessus.",
+                                    )
+                                    .size(10.5)
+                                    .color(pal.danger),
+                                );
+                            }
+                        }
+                        ui.add_space(10.0);
+                        section(ui, "RETROACHIEVEMENTS", &pal);
+                        ui.label(
+                            crate::i18n::rich(
+                                "PCSX2 gère lui-même la connexion et les déblocages. Quark lit la \
+                                 progression avec la clé Web API pour l'afficher dans la fiche du \
+                                 jeu et dans l'overlay.",
+                            )
+                            .size(11.5)
+                            .color(pal.text_dim),
+                        );
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(crate::i18n::rich("Pseudo").size(12.0).color(pal.text_dim));
+                            ui.add_sized(
+                                Vec2::new(220.0, 26.0),
+                                egui::TextEdit::singleline(&mut self.lib.settings.ra_username)
+                                    .hint_text(crate::i18n::tr("pseudo RetroAchievements")),
+                            );
+                            ui.label(
+                                crate::i18n::rich("Clé Web API").size(12.0).color(pal.text_dim),
+                            );
+                            ui.add_sized(
+                                Vec2::new(280.0, 26.0),
+                                egui::TextEdit::singleline(&mut self.lib.settings.ra_api_key)
+                                    .password(true)
+                                    .hint_text(crate::i18n::tr("profil → Keys")),
+                            );
+                            widgets::info_button(
+                                ui,
+                                &pal,
+                                "La clé se trouve sur retroachievements.org, dans ton profil → \
+                                 Keys. Elle reste dans config.json sur cet ordinateur et n'est \
+                                 jamais envoyée à un serveur Quark.",
+                            );
+                        });
+                        ui.label(
+                            crate::i18n::rich(
+                                "Ouvre la fiche d'un jeu PS2 pour chercher sa fiche \
+                                 RetroAchievements par titre, puis afficher sa progression.",
+                            )
+                            .size(10.5)
+                            .color(pal.text_faint),
+                        );
+
+                        ui.add_space(10.0);
                         section(ui, "OUTILS GÉRÉS PAR QUARK", &pal);
                         for tool in crate::providers::tools::ManagedToolId::ALL {
                             ui.horizontal_wrapped(|ui| {
@@ -1843,6 +1989,9 @@ impl QuarkApp {
                 self.runtimes.len()
             ));
             self.touch();
+        }
+        if browse_pcsx2 {
+            self.pick_file(ctx, PathBuf::from("/usr/bin"), PickerTarget::Pcsx2Path);
         }
         if check_updates {
             self.check_updates(ctx, false);
@@ -2256,14 +2405,34 @@ impl QuarkApp {
             self.game_link_loading = false;
             self.game_link_rx = None;
         }
+        // Les overrides sont repris de la configuration existante une fois par
+        // jeu ; ensuite l'onglet travaille sur ce brouillon.
+        if self.game_dll_for.as_deref() != Some(game.id.as_str()) {
+            self.game_dll_for = Some(game.id.clone());
+            self.game_dll_rows = config::dll_overrides_from_env(&game.env);
+            self.game_tab = GameTab::General;
+        }
+        if game.ps2.is_none() && self.game_tab == GameTab::Ps2 {
+            self.game_tab = GameTab::General;
+        }
         // La fiche enregistrée reste la référence pendant toute l'édition : un
         // « Lier » cliqué avant « Enregistrer » ne doit pas se comparer à lui-
         // même et doit donc déclencher le téléchargement des images.
-        let (original_app_id, original_sgdb_id) = self
+        let (original_app_id, original_sgdb_id, original_serial) = self
             .lib
             .get(&game.id)
-            .map(|saved| (saved.steam_app_id, saved.sgdb_id))
-            .unwrap_or((game.steam_app_id, game.sgdb_id));
+            .map(|saved| {
+                (
+                    saved.steam_app_id,
+                    saved.sgdb_id,
+                    saved
+                        .ps2
+                        .as_ref()
+                        .map(|ps2| ps2.serial.trim().to_string())
+                        .unwrap_or_default(),
+                )
+            })
+            .unwrap_or((game.steam_app_id, game.sgdb_id, String::new()));
         let link_results = self.game_link_results.clone();
         let link_warnings = self.game_link_warnings.clone();
         let link_loading = self.game_link_loading;
@@ -2275,23 +2444,51 @@ impl QuarkApp {
         let mut save = false;
         let mut browse_exe = false;
         let mut browse_prefix = false;
+        let mut browse_dll_source = false;
+        let mut ps2_read_serial = false;
+        let mut ps2_search_ra = false;
+        let mut ps2_fetch_ra = false;
+        let mut ps2_open_ra = false;
+        let mut ps2_cover = false;
         let mut remove = false;
         let mut refresh_meta = false;
 
         let modal = egui::Modal::new(egui::Id::new("quark_game_settings")).show(ctx, |ui| {
-                ui.set_min_width(660.0);
-                ui.label(
-                    crate::i18n::rich(format!("Paramètres · {}", game.name))
-                        .size(17.0)
-                        .color(pal.text),
-                );
+                // Largeur fixe : une largeur élastique laisse les chemins et les
+                // libellés anglais agrandir la fenêtre au-delà d'un écran 1024 px.
+                ui.set_width((ctx.screen_rect().width() - 100.0).clamp(560.0, 760.0));
+                let title = format!("{} · {}", crate::i18n::tr("Paramètres"), game.name);
+                ui.label(crate::i18n::rich(title).size(17.0).color(pal.text));
                 ui.add_space(10.0);
+                let mut switch_tab = None;
+                ui.horizontal(|ui| {
+                    for (tab, label) in GameTab::ALL {
+                        if tab == GameTab::Ps2 && game.ps2.is_none() {
+                            continue;
+                        }
+                        if widgets::chip(ui, label, self.game_tab == tab, &pal) {
+                            switch_tab = Some(tab);
+                        }
+                    }
+                });
+                if let Some(tab) = switch_tab {
+                    if tab != self.game_tab {
+                        // Le formulaire général peut avoir modifié
+                        // WINEDLLOVERRIDES : on relit avant d'afficher l'onglet.
+                        if tab == GameTab::DllOverrides {
+                            self.game_dll_rows = config::dll_overrides_from_env(&game.env);
+                        }
+                        self.game_tab = tab;
+                    }
+                }
+                ui.add_space(6.0);
                 // Même règle que les paramètres globaux : la page laisse la
                 // place aux boutons du bas, sans les recouvrir.
                 egui::ScrollArea::vertical()
                     .max_height((ctx.screen_rect().height() - 210.0).max(160.0))
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
+                if self.game_tab == GameTab::General {
                 section(ui, "LANCEMENT", &pal);
                 ui.label(crate::i18n::rich("Nom affiché").size(12.5).color(pal.text_dim));
                 ui.add(
@@ -2662,7 +2859,30 @@ impl QuarkApp {
                     .size(12.0)
                     .color(pal.text_dim),
                 );
-
+                } else if self.game_tab == GameTab::Ps2 {
+                    let ra_state = self.ps2_ra.get(&game.id).cloned();
+                    let settings = self.lib.settings.clone();
+                    ps2_editor(
+                        ui,
+                        &pal,
+                        &mut game,
+                        &settings,
+                        ra_state.as_ref(),
+                        &mut ps2_read_serial,
+                        &mut ps2_search_ra,
+                        &mut ps2_fetch_ra,
+                        &mut ps2_open_ra,
+                        &mut ps2_cover,
+                    );
+                } else {
+                    dll_overrides_editor(
+                        ui,
+                        &pal,
+                        &mut game,
+                        &mut self.game_dll_rows,
+                        &mut browse_dll_source,
+                    );
+                }
                 });
                 ui.add_space(16.0);
                 ui.horizontal(|ui| {
@@ -2743,6 +2963,54 @@ impl QuarkApp {
                 .unwrap_or_else(config::prefix_root);
             self.pick_directory(ctx, start, PickerTarget::GamePrefix);
         }
+        if browse_dll_source {
+            let start = game
+                .dll_source
+                .as_deref()
+                .filter(|p| !p.trim().is_empty())
+                .map(|p| PathBuf::from(config::expand_tilde(p)))
+                .unwrap_or_else(|| own_dir(&game.exe));
+            self.pick_directory(ctx, start, PickerTarget::GameDllSource);
+        }
+        if ps2_read_serial {
+            match crate::ps2::serial_from_iso(Path::new(game.exe.trim())) {
+                Ok(serial) => {
+                    if let Some(ps2) = game.ps2.as_mut() {
+                        ps2.serial = serial.clone();
+                    }
+                    self.toast_info(format!("Numéro de série PS2 : {serial}"));
+                }
+                Err(error) => self.toast_error(error),
+            }
+        }
+        if ps2_search_ra {
+            self.start_ps2_ra_search(ctx, &game.id, &game.name);
+        }
+        if ps2_fetch_ra {
+            match game.ps2.as_ref().and_then(|ps2| ps2.ra_game_id) {
+                Some(ra_id) => self.request_ps2_ra(ctx, &game.id, ra_id),
+                None => self.toast_error(
+                    "Cherche d'abord la fiche RetroAchievements ou saisis son identifiant",
+                ),
+            }
+        }
+        if ps2_open_ra && let Some(ra_id) = game.ps2.as_ref().and_then(|ps2| ps2.ra_game_id) {
+            crate::ps2::open_ra_page(ra_id);
+        }
+        if ps2_cover {
+            let serial = game
+                .ps2
+                .as_ref()
+                .map(|ps2| ps2.serial.trim().to_string())
+                .unwrap_or_default();
+            if serial.is_empty() {
+                self.toast_error("Saisis le numéro de série PS2 avant de charger la jaquette");
+            } else if crate::ps2::cover_url(&serial).is_none() {
+                self.toast_error("Numéro de série PS2 invalide (attendu : SLUS-12345)");
+            } else {
+                self.queue_asset_job(ctx, &game.id, crate::app::AssetSource::Ps2(serial));
+            }
+        }
         if remove {
             self.confirm_remove = vec![game.id.clone()];
             return;
@@ -2767,11 +3035,35 @@ impl QuarkApp {
             } else {
                 None
             };
+            // Une image disque choisie comme exécutable devient un jeu PS2 ;
+            // un numéro de série vide est retenté à l'enregistrement.
+            let image = std::path::PathBuf::from(game.exe.trim());
+            if game.ps2.is_none() && crate::ps2::is_disc_image(&image) {
+                let serial = crate::ps2::serial_from_iso(&image).unwrap_or_default();
+                game.ps2 = Some(crate::config::Ps2Config {
+                    serial,
+                    ra_game_id: None,
+                });
+                game.proton = config::ProtonMode::Native;
+                game.prefix = None;
+            } else if let Some(ps2) = game.ps2.as_mut()
+                && ps2.serial.trim().is_empty()
+            {
+                ps2.serial = crate::ps2::serial_from_iso(&image).unwrap_or_default();
+            }
+            let new_serial = game
+                .ps2
+                .as_ref()
+                .map(|ps2| ps2.serial.trim().to_string())
+                .unwrap_or_default();
             if let Some(slot) = self.lib.get_mut(&id) {
                 *slot = game;
             }
             self.touch();
             self.toast_info("Paramètres du jeu enregistrés");
+            if !new_serial.is_empty() && new_serial != original_serial {
+                self.queue_asset_job(ctx, &id, crate::app::AssetSource::Ps2(new_serial));
+            }
             if let Some(hit) = hit {
                 self.start_asset_job(ctx, &id, hit);
             }
@@ -3574,6 +3866,462 @@ fn tags_editor(ui: &mut egui::Ui, pal: &Palette, tags: &mut Vec<String>) {
         }
     });
     ui.data_mut(|data| data.insert_temp(buffer_id, buffer));
+}
+
+/// Onglet PlayStation 2 : série du disque, fiche RetroAchievements et
+/// progression. PCSX2 reste seul responsable de la connexion et des
+/// déblocages ; Quark ne fait que lire et afficher.
+fn ps2_editor(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    game: &mut crate::config::Game,
+    settings: &crate::config::Settings,
+    ra: Option<&AchievementsState>,
+    read_serial: &mut bool,
+    search_ra: &mut bool,
+    fetch_ra: &mut bool,
+    open_page: &mut bool,
+    fetch_cover: &mut bool,
+) {
+    let Some(ps2) = game.ps2.as_mut() else {
+        return;
+    };
+    section_hint(
+        ui,
+        "PLAYSTATION 2",
+        pal,
+        "Quark lance l'image disque avec PCSX2. Le numéro de série sert à retrouver la \
+         jaquette dans ps2-covers et à associer la fiche RetroAchievements ; il est lu \
+         automatiquement dans SYSTEM.CNF des fichiers .iso.",
+    );
+    ui.label(
+        crate::i18n::rich(format!("Image disque : {}", game.exe))
+            .size(11.5)
+            .color(pal.text_dim),
+    );
+    ui.add_space(6.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.label(
+            crate::i18n::rich("Numéro de série")
+                .size(12.0)
+                .color(pal.text_dim),
+        );
+        ui.add_sized(
+            Vec2::new(150.0, 26.0),
+            egui::TextEdit::singleline(&mut ps2.serial)
+                .hint_text(crate::i18n::tr("SLUS-20062"))
+                .font(egui::FontId::monospace(12.0)),
+        );
+        if widgets::ghost_button(ui, "Lire l'ISO", pal, Icon::Refresh).clicked() {
+            *read_serial = true;
+        }
+        if widgets::ghost_button(ui, "Charger la jaquette", pal, Icon::Download).clicked() {
+            *fetch_cover = true;
+        }
+        widgets::info_button(
+            ui,
+            pal,
+            "La jaquette vient de github.com/xlenore/ps2-covers (covers/default/SERIAL.jpg). \
+             Le numéro de série s'écrit avec un tiret, sans extension : SLUS-20062.",
+        );
+    });
+    if !ps2.serial.trim().is_empty() && !crate::ps2::is_serial(ps2.serial.trim()) {
+        ui.label(
+            crate::i18n::rich("Format attendu : quatre lettres, un tiret, cinq chiffres.")
+                .size(10.5)
+                .color(pal.danger),
+        );
+    }
+    ui.add_space(6.0);
+    let emulator = crate::ps2::detect_emulator(settings);
+    match emulator {
+        Some(path) => {
+            ui.label(
+                crate::i18n::rich(format!(
+                    "Émulateur : {} · {}",
+                    path.display(),
+                    crate::ps2::emulator_label(&path)
+                ))
+                .size(10.5)
+                .color(pal.text_faint),
+            );
+        }
+        None => {
+            ui.label(
+                crate::i18n::rich(
+                    "PCSX2 n'est pas détecté : installe-le ou indique son chemin dans \
+                     Paramètres → Boutiques & outils.",
+                )
+                .size(10.5)
+                .color(pal.danger),
+            );
+        }
+    }
+
+    section_hint(
+        ui,
+        "RETROACHIEVEMENTS",
+        pal,
+        "PCSX2 se connecte avec ton compte et débloque les succès. Quark lit la même \
+         progression avec la clé Web API pour l'afficher ici et dans l'overlay.",
+    );
+    let mut ra_id = ps2.ra_game_id.unwrap_or(0);
+    ui.horizontal_wrapped(|ui| {
+        ui.label(
+            crate::i18n::rich("Identifiant RA")
+                .size(12.0)
+                .color(pal.text_dim),
+        );
+        let changed = ui
+            .add_sized(
+                Vec2::new(110.0, 26.0),
+                egui::DragValue::new(&mut ra_id)
+                    .range(0..=u64::MAX)
+                    .speed(1.0)
+                    .prefix("#"),
+            )
+            .changed();
+        if changed {
+            ps2.ra_game_id = (ra_id > 0).then_some(ra_id);
+        }
+        if widgets::ghost_button(ui, "Chercher par titre", pal, Icon::Search).clicked() {
+            *search_ra = true;
+        }
+        let can_open = ps2.ra_game_id.is_some();
+        if ui
+            .add_enabled(
+                can_open,
+                egui::Button::new(crate::i18n::rich("Ouvrir la fiche"))
+                    .small()
+                    .fill(pal.surface)
+                    .stroke(Stroke::new(1.0_f32, pal.border)),
+            )
+            .clicked()
+        {
+            *open_page = true;
+        }
+        widgets::info_button(
+            ui,
+            pal,
+            "La recherche interroge la liste PlayStation 2 de RetroAchievements et propose \
+             la fiche dont le titre ressemble le plus. Corrige l'identifiant si besoin : \
+             l'API ne fournit pas de correspondance par numéro de série.",
+        );
+    });
+    ui.horizontal_wrapped(|ui| {
+        if widgets::accent_button(
+            ui,
+            Vec2::new(190.0, 28.0),
+            "Afficher les succès",
+            pal,
+            ps2.ra_game_id.is_some(),
+            Icon::Refresh,
+        )
+        .clicked()
+            && ps2.ra_game_id.is_some()
+        {
+            *fetch_ra = true;
+        }
+        if !crate::ps2::ra_configured(settings) {
+            ui.label(
+                crate::i18n::rich(
+                    "Pseudo et clé Web API à renseigner dans Paramètres → Boutiques & outils.",
+                )
+                .size(10.5)
+                .color(pal.text_faint),
+            );
+        }
+    });
+    ui.add_space(8.0);
+    match ra {
+        None => {
+            ui.label(
+                crate::i18n::rich("Aucune progression chargée pour ce jeu.")
+                    .size(11.5)
+                    .color(pal.text_faint),
+            );
+        }
+        Some(AchievementsState::Loading) => {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(
+                    crate::i18n::rich("Lecture de la progression RetroAchievements…")
+                        .size(11.5)
+                        .color(pal.text_dim),
+                );
+            });
+        }
+        Some(AchievementsState::Failed(error)) => {
+            ui.label(crate::i18n::rich(error).size(11.5).color(pal.danger));
+        }
+        Some(AchievementsState::Ready(info)) => {
+            ui.label(
+                crate::i18n::rich(format!(
+                    "{} / {} succès débloqués",
+                    info.unlocked, info.total
+                ))
+                .size(12.0)
+                .strong()
+                .color(pal.text),
+            );
+            if info.rows.is_empty() {
+                ui.label(
+                    crate::i18n::rich("Cette fiche ne publie aucun succès.")
+                        .size(11.0)
+                        .color(pal.text_faint),
+                );
+            } else {
+                egui::ScrollArea::vertical()
+                    .id_salt("quark_ps2_ra_rows")
+                    .max_height(210.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        for row in crate::providers::achievements::sorted_rows(&info.rows) {
+                            ui.horizontal(|ui| {
+                                let (dot, _) =
+                                    ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+                                ui.painter().circle_filled(
+                                    dot.center(),
+                                    4.0,
+                                    if row.unlocked { pal.accent } else { pal.border },
+                                );
+                                ui.vertical(|ui| {
+                                    ui.spacing_mut().item_spacing.y = 1.0;
+                                    ui.label(
+                                        crate::i18n::rich(&row.name).size(12.0).strong().color(
+                                            if row.unlocked { pal.text } else { pal.text_dim },
+                                        ),
+                                    );
+                                    if !row.description.is_empty() {
+                                        ui.label(
+                                            crate::i18n::rich(&row.description)
+                                                .size(10.5)
+                                                .color(pal.text_dim),
+                                        );
+                                    }
+                                });
+                            });
+                        }
+                    });
+            }
+        }
+    }
+}
+
+/// Onglet « DLL overrides » d'un jeu.
+///
+/// La source est le dossier de l'exécutable tant que l'utilisateur n'en choisit
+/// pas un autre. Les lignes déjà présentes dans `WINEDLLOVERRIDES` sont
+/// conservées, même si la DLL n'est plus dans le dossier : elles peuvent venir
+/// d'une configuration plus ancienne.
+fn dll_overrides_editor(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    game: &mut crate::config::Game,
+    rows: &mut Vec<config::DllOverride>,
+    browse: &mut bool,
+) {
+    section_hint(
+        ui,
+        "DLL OVERRIDES",
+        pal,
+        "WINEDLLOVERRIDES indique à Wine quelle version d'une DLL charger. « n » \
+         prend la DLL native livrée avec le jeu, « b » celle de Wine ; « n,b » essaie \
+         la native puis la builtin. Ces réglages sont propres à ce jeu.",
+    );
+    ui.label(
+        crate::i18n::rich("Dossier source des DLL")
+            .size(12.5)
+            .color(pal.text_dim),
+    );
+    let default_source = own_dir(&game.exe);
+    let mut source_text = game.dll_source.clone().unwrap_or_default();
+    ui.horizontal(|ui| {
+        let buttons = if game.dll_source.is_some() {
+            230.0
+        } else {
+            120.0
+        };
+        let field = (ui.available_width() - buttons).max(220.0);
+        let response = ui.add(
+            egui::TextEdit::singleline(&mut source_text)
+                .hint_text(default_source.display().to_string())
+                .desired_width(field),
+        );
+        if response.changed() {
+            game.dll_source = if source_text.trim().is_empty() {
+                None
+            } else {
+                Some(source_text.clone())
+            };
+        }
+        if widgets::ghost_button(ui, "Parcourir…", pal, Icon::Folder).clicked() {
+            *browse = true;
+        }
+        if game.dll_source.is_some()
+            && widgets::ghost_button(ui, "Dossier du jeu", pal, Icon::Refresh).clicked()
+        {
+            game.dll_source = None;
+        }
+    });
+    let source = game
+        .dll_source
+        .as_deref()
+        .filter(|path| !path.trim().is_empty())
+        .map(|path| PathBuf::from(config::expand_tilde(path)))
+        .unwrap_or_else(|| default_source.clone());
+    ui.label(
+        crate::i18n::rich(format!("Dossier analysé : {}", source.display()))
+            .size(11.0)
+            .color(pal.text_faint),
+    );
+    ui.add_space(8.0);
+
+    let mut changed = false;
+    if !source.is_dir() {
+        ui.label(
+            crate::i18n::rich("Dossier introuvable. Choisis un dossier source existant.")
+                .size(11.5)
+                .color(pal.danger),
+        );
+    } else {
+        match dll_files(&source) {
+            Ok(files) if files.is_empty() => {
+                ui.label(
+                    crate::i18n::rich("Aucune DLL trouvée dans ce dossier.")
+                        .size(11.5)
+                        .color(pal.text_faint),
+                );
+            }
+            Ok(files) => {
+                ui.label(
+                    crate::i18n::rich("DLL du dossier source")
+                        .size(11.5)
+                        .color(pal.text_dim),
+                );
+                egui::ScrollArea::vertical()
+                    .id_salt("quark_dll_source_files")
+                    .max_height(170.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        for file in files {
+                            let name = dll_file_stem(&file);
+                            let mut selected =
+                                rows.iter().any(|row| config::dll_name_eq(&row.name, name));
+                            if ui.checkbox(&mut selected, &file).changed() {
+                                if selected {
+                                    if !rows.iter().any(|row| config::dll_name_eq(&row.name, name))
+                                    {
+                                        rows.push(config::DllOverride::new(name));
+                                    }
+                                } else {
+                                    rows.retain(|row| !config::dll_name_eq(&row.name, name));
+                                }
+                                changed = true;
+                            }
+                        }
+                    });
+            }
+            Err(error) => {
+                ui.label(
+                    crate::i18n::rich(format!("Lecture du dossier impossible : {error}"))
+                        .size(11.5)
+                        .color(pal.danger),
+                );
+            }
+        }
+    }
+
+    section_hint(
+        ui,
+        "OVERRIDES ACTIFS",
+        pal,
+        "Les overrides déjà enregistrés sont repris ici. Coche « n » pour la DLL \
+         native, « b » pour la DLL de Wine ; les deux ensemble donnent « n,b ».",
+    );
+    if rows.is_empty() {
+        ui.label(
+            crate::i18n::rich("Aucun override. Coche une DLL ci-dessus ou ajoute-en une.")
+                .size(11.5)
+                .color(pal.text_faint),
+        );
+    } else {
+        let mut remove = None;
+        for index in 0..rows.len() {
+            ui.horizontal(|ui| {
+                let width = (ui.available_width() - 250.0).max(150.0);
+                let response = ui.add_sized(
+                    Vec2::new(width, 26.0),
+                    egui::TextEdit::singleline(&mut rows[index].name)
+                        .hint_text(crate::i18n::tr("Nom de la DLL")),
+                );
+                if response.changed() {
+                    changed = true;
+                }
+                let mut native = rows[index].native;
+                let mut builtin = rows[index].builtin;
+                if widgets::chip(ui, "n", native, pal) && (builtin || !native) {
+                    native = !native;
+                    changed = true;
+                }
+                if widgets::chip(ui, "b", builtin, pal) && (native || !builtin) {
+                    builtin = !builtin;
+                    changed = true;
+                }
+                rows[index].native = native;
+                rows[index].builtin = builtin;
+                if widgets::icon_button(ui, 24.0, Icon::Trash, pal, "Retirer cet override")
+                    .clicked()
+                {
+                    remove = Some(index);
+                }
+                ui.label(
+                    crate::i18n::rich("n = native · b = builtin")
+                        .size(10.0)
+                        .color(pal.text_faint),
+                );
+            });
+        }
+        if let Some(index) = remove {
+            rows.remove(index);
+            changed = true;
+        }
+    }
+    ui.horizontal(|ui| {
+        if widgets::ghost_button(ui, "Ajouter une DLL", pal, Icon::Plus).clicked() {
+            rows.push(config::DllOverride::new(""));
+            changed = true;
+        }
+        widgets::info_button(
+            ui,
+            pal,
+            "Le nom est écrit sans extension dans WINEDLLOVERRIDES. Les lignes vides \
+             sont ignorées à l'enregistrement.",
+        );
+    });
+    if changed {
+        config::set_dll_overrides(&mut game.env, rows);
+    }
+}
+
+fn dll_file_stem(file_name: &str) -> &str {
+    file_name
+        .strip_suffix(".dll")
+        .or_else(|| file_name.strip_suffix(".DLL"))
+        .unwrap_or(file_name)
+}
+
+fn dll_files(dir: &Path) -> Result<Vec<String>, String> {
+    let mut files = std::fs::read_dir(dir)
+        .map_err(|error| error.to_string())?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().is_file())
+        .map(|entry| entry.file_name().to_string_lossy().to_string())
+        .filter(|name| name.to_ascii_lowercase().ends_with(".dll"))
+        .collect::<Vec<_>>();
+    files.sort_by_key(|name| name.to_ascii_lowercase());
+    files.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+    Ok(files)
 }
 
 fn theme_card(ui: &mut egui::Ui, mode: ThemeMode, selected: bool) -> bool {

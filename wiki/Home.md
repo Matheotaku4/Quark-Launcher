@@ -1,85 +1,90 @@
 # Quark Wiki
 
-Quark est un launcher de jeux pour Linux, écrit en Rust avec egui. Il réunit les
-jeux locaux, Steam, Epic Games et GOG dans une seule bibliothèque, lance les jeux
-Windows avec Proton ou umu-launcher, et ajoute un overlay en jeu, des captures,
-des succès et des sauvegardes locales vérifiées.
+Quark is a game launcher for Linux, written in Rust with egui. It brings local
+games and your Steam, Epic Games and GOG libraries together, launches Windows
+games through Proton or umu-launcher, and adds an in-game overlay, screenshots,
+achievements and verified local saves.
 
-Cette documentation décrit **Quark 1.2.1**. Elle est aussi disponible dans le
-dépôt, sous [`wiki/`](https://github.com/Matheotaku4/Quark-Launcher/tree/main/wiki).
+This documentation describes **Quark 1.3.0**. It is also versioned in the
+repository under [`wiki/`](https://github.com/Matheotaku4/Quark-Launcher/tree/main/wiki).
 
-![Accueil de Quark](https://raw.githubusercontent.com/Matheotaku4/Quark-Launcher/main/docs/images/home-fr.png)
+![Quark home](https://raw.githubusercontent.com/Matheotaku4/Quark-Launcher/main/docs/images/home-en.png)
 
-## Par où commencer
+## Where to start
 
-| Besoin | Page |
+| I want to… | Page |
 | --- | --- |
-| Installer ou mettre à jour Quark | [Installation](Installation) |
-| Premier lancement, bibliothèque, réglages de base | [Premier démarrage](Getting-Started) |
-| Comprendre la liste, la grille, les vues et les filtres | [Bibliothèque et vues](Library-and-Views) |
-| Steam, Epic, GOG, comptes et sauvegardes cloud | [Boutiques et sauvegardes](Stores-and-Saves) |
-| Proton, umu, Wine, variables et options de lancement | [Proton, Wine et options](Proton-Wine-and-Launch-Options) |
-| Thèmes, langue, fond aléatoire, page d'ouverture | [Thèmes et apparence](Themes-and-Appearance) |
-| Overlay, captures et succès | [Overlay et succès](Overlay-and-Achievements) |
-| Toutes les pages de réglages | [Réglages](Settings) |
-| Un jeu ne démarre pas, un texte est absent, un souci de sauvegarde | [Dépannage](Troubleshooting) |
+| Install or update Quark | [Installation](Installation) |
+| Learn the first launch, library and basic settings | [Getting started](Getting-Started) |
+| Understand the list, grid, views and filters | [Library and views](Library-and-Views) |
+| Use Steam, Epic, GOG, accounts and cloud saves | [Stores and saves](Stores-and-Saves) |
+| Play PlayStation 2 games and read RetroAchievements | [PlayStation 2 and RetroAchievements](PlayStation-2-and-RetroAchievements) |
+| Configure Proton, umu, Wine, variables and launch options | [Proton, Wine and launch options](Proton-Wine-and-Launch-Options) |
+| Change themes, language, hero background or startup page | [Themes and appearance](Themes-and-Appearance) |
+| Use the overlay, screenshots and achievements | [Overlay and achievements](Overlay-and-Achievements) |
+| Find every settings page | [Settings](Settings) |
+| Fix a game that will not start, a missing text or a save issue | [Troubleshooting](Troubleshooting) |
 
-## Ce que fait Quark
+## What Quark does
 
-- **Une bibliothèque unique** : les jeux locaux et les jeux de boutique
-  partagent couverture, héros, logo, notes, tags, temps de jeu et statistiques.
-  Un même jeu peut avoir plusieurs installations sans apparaître deux fois.
-- **Steam, Epic Games et GOG** : Steam est lu depuis les dossiers locaux.
-  Legendary gère Epic, gogdl gère GOG. Les mots de passe ne passent jamais par
-  Quark ; seuls les jetons écrits par ces outils restent sur la machine.
-- **Proton sans ligne de commande** : runtime par jeu, préfixe, GameMode,
-  MangoHud, gamescope, PRIME, wrapper libre, variables d'environnement,
-  runtimes anti-triche et umu-launcher.
-- **Un vrai overlay** : `Maj+Retour arrière` ouvre un panneau au-dessus du jeu,
-  `F12` prend une capture. Les succès Epic et GOG sont normalisés dans le même
-  affichage.
-- **Sauvegardes** : synchronisation cloud Epic/GOG et instantanés Ludusavi
-  vérifiés avant et après une session.
-- **Une interface réglable** : 13 thèmes sombres, français ou anglais, liste ou
-  grille, accueil personnalisable, fond hero aléatoire flouté, palette `Ctrl+K`.
-- **Un launcher, pas une boutique** : Quark n'achète rien et ne télécharge aucun
-  jeu depuis un site tiers. Les résultats de recherche ouvrent le navigateur.
+- **One library.** Local and store games share covers, hero images, logos,
+  notes, tags, playtime and statistics. A game can have several installations
+  without appearing twice.
+- **Steam, Epic Games and GOG.** Steam is read from local libraries. Legendary
+  manages Epic and gogdl manages GOG. Passwords never pass through Quark; only
+  the tokens written by those tools stay on the machine.
+- **Proton without command lines.** Per-game runtime, prefix, GameMode,
+  MangoHud, gamescope, PRIME, a free wrapper command, environment variables,
+  anti-cheat runtimes and umu-launcher.
+- **PlayStation 2 through PCSX2.** A disc image becomes a normal library entry
+  with serial detection, community covers and RetroAchievements progress,
+  without creating a Wine prefix for the emulator.
+- **A real overlay.** `Shift+Backspace` opens a panel above the game and `F12`
+  takes a screenshot. Epic and GOG achievements share the same view.
+- **Saves.** Epic/GOG cloud synchronization and Ludusavi snapshots verified
+  before and after a session.
+- **A configurable interface.** Thirteen dark themes, French or English, list or
+  grid, a customizable home page, a random blurred hero and a `Ctrl+K` command
+  palette.
+- **A launcher, not a store.** Quark never buys anything and never downloads a
+  game from a third-party site. Store search results open in your browser.
 
-## Raccourcis essentiels
+## Essential shortcuts
 
-| Raccourci | Action |
+| Shortcut | Action |
 | --- | --- |
-| `Ctrl+K` | Palette de commandes : pages, actions et jeux |
-| `Ctrl+F` ou `/` | Chercher dans la bibliothèque |
-| `Échap` | Fermer une recherche, un panneau ou l'overlay |
-| `Entrée` | Lancer le jeu sélectionné |
-| `Flèches` | Naviguer dans la bibliothèque |
-| `Maj+Retour arrière` | Ouvrir ou fermer l'overlay en jeu |
-| `F12` | Capture d'écran du jeu en cours |
-| `Ctrl+Q` | Quitter réellement Quark |
+| `Ctrl+K` | Command palette: pages, actions and games |
+| `Ctrl+F` or `/` | Search the library |
+| `Escape` | Close a search, panel or the overlay |
+| `Enter` | Launch the selected game |
+| Arrow keys | Move through the library |
+| `Shift+Backspace` | Open or close the in-game overlay |
+| `F12` | Screenshot the running game |
+| `Ctrl+Q` | Quit Quark |
 
-## État de cette documentation
+## About this documentation
 
-- Les captures proviennent du mode `--demo` : les jaquettes sont des
-  remplacements volontairement neutres, pas les artworks réels des jeux.
-- Les comptes Epic/GOG et un serveur graphique réel ne sont pas disponibles dans
-  l'environnement de construction. Les chemins de code, migrations et erreurs
-  sont testés, mais un essai manuel avec un vrai compte reste recommandé.
-- Le wiki GitHub est un dépôt séparé. Le publier demande une authentification
-  GitHub avec accès au wiki ; le contenu source est versionné ici pour être
-  synchronisé dès que cet accès est disponible.
+- Screenshots come from the `--demo` mode: their covers are deliberately
+  neutral placeholders, not the real game artwork.
+- Epic/GOG accounts and a real graphical server are not available in the build
+  environment. Code paths, migrations and errors are tested, but a manual check
+  with a real account is still recommended.
+- The GitHub wiki is a separate repository. Publishing it needs GitHub
+  authentication with wiki access; the source is versioned here so it can be
+  synchronized as soon as that access is available.
 
 ## Licence
 
-Quark est distribué sous licence MIT. La police Archivo est sous SIL Open Font
-License et les icônes Lucide sous ISC. Voir
+Quark is distributed under the MIT licence. The Archivo font is under the SIL
+Open Font License and the Lucide icons under ISC. See
 [`assets/fonts/`](https://github.com/Matheotaku4/Quark-Launcher/tree/main/assets/fonts)
-et les notes de version pour les fichiers exacts.
+and the release notes for the exact files.
 
 ---
 
-[Installation](Installation) · [Premier démarrage](Getting-Started) ·
-[Bibliothèque](Library-and-Views) · [Boutiques](Stores-and-Saves) ·
-[Proton et Wine](Proton-Wine-and-Launch-Options) ·
-[Thèmes](Themes-and-Appearance) · [Overlay](Overlay-and-Achievements) ·
-[Réglages](Settings) · [Dépannage](Troubleshooting)
+[Installation](Installation) · [Getting started](Getting-Started) ·
+[Library](Library-and-Views) · [Stores](Stores-and-Saves) ·
+[PlayStation 2](PlayStation-2-and-RetroAchievements) ·
+[Proton and Wine](Proton-Wine-and-Launch-Options) ·
+[Themes](Themes-and-Appearance) · [Overlay](Overlay-and-Achievements) ·
+[Settings](Settings) · [Troubleshooting](Troubleshooting)

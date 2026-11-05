@@ -264,6 +264,143 @@ impl EnvVar {
     }
 }
 
+/// Variable Wine qui porte les overrides de DLL d'un jeu.
+pub const DLL_OVERRIDES_VAR: &str = "WINEDLLOVERRIDES";
+
+/// Une DLL surchargée dans `WINEDLLOVERRIDES`.
+///
+/// `native` correspond à `n` (DLL fournie avec le jeu), `builtin` à `b`
+/// (DLL de Wine). Les deux peuvent être actifs : Wine essaie alors `n` puis `b`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DllOverride {
+    pub name: String,
+    pub native: bool,
+    pub builtin: bool,
+}
+
+impl DllOverride {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            native: true,
+            builtin: false,
+        }
+    }
+
+    /// Ordre demandé à Wine, au format `WINEDLLOVERRIDES`.
+    pub fn modes(&self) -> &'static str {
+        match (self.native, self.builtin) {
+            (true, true) => "n,b",
+            (true, false) => "n",
+            (false, true) => "b",
+            (false, false) => "n,b",
+        }
+    }
+}
+
+/// Compare deux noms de DLL en ignorant la casse et le suffixe `.dll`, que
+/// Wine accepte mais que le dossier source affiche naturellement.
+pub fn dll_name_eq(left: &str, right: &str) -> bool {
+    fn stem(name: &str) -> &str {
+        let name = name.trim();
+        name.strip_suffix(".dll")
+            .or_else(|| name.strip_suffix(".DLL"))
+            .unwrap_or(name)
+    }
+    stem(left).eq_ignore_ascii_case(stem(right))
+}
+
+/// Lit `WINEDLLOVERRIDES` (dernière valeur gagnante, comme au lancement).
+/// Une entrée sans `=`, comme `steam_api64`, reprend l'ordre par défaut `n,b`.
+pub fn parse_dll_overrides(value: &str) -> Vec<DllOverride> {
+    let mut out: Vec<DllOverride> = Vec::new();
+    for raw in value.split(';') {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        let (name, modes) = raw.split_once('=').unwrap_or((raw, "n,b"));
+        let name = name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        let mut native = false;
+        let mut builtin = false;
+        for mode in modes.split(',').map(str::trim) {
+            match mode.to_ascii_lowercase().as_str() {
+                "n" | "native" => native = true,
+                "b" | "builtin" => builtin = true,
+                _ => {}
+            }
+        }
+        if !native && !builtin {
+            native = true;
+            builtin = true;
+        }
+        let entry = DllOverride {
+            name: name.to_string(),
+            native,
+            builtin,
+        };
+        if let Some(existing) = out.iter_mut().find(|row| dll_name_eq(&row.name, name)) {
+            *existing = entry;
+        } else {
+            out.push(entry);
+        }
+    }
+    out
+}
+
+/// Overrides déjà enregistrés dans les variables d'environnement du jeu.
+pub fn dll_overrides_from_env(env: &[EnvVar]) -> Vec<DllOverride> {
+    env.iter()
+        .rev()
+        .find(|var| var.name.eq_ignore_ascii_case(DLL_OVERRIDES_VAR))
+        .map(|var| parse_dll_overrides(&var.value))
+        .unwrap_or_default()
+}
+
+/// Sérialise les overrides dans l'ordre affiché, en ignorant les lignes vides.
+pub fn dll_overrides_value(overrides: &[DllOverride]) -> String {
+    overrides
+        .iter()
+        .filter_map(|row| {
+            let name = row.name.trim();
+            (!name.is_empty()).then(|| format!("{name}={}", row.modes()))
+        })
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+/// Remplace `WINEDLLOVERRIDES` sans toucher aux autres variables. Une liste
+/// vide retire la variable, ce qui rend à Wine son comportement par défaut.
+pub fn set_dll_overrides(env: &mut Vec<EnvVar>, overrides: &[DllOverride]) {
+    let value = dll_overrides_value(overrides);
+    if value.is_empty() {
+        env.retain(|var| !var.name.eq_ignore_ascii_case(DLL_OVERRIDES_VAR));
+        return;
+    }
+    let mut inserted = false;
+    env.retain(|var| {
+        if !var.name.eq_ignore_ascii_case(DLL_OVERRIDES_VAR) {
+            return true;
+        }
+        if inserted {
+            return false;
+        }
+        inserted = true;
+        true
+    });
+    if let Some(var) = env
+        .iter_mut()
+        .find(|var| var.name.eq_ignore_ascii_case(DLL_OVERRIDES_VAR))
+    {
+        var.value = value;
+    } else {
+        env.push(EnvVar::new(DLL_OVERRIDES_VAR, value));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Réglages
 // ---------------------------------------------------------------------------
@@ -852,6 +989,12 @@ pub struct Settings {
     pub hero_background_blur: f32,
     /// Clé API SteamGridDB (https://www.steamgriddb.com/profile/preferences/api).
     pub sgdb_api_key: String,
+    /// Chemin explicite de PCSX2. Vide = détection dans le PATH et Flatpak.
+    pub pcsx2_path: String,
+    /// Pseudo RetroAchievements, utilisé avec la clé Web API ci-dessous.
+    pub ra_username: String,
+    /// Clé Web API RetroAchievements (profil → Keys).
+    pub ra_api_key: String,
     /// Langue demandée à l'API Steam (storesearch).
     pub language: String,
     /// Pays demandé à l'API Steam (storesearch).
@@ -950,6 +1093,9 @@ impl Default for Settings {
             hero_background: false,
             hero_background_blur: 14.0,
             sgdb_api_key: String::new(),
+            pcsx2_path: String::new(),
+            ra_username: String::new(),
+            ra_api_key: String::new(),
             language: "french".to_string(),
             country: "FR".to_string(),
             default_proton: None,
@@ -1135,6 +1281,17 @@ impl Installation {
     }
 }
 
+/// Informations propres à un jeu PlayStation 2 émulé par PCSX2.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct Ps2Config {
+    /// Numéro de série du disque (`SLUS-20062`), lu dans `SYSTEM.CNF`.
+    pub serial: String,
+    /// Identifiant de la fiche RetroAchievements, choisi par titre puis
+    /// conservé : l'API ne permet pas de le déduire du numéro de série.
+    pub ra_game_id: Option<u64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Game {
@@ -1157,6 +1314,12 @@ pub struct Game {
     /// Variables d'environnement propres au jeu (prioritaires sur celles des
     /// réglages généraux).
     pub env: Vec<EnvVar>,
+    /// Dossier analysé pour proposer des DLL dans l'onglet « DLL overrides ».
+    /// Vide = dossier de l'exécutable du jeu.
+    pub dll_source: Option<String>,
+    /// Présent pour un jeu PlayStation 2 lancé par PCSX2. `exe` pointe alors
+    /// sur l'image disque, pas sur un binaire Windows.
+    pub ps2: Option<Ps2Config>,
     /// Runtime anti-triche à utiliser pour ce jeu (aucun par défaut).
     pub anticheat: AnticheatMode,
     /// Options de lancement graphiques (GameMode, MangoHud, gamescope…).
@@ -1205,6 +1368,8 @@ impl Default for Game {
             proton: ProtonMode::Default,
             prefix: None,
             env: Vec::new(),
+            dll_source: None,
+            ps2: None,
             anticheat: AnticheatMode::None,
             launch: LaunchOptions::default(),
             umu: false,
@@ -2396,6 +2561,23 @@ mod tests {
     }
 
     #[test]
+    fn un_jeu_ps2_garde_son_serial_et_sa_fiche_ra() {
+        let mut game = Game::new("Shadow of the Colossus", "/jeux/shadow.iso");
+        assert!(game.ps2.is_none());
+        game.ps2 = Some(Ps2Config {
+            serial: "SCUS-97472".to_string(),
+            ra_game_id: Some(238),
+        });
+        let text = serde_json::to_string(&game).unwrap();
+        let decoded: Game = serde_json::from_str(&text).unwrap();
+        assert_eq!(decoded.ps2, game.ps2);
+        // Une configuration 1.2.1 ne contient pas `ps2` : le champ reste
+        // optionnel et ne casse pas le chargement.
+        let old: Game = serde_json::from_str(r#"{"name":"Old","exe":"/old"}"#).unwrap();
+        assert!(old.ps2.is_none());
+    }
+
+    #[test]
     fn prefix_sans_reglage_est_propre_au_jeu() {
         let mut settings = Settings::default();
         settings.default_prefix = None;
@@ -2411,6 +2593,7 @@ mod tests {
         let json = r#"{ "name": "Vieux jeu", "exe": "/tmp/vieux.exe" }"#;
         let game: Game = serde_json::from_str(json).unwrap();
         assert!(game.env.is_empty());
+        assert!(game.dll_source.is_none());
         let settings: Settings = serde_json::from_str(r#"{ "language": "english" }"#).unwrap();
         assert!(settings.default_env.is_empty());
     }
@@ -2438,6 +2621,55 @@ mod tests {
         assert!(EnvVar::parse("WINEDLLOVERRIDES").is_none());
         assert!(EnvVar::parse("=valeur").is_none());
         assert!(!EnvVar::new("  ", "x").is_valid());
+    }
+
+    #[test]
+    fn les_overrides_de_dll_existants_sont_relus() {
+        let rows = parse_dll_overrides("winmm=n,b;steam_api64;dxvk=b;winmm=b");
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].name, "winmm");
+        // Dernière occurrence gagnante, comme dans launch_env.
+        assert!(!rows[0].native);
+        assert!(rows[0].builtin);
+        // Entrée sans « = » : ordre par défaut native puis builtin.
+        assert_eq!(rows[1].name, "steam_api64");
+        assert!(rows[1].native && rows[1].builtin);
+        assert_eq!(rows[2].modes(), "b");
+        // Les noms avec extension restent comparables au dossier source.
+        assert!(dll_name_eq("steam_api64.dll", "steam_api64"));
+        assert!(!dll_name_eq("winmm", "winmmx"));
+    }
+
+    #[test]
+    fn les_overrides_de_dll_remplacent_la_variable_sans_toucher_aux_autres() {
+        let mut env = vec![
+            EnvVar::new("DXVK_HUD", "fps"),
+            EnvVar::new("WINEDLLOVERRIDES", "winmm=n"),
+            EnvVar::new("winedlloverrides", "dxgi=b"),
+        ];
+        let rows = vec![
+            DllOverride {
+                name: "steam_api64".to_string(),
+                native: true,
+                builtin: true,
+            },
+            DllOverride {
+                name: "dxgi".to_string(),
+                native: false,
+                builtin: true,
+            },
+        ];
+        set_dll_overrides(&mut env, &rows);
+        assert_eq!(env.len(), 2);
+        assert_eq!(env[0].name, "DXVK_HUD");
+        assert_eq!(env[1].name, DLL_OVERRIDES_VAR);
+        assert_eq!(env[1].value, "steam_api64=n,b;dxgi=b");
+        assert_eq!(dll_overrides_from_env(&env), rows);
+
+        // Liste vide : la variable disparaît, pas les autres.
+        set_dll_overrides(&mut env, &[]);
+        assert_eq!(env.len(), 1);
+        assert_eq!(env[0].name, "DXVK_HUD");
     }
 
     #[test]

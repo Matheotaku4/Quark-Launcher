@@ -21,6 +21,8 @@ pub struct Target {
     pub key: Option<ProviderGameKey>,
     /// Identifiant de la fiche Quark (pont des succès).
     pub game_id: String,
+    /// Fiche RetroAchievements d'un jeu PS2, en l'absence de boutique.
+    pub ra_game_id: Option<u64>,
     pub started: Instant,
 }
 
@@ -207,6 +209,16 @@ impl Overlay {
 
     pub fn target_key(&self) -> Option<ProviderGameKey> {
         self.target.as_ref().and_then(|target| target.key.clone())
+    }
+
+    /// Fiche RetroAchievements et identifiant Quark du jeu visé, quand il n'y a
+    /// pas de fiche de boutique. Le jeu PS2 peut ainsi alimenter l'overlay.
+    pub fn target_ra(&self) -> Option<(String, u64)> {
+        self.target.as_ref().and_then(|target| {
+            target
+                .ra_game_id
+                .map(|ra_id| (target.game_id.clone(), ra_id))
+        })
     }
 
     /// Affiche soit l'overlay complet (ouvert), soit un petit toast de succès
@@ -1140,6 +1152,7 @@ mod tests {
                 product_id: "app_123".into(),
             }),
             game_id: "quark-game".into(),
+            ra_game_id: None,
             started: Instant::now(),
         };
         let path = screenshot_path(&target);

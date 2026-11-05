@@ -196,7 +196,7 @@ impl QuarkApp {
 
         let settings = self.lib.settings.clone();
         let native = proton::resolve(&game, &settings, &self.runtimes)
-            .map(|resolved| matches!(resolved.kind, LaunchKind::Native))
+            .map(|resolved| matches!(resolved.kind, LaunchKind::Native | LaunchKind::Emulator))
             .unwrap_or_else(|_| game.is_native());
         let running = self.is_running(&id);
         let running_secs = self.running_since(&id);

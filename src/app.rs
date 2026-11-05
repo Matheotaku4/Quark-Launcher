@@ -2,7 +2,8 @@
 
 use crate::artwork::{self, AssetPlan, GameMetadata, SearchHit, SearchOutcome};
 use crate::config::{
-    Artwork, AssetKind, Game, Library, ProtonMode, StartPage, ThemeMode, ViewMode, human_playtime,
+    Artwork, AssetKind, DllOverride, Game, Library, ProtonMode, StartPage, ThemeMode, ViewMode,
+    human_playtime,
 };
 use crate::disk::{self, DiskReport};
 use crate::i18n;
@@ -297,6 +298,8 @@ pub enum AssetSource {
     Auto(SearchHit),
     /// Choix manuels de l'utilisateur, les autres propositions restant en secours.
     Chosen(AssetPlan, String),
+    /// Jaquette PS2 du dépôt ps2-covers, désignée par le numéro de série.
+    Ps2(String),
 }
 
 /// Téléchargement d'artworks en cours.
@@ -310,15 +313,21 @@ pub struct AssetJob {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum PickerTarget {
     AddExe,
+    /// Image disque PS2 choisie depuis « Ajouter un jeu ».
+    AddPs2Iso,
     AddPrefix,
     GameExe,
     GamePrefix,
+    /// Dossier analysé pour proposer des DLL à surcharger.
+    GameDllSource,
     DefaultPrefix,
     /// Dossier parent par défaut des installations Epic/GOG.
     DefaultInstallDir,
     /// Dossier choisi pour l'installation en cours, sans changer le réglage.
     InstallDestination,
     ScanFolder,
+    /// Binaire PCSX2 choisi à la main, quand il n'est pas dans le PATH.
+    Pcsx2Path,
     /// Image choisie sur le disque pour un artwork du jeu personnalisé.
     CustomArtwork(AssetKind),
     SaveFolder(crate::providers::ProviderGameKey),
@@ -423,6 +432,24 @@ impl SettingsTab {
             SettingsTab::About => "Version installée, mises à jour et licences.",
         }
     }
+}
+
+/// Onglet de la fiche d'un jeu. La fiche générale reste le point d'entrée ;
+/// les DLL ont leur propre page pour ne pas allonger encore le formulaire.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum GameTab {
+    General,
+    /// Numéro de série, jaquette et progression RetroAchievements.
+    Ps2,
+    DllOverrides,
+}
+
+impl GameTab {
+    pub const ALL: [(GameTab, &'static str); 3] = [
+        (GameTab::General, "Réglages"),
+        (GameTab::Ps2, "PlayStation 2"),
+        (GameTab::DllOverrides, "DLL overrides"),
+    ];
 }
 
 /// Fenêtre « Personnaliser » d'un jeu (images et apparence).
@@ -600,6 +627,10 @@ pub struct QuarkApp {
     /// Hero tiré au hasard pour le fond de l'accueil, fixé pour cette session.
     pub random_hero_game: Option<String>,
     pub editing: Option<Game>,
+    pub game_tab: GameTab,
+    /// Overrides de DLL du brouillon ouvert, repris depuis `WINEDLLOVERRIDES`.
+    pub game_dll_rows: Vec<DllOverride>,
+    pub game_dll_for: Option<String>,
     /// Recherche de liaison Steam / SteamGridDB ouverte dans les paramètres
     /// d'un jeu qui n'a pas encore de source d'images.
     pub game_link_query: String,
@@ -821,6 +852,14 @@ pub struct QuarkApp {
     >,
     /// Fenêtre des succès ouverte, s'il y en a une.
     pub achievements_open: Option<crate::providers::ProviderGameKey>,
+    /// Progression RetroAchievements des jeux PS2, par identifiant Quark.
+    pub ps2_ra: HashMap<String, AchievementsState>,
+    pub ps2_ra_job: Option<(
+        String,
+        Receiver<Result<crate::providers::AchievementInfo, String>>,
+    )>,
+    /// Recherche d'une fiche RetroAchievements par titre.
+    pub ps2_search_job: Option<(String, Receiver<Result<Option<crate::ps2::RaGame>, String>>)>,
     /// Onglet de la fiche jeu : actualités ou succès.
     pub detail_tab: DetailTab,
     /// Temps de jeu publié par la boutique, lu seulement pour la fiche
@@ -943,6 +982,9 @@ impl QuarkApp {
             whats_new_open,
             random_hero_game,
             editing: None,
+            game_tab: GameTab::General,
+            game_dll_rows: Vec::new(),
+            game_dll_for: None,
             game_link_query: String::new(),
             game_link_for: None,
             game_link_loading: false,
@@ -1038,6 +1080,9 @@ impl QuarkApp {
             achievements: HashMap::new(),
             achievements_job: None,
             achievements_open: None,
+            ps2_ra: HashMap::new(),
+            ps2_ra_job: None,
+            ps2_search_job: None,
             detail_tab: DetailTab::News,
             provider_playtime: HashMap::new(),
             playtime_job: None,
@@ -1172,6 +1217,7 @@ impl QuarkApp {
         self.poll_install_size(ctx);
         self.poll_provider_covers(ctx);
         self.poll_achievements(ctx);
+        self.poll_ps2(ctx);
         self.poll_session_sync(ctx);
         self.poll_overlay(ctx);
         self.poll_provider_playtime();
@@ -1654,7 +1700,17 @@ impl QuarkApp {
                     "Choisir un exécutable"
                 })
                 .set_directory(&start);
-            if matches!(&thread_target, PickerTarget::CustomArtwork(_)) {
+            if matches!(&thread_target, PickerTarget::AddPs2Iso) {
+                dialog = dialog
+                    .add_filter(
+                        "Images disque PS2",
+                        &[
+                            "iso", "ISO", "chd", "CHD", "cso", "CSO", "bin", "BIN", "cue", "CUE",
+                            "gz", "GZ",
+                        ],
+                    )
+                    .add_filter("Tous les fichiers", &["*"]);
+            } else if matches!(&thread_target, PickerTarget::CustomArtwork(_)) {
                 dialog = dialog.add_filter(
                     "Images",
                     &["png", "PNG", "jpg", "JPG", "jpeg", "JPEG", "webp", "WEBP"],
@@ -1665,6 +1721,7 @@ impl QuarkApp {
                         "Programmes",
                         &[
                             "exe", "EXE", "sh", "bat", "run", "desktop", "AppImage", "appimage",
+                            "iso", "ISO", "chd", "CHD", "cso", "CSO", "cue", "CUE",
                         ],
                     )
                     .add_filter("Tous les fichiers", &["*"]);
@@ -1712,6 +1769,7 @@ impl QuarkApp {
         match target {
             PickerTarget::ScanFolder => self.start_scan(ctx, path),
             PickerTarget::AddExe => self.add.exe = text,
+            PickerTarget::AddPs2Iso => self.add_ps2_image(ctx, path),
             PickerTarget::AddPrefix => {
                 self.add.prefix = text;
                 self.add.custom_prefix = true;
@@ -1725,6 +1783,15 @@ impl QuarkApp {
                 if let Some(game) = self.editing.as_mut() {
                     game.prefix = Some(text);
                 }
+            }
+            PickerTarget::GameDllSource => {
+                if let Some(game) = self.editing.as_mut() {
+                    game.dll_source = Some(text);
+                }
+            }
+            PickerTarget::Pcsx2Path => {
+                self.lib.settings.pcsx2_path = text;
+                self.touch();
             }
             PickerTarget::DefaultPrefix => {
                 self.lib.settings.default_prefix = Some(text);
@@ -1857,7 +1924,12 @@ impl QuarkApp {
         self.queue_asset_job(ctx, game_id, AssetSource::Chosen(plan, label));
     }
 
-    fn queue_asset_job(&mut self, ctx: &egui::Context, game_id: &str, source: AssetSource) {
+    pub(crate) fn queue_asset_job(
+        &mut self,
+        ctx: &egui::Context,
+        game_id: &str,
+        source: AssetSource,
+    ) {
         // Un seul téléchargement à la fois : les suivants attendent leur tour.
         if self.job.is_some() {
             self.job_queue.push_back((game_id.to_string(), source));
@@ -1869,6 +1941,7 @@ impl QuarkApp {
         let label = match &source {
             AssetSource::Auto(hit) => hit.title.clone(),
             AssetSource::Chosen(_, label) => label.clone(),
+            AssetSource::Ps2(serial) => format!("PS2 {serial}"),
         };
         let thread_id = id.clone();
         let ctx = ctx.clone();
@@ -1881,6 +1954,9 @@ impl QuarkApp {
                     &crate::config::artwork_root().join(&thread_id),
                     &plan,
                 ),
+                AssetSource::Ps2(serial) => {
+                    crate::ps2::fetch_cover_for(&client, &thread_id, &serial)
+                }
             };
             let _ = tx.send(result);
             ctx.request_repaint();
@@ -2071,6 +2147,40 @@ impl QuarkApp {
         }
         self.add.scan.search_rx = Some((index, rx));
         ctx.request_repaint_after(Duration::from_millis(120));
+    }
+
+    /// Ajoute une image PS2 comme jeu : PCSX2, numéro de série lu dans l'ISO
+    /// et jaquette communautaire demandée en arrière-plan.
+    pub fn add_ps2_image(&mut self, ctx: &egui::Context, path: PathBuf) {
+        if !crate::ps2::is_disc_image(&path) {
+            self.toast_error("Choisis une image PS2 (.iso, .chd, .cso, .bin/.cue…).");
+            return;
+        }
+        let serial = crate::ps2::serial_from_iso(&path).unwrap_or_default();
+        let name = crate::ps2::title_from_path(&path);
+        let settings = self.lib.settings.clone();
+        let mut game = Game::new(name.clone(), path.display().to_string());
+        game.proton = ProtonMode::Native;
+        game.args = settings.default_args.trim().to_string();
+        game.launch = settings.default_launch.clone();
+        game.ps2 = Some(crate::config::Ps2Config {
+            serial: serial.clone(),
+            ra_game_id: None,
+        });
+        let id = game.id.clone();
+        self.lib.games.push(game);
+        self.selected = Some(id.clone());
+        self.add.open = false;
+        self.tab = Tab::Library;
+        if serial.is_empty() {
+            self.toast_info(format!(
+                "{name} ajouté · numéro de série à saisir dans la fiche du jeu"
+            ));
+        } else {
+            self.toast_info(format!("{name} ajouté · {serial}"));
+            self.queue_asset_job(ctx, &id, AssetSource::Ps2(serial));
+        }
+        self.touch();
     }
 
     /// Ajoute tous les candidats retenus comme jeux.
@@ -2544,6 +2654,7 @@ impl QuarkApp {
                                     provider,
                                     key: provider_record.as_ref().map(|record| record.key.clone()),
                                     game_id: id.to_string(),
+                                    ra_game_id: game.ps2.as_ref().and_then(|ps2| ps2.ra_game_id),
                                     started,
                                 },
                                 &screenshot,
@@ -3423,6 +3534,7 @@ impl QuarkApp {
                     provider: record.map(|record| record.key.provider),
                     key: record.map(|record| record.key.clone()),
                     game_id: id.clone(),
+                    ra_game_id: game.ps2.as_ref().and_then(|ps2| ps2.ra_game_id),
                     started: session.started,
                 })
             });
@@ -3440,25 +3552,41 @@ impl QuarkApp {
         // Une capture peut arriver juste après la fermeture du jeu : elle est
         // traitée avant de masquer l'overlay, sinon elle serait perdue.
         let captures = self.game_overlay.poll_captures();
-        if self.game_overlay.open
-            && let Some(key) = self.game_overlay.target_key()
-        {
-            match self.achievements.get(&key).cloned() {
-                Some(AchievementsState::Ready(mut info)) => {
-                    if let Some(unlocks) = self.session_unlocks.get(&key) {
-                        crate::providers::achievements::merge_session(&mut info, unlocks);
+        if self.game_overlay.open {
+            if let Some(key) = self.game_overlay.target_key() {
+                match self.achievements.get(&key).cloned() {
+                    Some(AchievementsState::Ready(mut info)) => {
+                        if let Some(unlocks) = self.session_unlocks.get(&key) {
+                            crate::providers::achievements::merge_session(&mut info, unlocks);
+                        }
+                        self.game_overlay.set_achievements(info);
                     }
-                    self.game_overlay.set_achievements(info);
+                    Some(AchievementsState::Failed(error)) => {
+                        self.game_overlay.set_achievements_error(Some(error));
+                    }
+                    Some(AchievementsState::Loading) => {
+                        self.game_overlay.set_achievements_loading(true);
+                    }
+                    None => {
+                        self.game_overlay.set_achievements_loading(true);
+                        self.request_achievements(ctx, &key);
+                    }
                 }
-                Some(AchievementsState::Failed(error)) => {
-                    self.game_overlay.set_achievements_error(Some(error));
-                }
-                Some(AchievementsState::Loading) => {
-                    self.game_overlay.set_achievements_loading(true);
-                }
-                None => {
-                    self.game_overlay.set_achievements_loading(true);
-                    self.request_achievements(ctx, &key);
+            } else if let Some((game_id, ra_id)) = self.game_overlay.target_ra() {
+                match self.ps2_ra.get(&game_id).cloned() {
+                    Some(AchievementsState::Ready(info)) => {
+                        self.game_overlay.set_achievements(info);
+                    }
+                    Some(AchievementsState::Failed(error)) => {
+                        self.game_overlay.set_achievements_error(Some(error));
+                    }
+                    Some(AchievementsState::Loading) => {
+                        self.game_overlay.set_achievements_loading(true);
+                    }
+                    None => {
+                        self.game_overlay.set_achievements_loading(true);
+                        self.request_ps2_ra(ctx, &game_id, ra_id);
+                    }
                 }
             }
         }
@@ -6280,6 +6408,138 @@ impl QuarkApp {
                 self.achievements_job = None;
             }
             Err(TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(150)),
+        }
+    }
+
+    /// Cherche la fiche RetroAchievements d'un jeu PS2 par son titre.
+    pub fn start_ps2_ra_search(&mut self, ctx: &egui::Context, game_id: &str, title: &str) {
+        if self.ps2_search_job.is_some() {
+            self.toast_info("Une recherche RetroAchievements est déjà en cours");
+            return;
+        }
+        let settings = self.lib.settings.clone();
+        if !crate::ps2::ra_configured(&settings) {
+            self.toast_error(
+                "Renseigne le pseudo et la clé Web API RetroAchievements dans les paramètres",
+            );
+            return;
+        }
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        let title = title.trim().to_string();
+        std::thread::spawn(move || {
+            let client = artwork::http();
+            let result = crate::ps2::search_ra_game(&client, &settings, &title);
+            let _ = tx.send(result);
+            repaint.request_repaint();
+        });
+        self.ps2_search_job = Some((game_id.to_string(), rx));
+        ctx.request_repaint_after(Duration::from_millis(150));
+    }
+
+    /// Demande la progression RetroAchievements d'un jeu PS2.
+    pub fn request_ps2_ra(&mut self, ctx: &egui::Context, game_id: &str, ra_game_id: u64) {
+        if self.ps2_ra_job.is_some() {
+            return;
+        }
+        let settings = self.lib.settings.clone();
+        if !crate::ps2::ra_configured(&settings) {
+            self.ps2_ra.insert(
+                game_id.to_string(),
+                AchievementsState::Failed(
+                    "RetroAchievements n'est pas configuré : Paramètres → Boutiques & outils."
+                        .into(),
+                ),
+            );
+            return;
+        }
+        self.ps2_ra
+            .insert(game_id.to_string(), AchievementsState::Loading);
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        let id = game_id.to_string();
+        std::thread::spawn(move || {
+            let client = artwork::http();
+            let result = crate::ps2::fetch_ra_achievements(&client, &settings, ra_game_id);
+            let _ = tx.send(result);
+            repaint.request_repaint();
+        });
+        self.ps2_ra_job = Some((id, rx));
+        ctx.request_repaint_after(Duration::from_millis(150));
+    }
+
+    fn poll_ps2(&mut self, ctx: &egui::Context) {
+        let search = self
+            .ps2_search_job
+            .as_ref()
+            .map(|(id, rx)| (id.clone(), rx.try_recv()));
+        if let Some((id, result)) = search {
+            match result {
+                Ok(Ok(Some(found))) => {
+                    let title = found.title.clone();
+                    let ra_id = found.id;
+                    if let Some(editing) = self.editing.as_mut()
+                        && editing.id == id
+                    {
+                        if let Some(ps2) = editing.ps2.as_mut() {
+                            ps2.ra_game_id = Some(ra_id);
+                        }
+                    } else if let Some(game) = self.lib.get_mut(&id)
+                        && let Some(ps2) = game.ps2.as_mut()
+                    {
+                        ps2.ra_game_id = Some(ra_id);
+                        self.touch();
+                    }
+                    self.toast_info(format!("RetroAchievements : {title} · #{ra_id}"));
+                    self.ps2_search_job = None;
+                }
+                Ok(Ok(None)) => {
+                    self.toast_info(
+                        "Aucune fiche RetroAchievements trouvée pour ce titre : ajuste le                          titre ou saisis l'identifiant à la main",
+                    );
+                    self.ps2_search_job = None;
+                }
+                Ok(Err(error)) => {
+                    self.toast_error(error);
+                    self.ps2_search_job = None;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    self.toast_error("Recherche RetroAchievements interrompue");
+                    self.ps2_search_job = None;
+                }
+                Err(TryRecvError::Empty) => {
+                    ctx.request_repaint_after(Duration::from_millis(150));
+                }
+            }
+        }
+
+        let achievements = self
+            .ps2_ra_job
+            .as_ref()
+            .map(|(id, rx)| (id.clone(), rx.try_recv()));
+        if let Some((id, result)) = achievements {
+            match result {
+                Ok(Ok(info)) => {
+                    self.ps2_ra.insert(id, AchievementsState::Ready(info));
+                    self.ps2_ra_job = None;
+                }
+                Ok(Err(error)) => {
+                    self.ps2_ra.insert(id, AchievementsState::Failed(error));
+                    self.ps2_ra_job = None;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    self.ps2_ra.insert(
+                        id,
+                        AchievementsState::Failed(
+                            "Lecture RetroAchievements interrompue".to_string(),
+                        ),
+                    );
+                    self.ps2_ra_job = None;
+                }
+                Err(TryRecvError::Empty) => {
+                    ctx.request_repaint_after(Duration::from_millis(150));
+                }
+            }
         }
     }
 

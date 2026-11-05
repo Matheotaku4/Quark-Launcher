@@ -396,10 +396,16 @@ impl QuarkApp {
                         pal.accent,
                     );
                     ui.add_space(8.0);
-                    ui.add(
-                        egui::Label::new(i18n::rich(*sentence).size(12.5).color(pal.text_dim))
-                            .wrap(),
-                    );
+                    // Largeur explicite : dans une rangée horizontale, un
+                    // libellé qui se replie peut demander toute la largeur de
+                    // l'écran et faire déborder la modale.
+                    ui.vertical(|ui| {
+                        ui.set_width(540.0);
+                        ui.add(
+                            egui::Label::new(i18n::rich(*sentence).size(12.5).color(pal.text_dim))
+                                .wrap(),
+                        );
+                    });
                 });
                 ui.add_space(6.0);
             }

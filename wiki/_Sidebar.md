@@ -1,23 +1,24 @@
 ### Quark
 
-- [Accueil du wiki](Home)
-- [Installation et mises à jour](Installation)
-- [Premier démarrage](Getting-Started)
+- [Wiki home](Home)
+- [Installation and updates](Installation)
+- [Getting started](Getting-Started)
 
-**Utiliser Quark**
+**Using Quark**
 
-- [Bibliothèque et vues](Library-and-Views)
-- [Boutiques et sauvegardes](Stores-and-Saves)
-- [Overlay et succès](Overlay-and-Achievements)
+- [Library and views](Library-and-Views)
+- [Stores and saves](Stores-and-Saves)
+- [PlayStation 2 and RetroAchievements](PlayStation-2-and-RetroAchievements)
+- [Overlay and achievements](Overlay-and-Achievements)
 
-**Configurer**
+**Configure**
 
-- [Proton, Wine et options](Proton-Wine-and-Launch-Options)
-- [Thèmes et apparence](Themes-and-Appearance)
-- [Réglages](Settings)
+- [Proton, Wine and options](Proton-Wine-and-Launch-Options)
+- [Themes and appearance](Themes-and-Appearance)
+- [Settings](Settings)
 
-**Aide**
+**Help**
 
-- [Dépannage](Troubleshooting)
-- [Dernière release](https://github.com/Matheotaku4/Quark-Launcher/releases/latest)
-- [Dépôt](https://github.com/Matheotaku4/Quark-Launcher)
+- [Troubleshooting](Troubleshooting)
+- [Latest release](https://github.com/Matheotaku4/Quark-Launcher/releases/latest)
+- [Repository](https://github.com/Matheotaku4/Quark-Launcher)

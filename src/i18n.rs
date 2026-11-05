@@ -80,7 +80,7 @@ pub fn label(text: &str) -> String {
 /// elles ne touchent qu'aux mots français isolés, jamais aux noms de jeux.
 fn dynamic_english(text: &str) -> String {
     let mut out = text.to_string();
-    let rules: [(&str, &str); 59] = [
+    let rules: [(&str, &str); 64] = [
         ("Aucun jeu sélectionné", "No game selected"),
         ("Aucun jeu ne correspond", "No game matches"),
         ("Aucun résultat", "No results"),
@@ -131,6 +131,14 @@ fn dynamic_english(text: &str) -> String {
         ("Taille non communiquée", "Size not provided"),
         ("Taille : calcul en cours", "Size: calculating"),
         ("calcul en cours", "calculating"),
+        ("Dossier analysé : ", "Scanned folder: "),
+        ("Image disque : ", "Disc image: "),
+        ("Émulateur : ", "Emulator: "),
+        ("Détecté : ", "Detected: "),
+        (
+            "Lecture du dossier impossible : ",
+            "Could not read folder: ",
+        ),
         ("Temps ", "Time "),
         ("Vue «", "View “"),
         (" » appliquée", "” applied"),
@@ -192,21 +200,21 @@ fn dynamic_english(text: &str) -> String {
 pub fn release_summary() -> [&'static str; 6] {
     if is_english() {
         [
-            "Library and Home filters now share one menu, with an active-filter count and a clear-all action.",
-            "A first-run guide now walks through the library, stores, Proton and the settings you can change.",
-            "The whole interface can switch between French and English from Appearance.",
-            "Thirteen themes are available, including Catppuccin, Dracula, Nord, Gruvbox and Tokyo Night.",
-            "An optional blurred random hero can sit behind the home and library pages, with adjustable blur.",
-            "Settings now use a full-screen page with clearer sections; the README and wiki document launch options.",
+            "PlayStation 2 games are launched by PCSX2; Quark reads the serial from the ISO and fetches the cover from ps2-covers.",
+            "RetroAchievements progress is shown on the PS2 game page and in the overlay, while PCSX2 keeps handling unlocks.",
+            "A DLL overrides tab lists the DLLs in the game folder and writes native or builtin choices into WINEDLLOVERRIDES.",
+            "Existing WINEDLLOVERRIDES entries are loaded and preserved, including entries written without a mode.",
+            "Placeholder suggestions in Tags and Arguments are now grey instead of looking like entered values.",
+            "The wiki is now entirely in English; existing configurations load without a reset.",
         ]
     } else {
         [
-            "Les filtres de la bibliothèque et de l'accueil sont regroupés dans un menu unique, avec compteur et remise à zéro.",
-            "Un guide de premier lancement présente la bibliothèque, les boutiques, Proton et les réglages modifiables.",
-            "Toute l'interface bascule entre le français et l'anglais depuis Apparence.",
-            "Treize thèmes sont disponibles, dont Catppuccin, Dracula, Nord, Gruvbox et Tokyo Night.",
-            "Un hero aléatoire flouté peut servir de fond à l'accueil et à la bibliothèque, avec un flou réglable.",
-            "Les paramètres occupent maintenant une page plein écran, avec des sections plus nettes ; le README et le wiki détaillent les options de lancement.",
+            "Les jeux PlayStation 2 sont lancés par PCSX2 ; Quark lit le numéro de série de l'ISO et récupère la jaquette depuis ps2-covers.",
+            "La progression RetroAchievements s'affiche dans la fiche PS2 et dans l'overlay, PCSX2 continuant de gérer les déblocages.",
+            "Un onglet DLL overrides liste les DLL du dossier du jeu et écrit les choix native ou builtin dans WINEDLLOVERRIDES.",
+            "Les entrées WINEDLLOVERRIDES existantes sont reprises et conservées, y compris celles écrites sans mode.",
+            "Les suggestions des champs Tags et Arguments sont désormais grises au lieu de ressembler à une valeur saisie.",
+            "Le wiki passe entièrement en anglais ; les configurations existantes se chargent sans réinitialisation.",
         ]
     }
 }
@@ -260,11 +268,11 @@ mod tests {
     fn le_resume_de_version_suit_la_langue() {
         let _guard = language_lock();
         set_language(UiLanguage::French);
-        assert!(release_summary()[0].starts_with("Les filtres"));
-        assert!(release_summary()[1].starts_with("Un guide"));
+        assert!(release_summary()[0].starts_with("Les jeux PlayStation 2"));
+        assert!(release_summary()[1].starts_with("La progression RetroAchievements"));
         set_language(UiLanguage::English);
-        assert!(release_summary()[0].starts_with("Library and Home filters"));
-        assert!(release_summary()[1].starts_with("A first-run guide"));
+        assert!(release_summary()[0].starts_with("PlayStation 2 games"));
+        assert!(release_summary()[1].starts_with("RetroAchievements progress"));
         assert!(release_title().starts_with("What's new"));
         set_language(UiLanguage::French);
     }

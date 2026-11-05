@@ -641,7 +641,7 @@ impl QuarkApp {
         // Binaire Linux : le jeu démarre sans Proton (mention sur la bannière).
         let native = resolved
             .as_ref()
-            .map(|r| matches!(r.kind, LaunchKind::Native))
+            .map(|r| matches!(r.kind, LaunchKind::Native | LaunchKind::Emulator))
             .unwrap_or_else(|_| game.is_native());
         let launch_label = match &resolved {
             Ok(r) => r.label(),

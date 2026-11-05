@@ -323,6 +323,10 @@ pub fn apply(ctx: &egui::Context, mode: ThemeMode) {
     v.faint_bg_color = p.surface;
     v.window_stroke = Stroke::new(1.0_f32, p.border);
     v.override_text_color = Some(p.text);
+    // Les suggestions des champs (`--fullscreen`, `coop, détente…`) restent
+    // discrètes : sans couleur faible explicite, elles prendraient la couleur
+    // du texte normal à cause de `override_text_color`.
+    v.weak_text_color = Some(p.text_faint);
     v.hyperlink_color = p.accent;
     v.selection.bg_fill = p.accent.gamma_multiply(0.35);
     v.selection.stroke = Stroke::new(1.0_f32, p.accent);

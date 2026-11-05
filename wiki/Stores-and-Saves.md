@@ -1,158 +1,153 @@
-# Boutiques, comptes et sauvegardes
+# Stores, accounts and saves
 
-> [Accueil](Home) · [Premier démarrage](Getting-Started) · **Boutiques** ·
-> [Bibliothèque](Library-and-Views) · [Dépannage](Troubleshooting)
+> [Home](Home) · [Getting started](Getting-Started) · **Stores** ·
+> [Library](Library-and-Views) · [Troubleshooting](Troubleshooting)
 
-![Boutique](https://raw.githubusercontent.com/Matheotaku4/Quark-Launcher/main/docs/images/store-fr.png)
+![Store page](https://raw.githubusercontent.com/Matheotaku4/Quark-Launcher/main/docs/images/store-en.png)
 
-## Les trois sources
+## The three sources
 
 ### Steam
 
-Steam est lu **localement**, sans mot de passe Quark :
+Steam is read **locally**, without a Quark password:
 
-- `libraryfolders.vdf` indique les bibliothèques ;
-- `appmanifest_*.acf` décrit les jeux installés ;
-- les dossiers `steamapps/common` fournissent les exécutables.
+- `libraryfolders.vdf` lists the libraries;
+- `appmanifest_*.acf` describes installed games;
+- `steamapps/common` folders provide executables.
 
-Une clé Steam Web API et un SteamID64 sont facultatifs. Ils améliorent les
-recommandations et l'accès aux métadonnées, mais ne sont pas nécessaires pour
-lancer un jeu installé. Steam Cloud reste entièrement géré par le client Steam ;
-Quark ne lit ni n'écrit ses sauvegardes cloud.
+A Steam Web API key and SteamID64 are optional. They improve recommendations and
+metadata access but are not needed to launch an installed game. Steam Cloud
+remains entirely managed by the Steam client; Quark neither reads nor writes its
+cloud saves.
 
-Routes Steam reconnues : `~/.steam/steam`, `~/.steam/root`,
-`~/.local/share/Steam`, le dossier Flatpak
-`~/.var/app/com.valvesoftware.Steam/data/Steam` et le dossier Snap.
+Recognized Steam locations: `~/.steam/steam`, `~/.steam/root`,
+`~/.local/share/Steam`, the Flatpak folder
+`~/.var/app/com.valvesoftware.Steam/data/Steam` and the Snap folder.
 
 ### Epic Games
 
-Epic utilise **Legendary**, un client open source en ligne de commande.
+Epic uses **Legendary**, an open-source command-line client.
 
-1. **Paramètres → Boutiques & outils**.
-2. Installez ou mettez à jour Legendary avec **Installer / mettre à jour**.
-   Quark vérifie la somme SHA-256 publiée avant d'exécuter le binaire.
-3. **Connecter Epic** ouvre la page d'autorisation. Copiez le code affiché dans
+1. **Settings → Stores & tools**.
+2. Install or update Legendary with **Install / update**. Quark verifies the
+   published SHA-256 before running the binary.
+3. **Connect Epic** opens the authorization page. Copy the displayed code into
    Quark.
-4. Legendary échange le code localement et écrit `user.json` dans son dossier de
-   configuration.
+4. Legendary exchanges the code locally and writes `user.json` in its
+   configuration folder.
 
-Le mot de passe Epic n'est jamais demandé par Quark et ne transite pas par
-l'interface. Pour retirer le compte, utilisez l'action de déconnexion de
-Legendary dans **Boutiques & outils** ; le fichier de session est alors supprimé
-par l'outil.
+Quark never asks for the Epic password and it never passes through the
+interface. To remove the account, use Legendary's logout action in **Stores &
+tools**; the session file is then deleted by the tool.
 
 ### GOG
 
-GOG utilise **gogdl**, également installé et vérifié par Quark. Le jeton GOG est
-écrit dans un fichier séparé de `credentials.json`, avec des permissions
-privées. Les succès GOG sont lus depuis `gameplay.gog.com` avec cette session.
+GOG uses **gogdl**, also installed and verified by Quark. The GOG token is
+written to a file separate from `credentials.json`, with private permissions.
+GOG achievements are read from `gameplay.gog.com` with this session.
 
-## Installer un jeu de boutique
+## Install a store game
 
-**Mes jeux** liste ce que vous possédez ou avez installé, avec un onglet par
-boutique. Un jeu non installé ouvre une fiche d'installation ; un jeu installé
-ouvre ses actions.
+**My games** lists what you own or have installed, with one tab per store. A
+game that is not installed opens an installation dialog; an installed game
+opens its actions.
 
-- Le dossier d'installation proposé vient de **Paramètres → Nouveaux jeux →
-  Dossier d'installation par défaut**. Il peut être changé pour une
-  installation précise.
-- Trois téléchargements Epic/GOG peuvent tourner en parallèle. Chacun affiche
-  progression, vitesse, temps restant et un bouton **Annuler**.
-- L'icône de téléchargement de la barre supérieure liste tous les transferts.
-- Une installation annulée ne doit pas être considérée comme complète : vérifiez
-  l'état dans **Mes jeux** avant de lancer.
+- The proposed installation folder comes from **Settings → New games → Default
+  installation folder**. It can be changed for one installation.
+- Up to three Epic/GOG downloads can run at once. Each shows progress, speed,
+  time remaining and a **Cancel** button.
+- The download icon in the top bar lists every transfer.
+- A cancelled installation must not be considered complete: check its state in
+  **My games** before launching.
 
-## Sauvegardes cloud Epic et GOG
+## Epic and GOG cloud saves
 
-La synchronisation cloud est activée par défaut dans **Paramètres → En jeu**.
-Elle est asynchrone et ne bloque pas l'interface.
+Cloud synchronization is enabled by default in **Settings → In game**. It runs
+asynchronously and does not block the interface.
 
 ### Epic
 
-Quark exécute :
+Quark runs:
 
 ```bash
 legendary -y sync-saves <app> --accept-path
 ```
 
-Legendary compare le dossier local au manifeste cloud ; le côté le plus récent
-gagne. Un dossier personnalisé peut être transmis avec `--save-path` depuis la
-fiche du jeu.
+Legendary compares the local folder with the cloud manifest; the most recent
+side wins. A custom folder can be passed with `--save-path` from the game page.
 
 ### GOG
 
-Quark exécute :
+Quark runs:
 
 ```bash
-gogdl save-sync <dossier> <game-id> --ts <horodatage>
+gogdl save-sync <folder> <game-id> --ts <timestamp>
 ```
 
-gogdl exige un dossier explicite : choisissez-le dans la fiche du jeu ou dans
-**Mes jeux → Dossier de sauvegarde**. L'horodatage renvoyé par gogdl est stocké
-dans l'installation et réutilisé à la comparaison suivante.
+gogdl requires an explicit folder: choose it on the game page or in **My games →
+Save folder**. The timestamp returned by gogdl is stored with the installation
+and reused for the next comparison.
 
-### Quand la synchronisation a lieu
+### When synchronization happens
 
-- après une installation Epic/GOG réussie ;
-- après la fermeture d'un jeu lancé par Quark ;
-- à la demande, avec **Synchroniser les sauvegardes cloud** dans la fiche.
+- after a successful Epic/GOG installation;
+- after a game launched by Quark closes;
+- on demand, with **Synchronize cloud saves** on the game page.
 
-Quark n'invente jamais une sauvegarde : si aucun côté n'existe, le panneau
-l'indique. Une erreur du fournisseur reste visible ; elle n'est pas transformée
-en succès.
+Quark never invents a save: if neither side exists, the panel says so. A
+provider error stays visible; it is not turned into a success.
 
-> La synchronisation cloud est indépendante des instantanés Ludusavi. Les deux
-> peuvent être actifs, mais ils ne stockent pas au même endroit.
+> Cloud synchronization is independent of Ludusavi snapshots. Both can be
+> active, but they do not store data in the same place.
 
-## Instantanés locaux avec Ludusavi
+## Local snapshots with Ludusavi
 
-Ludusavi crée des copies vérifiées des sauvegardes avant et après une session.
-Le panneau de sauvegarde est partagé par la bibliothèque et **Mes jeux**.
+Ludusavi creates verified copies of saves before and after a session. The save
+panel is shared by the library and **My games**.
 
-1. Installez Ludusavi depuis **Boutiques & outils**.
-2. Vérifiez ou choisissez le dossier de sauvegarde du jeu.
-3. **Aperçu Ludusavi** montre ce qui sera copié.
-4. **Sauvegarder maintenant** crée un instantané.
-5. **Inventaire** liste les instantanés disponibles ; **Restaurer** vérifie
-   puis restaure la version choisie.
+1. Install Ludusavi from **Stores & tools**.
+2. Check or choose the game's save folder.
+3. **Ludusavi preview** shows what will be copied.
+4. **Back up now** creates a snapshot.
+5. **Inventory** lists available snapshots; **Restore** verifies and restores
+   the selected version.
 
-La restauration est validée contre les racines d'installation du jeu : les
-liens symboliques, `$HOME` comme racine et les chemins hors des racines
-autorisées sont refusés. Chaque installation de boutique possède son propre
-compartiment Ludusavi, donc deux éditions du même jeu ne se mélangent pas.
+Restoration is checked against the game's installation roots: symbolic links,
+`$HOME` as a root and paths outside allowed roots are refused. Each store
+installation has its own Ludusavi compartment, so two editions of the same game
+do not mix.
 
-Quark ne remplace jamais une configuration Ludusavi illisible : il signale
-l'erreur et conserve le fichier.
+Quark never replaces an unreadable Ludusavi configuration: it reports the error
+and keeps the file.
 
-## Fichiers de compte et de données
+## Account and data files
 
-| Chemin | Contenu |
+| Path | Content |
 | --- | --- |
-| `~/.config/quark/credentials.json` | Clé Steam Web API et SteamID64 facultatifs |
-| `~/.config/quark/legendary/user.json` | Session Epic écrite par Legendary |
-| `~/.local/share/quark/gogdl-auth.json` | Jeton GOG écrit par gogdl |
-| `~/.local/share/quark/save-backups/` | Instantanés Ludusavi |
-| `~/.local/share/quark/artwork/` | Artworks et icônes de succès en cache |
-| `~/.local/share/quark/logs/<jeu>/` | Journaux de session, mode `0600` |
+| `~/.config/quark/credentials.json` | Optional Steam Web API key and SteamID64 |
+| `~/.config/quark/legendary/user.json` | Epic session written by Legendary |
+| `~/.local/share/quark/gogdl-auth.json` | GOG token written by gogdl |
+| `~/.local/share/quark/save-backups/` | Ludusavi snapshots |
+| `~/.local/share/quark/artwork/` | Cached artwork and achievement icons |
+| `~/.local/share/quark/logs/<game>/` | Session logs, mode `0600` |
 
-Les écritures de bibliothèque sont atomiques (`fsync` + renommage) et
-réessayées en cas d'échec. Un `config.json` corrompu est copié de côté et la
-bibliothèque passe en lecture seule plutôt que d'être écrasée par une
-bibliothèque vide. Les journaux ne contiennent ni valeurs d'environnement
-complètes, ni lignes de commande intégrales, ni le jeton de succès.
+Library writes are atomic (`fsync` + rename) and retried on failure. A corrupt
+`config.json` is copied aside and the library switches to read-only instead of
+being overwritten by an empty library. Logs contain no full environment values,
+no complete command lines and no achievement token.
 
-## Dépannage rapide
+## Quick troubleshooting
 
-- **Legendary introuvable** : vérifiez `python3`, puis réinstallez l'outil depuis
-  les réglages.
-- **Connexion Epic expirée** : reconnectez le compte ; le code d'autorisation
-  est à usage limité.
-- **GOG ne synchronise pas** : un dossier de sauvegarde est obligatoire.
-- **La sauvegarde restaurée n'apparaît pas** : vérifiez que le jeu utilise bien
-  le préfixe de l'installation active, puis relancez l'aperçu Ludusavi.
+- **Legendary not found**: check `python3`, then reinstall the tool from the
+  settings.
+- **Epic login expired**: connect the account again; the authorization code is
+  short-lived.
+- **GOG does not synchronize**: a save folder is required.
+- **Restored save is not visible**: check that the game uses the active
+  installation's prefix, then run the Ludusavi preview again.
 
-Voir [Dépannage](Troubleshooting) pour les erreurs de lancement et de préfixe.
+See [Troubleshooting](Troubleshooting) for launch and prefix errors.
 
 ---
 
-[Accueil](Home) · [Proton et Wine](Proton-Wine-and-Launch-Options) · [Overlay](Overlay-and-Achievements) · [Dépannage](Troubleshooting)
+[Home](Home) · [Proton and Wine](Proton-Wine-and-Launch-Options) · [Overlay](Overlay-and-Achievements) · [Troubleshooting](Troubleshooting)

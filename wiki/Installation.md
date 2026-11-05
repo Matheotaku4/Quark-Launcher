@@ -1,39 +1,38 @@
-# Installation et mise à jour
+# Installation and updates
 
-> [Accueil](Home) · **Installation** · [Premier démarrage](Getting-Started) ·
-> [Dépannage](Troubleshooting)
+> [Home](Home) · **Installation** · [Getting started](Getting-Started) ·
+> [Troubleshooting](Troubleshooting)
 
-![Page Paramètres](https://raw.githubusercontent.com/Matheotaku4/Quark-Launcher/main/docs/images/settings-fr.png)
+![Settings page](https://raw.githubusercontent.com/Matheotaku4/Quark-Launcher/main/docs/images/settings-en.png)
 
-## Prérequis
+## Requirements
 
-- Linux x86_64 avec X11 ou Wayland.
-- OpenGL et les bibliothèques graphiques habituelles de la distribution.
-- `python3` pour Legendary et gogdl : ce sont des applications Python
-  empaquetées en zipapp.
-- Facultatif selon les options utilisées : `gamescope`, `gamemoderun`
-  (GameMode), `mangohud`, `umu-launcher` et `ludusavi`.
-- Pour compiler : Rust stable, `pkg-config`, les en-têtes X11/Wayland et
-  OpenGL.
+- Linux x86_64 with X11 or Wayland.
+- OpenGL and the usual graphics libraries of your distribution.
+- `python3` for Legendary and gogdl: both are Python applications packaged as
+  zipapps.
+- Optional, depending on the features you use: `gamescope`, `gamemoderun`
+  (GameMode), `mangohud`, `umu-launcher`, `ludusavi` and PCSX2.
+- To build: stable Rust, `pkg-config`, the X11/Wayland headers and OpenGL.
 
-Quark ne nécessite aucun compte Quark et n'envoie aucune télémétrie.
+Quark needs no Quark account and sends no telemetry.
 
-## Archive de release
+## Release archive
 
-1. Téléchargez `quark-1.2.1-linux-x86_64.tar.gz` et son fichier `.sha256`
-   depuis la [dernière release](https://github.com/Matheotaku4/Quark-Launcher/releases/latest).
-2. Vérifiez l'archive **avant** de l'extraire :
+1. Download `quark-1.3.0-linux-x86_64.tar.gz` and its `.sha256` file from the
+   [latest release](https://github.com/Matheotaku4/Quark-Launcher/releases/latest).
+2. Verify the archive **before** extracting it:
 
    ```bash
-   sha256sum -c quark-1.2.1-linux-x86_64.tar.gz.sha256
-   tar -xzf quark-1.2.1-linux-x86_64.tar.gz
+   sha256sum -c quark-1.3.0-linux-x86_64.tar.gz.sha256
+   tar -xzf quark-1.3.0-linux-x86_64.tar.gz
    ./quark/quark
    ```
 
-3. L'archive contient `quark/quark`, `quark/README.md`, `quark/quark.desktop`
-   et `quark/quark.png`.
+3. The archive contains `quark/quark`, `quark/README.md`, `quark/quark.desktop`
+   and `quark/quark.png`.
 
-### Installer dans le menu des applications
+### Install in the applications menu
 
 ```bash
 install -Dm755 quark/quark ~/.local/bin/quark
@@ -42,57 +41,52 @@ install -Dm644 quark/quark.png ~/.local/share/icons/hicolor/512x512/apps/quark.p
 update-desktop-database ~/.local/share/applications 2>/dev/null || true
 ```
 
-`~/.local/bin` doit être dans votre `PATH`, car l'entrée de bureau utilise
-`Exec=quark`. Sinon, remplacez cette ligne par le chemin absolu du binaire dans
-`quark.desktop`.
+`~/.local/bin` must be in your `PATH`, because the desktop entry uses
+`Exec=quark`. Otherwise replace that line with the absolute path to the binary
+in `quark.desktop`.
 
-## Mettre à jour depuis la 1.1.4
+## Update from 1.1.4 or later
 
-La 1.2.1 conserve le format de `config.json` de la 1.1.4 et ajoute des champs
-avec des valeurs par défaut. La mise à jour ne demande pas de réinitialiser la
-bibliothèque et n'impose pas le parcours de bienvenue aux installations déjà
-existantes.
+Quark 1.3.0 keeps the `config.json` format used by 1.1.4 and adds fields with
+default values. Updating does not require resetting the library and does not
+force the welcome guide on existing installations.
 
-### Mise à jour automatique
+### Automatic update
 
-1. Lancez Quark 1.1.4 ou une version ultérieure.
-2. Ouvrez **Paramètres → À propos**.
-3. Cliquez sur **Vérifier les mises à jour**, ou laissez
-   **Installer les mises à jour au démarrage** actif.
-4. Quark télécharge l'archive, vérifie son SHA-256, remplace le binaire et se
-   relance.
+1. Start Quark 1.1.4 or later.
+2. Open **Settings → About**.
+3. Click **Check for updates**, or leave **Install updates on startup** enabled.
+4. Quark downloads the archive, verifies its SHA-256, replaces the binary and
+   restarts.
 
-Le remplacement est refusé proprement si le binaire est un binaire de
-développement, si le dossier est en lecture seule, ou si un jeu lancé par Quark
-est encore en cours. L'ancien exécutable est conservé jusqu'au prochain
-démarrage réussi.
+Replacement is refused cleanly when the binary is a development build, when the
+folder is read-only, or when a game launched by Quark is still running. The old
+executable is kept until the next successful start.
 
-### Mise à jour manuelle
+### Manual update
 
-Si la mise à jour automatique est désactivée ou échoue :
+If automatic updates are disabled or fail:
 
-1. Quittez Quark, puis téléchargez l'archive 1.2.1 et sa somme.
-2. Vérifiez la somme, puis remplacez uniquement le binaire :
+1. Quit Quark, then download the 1.3.0 archive and its checksum.
+2. Verify the checksum, then replace only the binary:
 
    ```bash
-   sha256sum -c quark-1.2.1-linux-x86_64.tar.gz.sha256
-   tar -xzf quark-1.2.1-linux-x86_64.tar.gz
+   sha256sum -c quark-1.3.0-linux-x86_64.tar.gz.sha256
+   tar -xzf quark-1.3.0-linux-x86_64.tar.gz
    install -Dm755 quark/quark ~/.local/bin/quark
    ```
 
-3. Relancez Quark. La configuration est migrée à la première ouverture.
+3. Start Quark again. The configuration is migrated on first launch.
 
-Vos jeux, préfixes, sauvegardes, artworks, comptes Legendary/gogdl et
-statistiques restent dans les mêmes dossiers. Le parcours de bienvenue est
-ignoré pour une bibliothèque existante ; le résumé **Nouveautés de la 1.2.1**
-apparaît une fois.
+Your games, prefixes, saves, artwork, Legendary/gogdl accounts and statistics
+stay in the same folders. The welcome guide is skipped for an existing library;
+the **What's new in 1.3.0** summary appears once.
 
-> Ne supprimez pas `~/.config/quark/config.json` pour « réparer » une mise à
-> jour. En cas de fichier illisible, Quark en garde une copie
-> `config.json.corrompu-<horodatage>` et passe en lecture seule au lieu
-> d'écraser la bibliothèque.
+> Do not delete `~/.config/quark/config.json` to "repair" an update. If the file
+> cannot be read, Quark keeps a `config.json.corrompu-<timestamp>` copy and
+> switches to read-only instead of overwriting the library.
 
-## Compiler depuis les sources
+## Build from source
 
 ```bash
 git clone https://github.com/Matheotaku4/Quark-Launcher.git
@@ -101,14 +95,14 @@ cargo build --release --locked
 ./target/release/quark
 ```
 
-Sous Debian/Ubuntu, les dépendances utilisées par la CI sont :
+On Debian/Ubuntu, the dependencies used by CI are:
 
 ```bash
 sudo apt-get install build-essential pkg-config libx11-dev libxkbcommon-dev \
   libwayland-dev libgl1-mesa-dev
 ```
 
-Pour les tests et la vérification avant publication :
+Before publishing:
 
 ```bash
 cargo fmt --check
@@ -116,9 +110,9 @@ cargo test --offline
 cargo build --release --locked --offline
 ```
 
-## Désinstaller
+## Uninstall
 
-Quark ne crée pas de service système. Pour retirer le programme :
+Quark creates no system service. To remove the program:
 
 ```bash
 rm -f ~/.local/bin/quark
@@ -126,25 +120,25 @@ rm -f ~/.local/share/applications/quark.desktop
 rm -f ~/.local/share/icons/hicolor/512x512/apps/quark.png
 ```
 
-Les données de jeu restent dans `~/.config/quark/`, `~/.local/share/quark/` et
-dans les dossiers Steam/Epic/GOG. Supprimez-les séparément si vous voulez aussi
-effacer la bibliothèque, les préfixes et les sauvegardes. Ne supprimez jamais un
-préfixe Proton sans être sûr qu'il ne contient pas les sauvegardes d'un jeu.
+Game data stays in `~/.config/quark/`, `~/.local/share/quark/` and the
+Steam/Epic/GOG folders. Remove those separately if you also want to erase the
+library, prefixes and saves. Never delete a Proton prefix unless you are sure it
+does not contain a game's saves.
 
-## Mises à jour et intégrité
+## Updates and integrity
 
-- Chaque archive publiée est accompagnée d'un fichier `.sha256`.
-- Les outils gérés (Legendary, gogdl, Ludusavi) sont aussi vérifiés par leur
-  somme publiée avant exécution.
-- Une mise à jour qui ne correspond pas au tag attendu est refusée.
-- Les notes de version de la release courante sont dans
+- Every published archive comes with a `.sha256` file.
+- Managed tools (Legendary, gogdl, Ludusavi) are also verified against their
+  published checksum before running.
+- An update that does not match the expected tag is refused.
+- The release notes for the current release are in
   [`docs/release-notes.md`](https://github.com/Matheotaku4/Quark-Launcher/blob/main/docs/release-notes.md).
 
-## En cas de problème
+## If something goes wrong
 
-Consultez [Dépannage](Troubleshooting) pour les erreurs de lancement, les
-préfixes, Wayland et les mises à jour bloquées.
+Read [Troubleshooting](Troubleshooting) for launch errors, prefixes, Wayland and
+blocked updates.
 
 ---
 
-[Accueil](Home) · [Premier démarrage](Getting-Started) · [Dépannage](Troubleshooting)
+[Home](Home) · [Getting started](Getting-Started) · [Troubleshooting](Troubleshooting)

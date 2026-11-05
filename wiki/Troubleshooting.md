@@ -1,199 +1,193 @@
-# Dépannage
+# Troubleshooting
 
-> [Accueil](Home) · [Installation](Installation) ·
-> [Proton et Wine](Proton-Wine-and-Launch-Options) · **Dépannage**
+> [Home](Home) · [Installation](Installation) ·
+> [Proton and Wine](Proton-Wine-and-Launch-Options) · **Troubleshooting**
 
-Avant de modifier un préfixe ou de supprimer un fichier, faites une copie du
-dossier concerné. La plupart des problèmes se diagnostiquent avec un journal,
-pas en réinitialisant la bibliothèque.
+Before changing a prefix or deleting a file, back up the folder involved. Most
+problems are diagnosed with a log, not by resetting the library.
 
-## Vérifier l'environnement
+## Check the environment
 
 ```bash
 quark --doctor
 ```
 
-Cette commande vérifie les éléments locaux dont Quark a besoin : affichage,
-outils et chemins. Elle ne modifie rien.
+This command checks the local elements Quark needs: display, tools and paths. It
+changes nothing.
 
-Pour un lancement hors interface :
+For a launch outside the interface:
 
 ```bash
 quark --search "Hollow Knight"
 quark --news 367520
 ```
 
-## Un jeu ne démarre pas
+## A game does not start
 
-1. Ouvrez la fiche du jeu et vérifiez **Paramètres du jeu**.
-2. Vérifiez que l'exécutable existe encore. Un jeu déplacé ou désinstallé laisse
-   une fiche avec un chemin mort ; Quark le signale en rouge.
-3. Vérifiez le runtime Proton. **Automatique** choisit un runtime installé ; si
-   aucun runtime n'est détecté, installez Proton dans Steam ou déposez un build
-   dans `compatibilitytools.d/`.
-4. Activez **PROTON_LOG** et relancez.
-5. Lisez le journal dans `~/.local/share/quark/logs/<jeu>/`.
-6. Essayez un autre runtime Proton avant de toucher au préfixe.
+1. Open the game page and check **Game settings**.
+2. Check that the executable still exists. A moved or uninstalled game leaves an
+   entry with a dead path; Quark shows it in red.
+3. Check the Proton runtime. **Automatic** chooses an installed runtime; if none
+   is detected, install Proton in Steam or place a build in
+   `compatibilitytools.d/`.
+4. Enable **PROTON_LOG** and launch again.
+5. Read the log in `~/.local/share/quark/logs/<game>/`.
+6. Try another Proton runtime before touching the prefix.
 
-### Erreurs fréquentes
+### Common errors
 
-| Message | Cause probable | Action |
+| Message | Likely cause | Action |
 | --- | --- | --- |
-| `Exécutable introuvable` | Chemin déplacé ou jeu désinstallé | Corriger l'exécutable dans la fiche. |
-| `Runtime ... introuvable` | Runtime Proton supprimé | Choisir un autre runtime ou réinstaller Proton. |
-| `umu-run introuvable` | umu-launcher absent | Installer umu ou décocher l'option. |
-| `gamemoderun n'est pas installé` | GameMode absent | Installer GameMode ou décocher l'option ; le jeu démarre quand même. |
-| `gamescope n'est pas installé` | gamescope absent | Installer gamescope ou décocher l'option. |
-| Anti-triche introuvable | Runtime BattlEye/EAC absent | Installer le runtime Steam correspondant, puis redétecter. |
+| `Executable not found` | Path moved or game uninstalled | Fix the executable on the game page. |
+| `Runtime ... not found` | Proton runtime deleted | Choose another runtime or reinstall Proton. |
+| `umu-run not found` | umu-launcher missing | Install umu or uncheck the option. |
+| `gamemoderun is not installed` | GameMode missing | Install GameMode or uncheck the option; the game still starts. |
+| `gamescope is not installed` | gamescope missing | Install gamescope or uncheck the option. |
+| Anti-cheat runtime not found | BattlEye/EAC runtime missing | Install the matching Steam runtime, then detect again. |
 
-Un outil graphique absent est signalé et ignoré : Quark continue sans lui plutôt
-que d'échouer. Un runtime Proton absent, lui, empêche le lancement.
+A missing graphics tool is reported and ignored: Quark continues without it
+rather than failing. A missing Proton runtime, however, prevents the launch.
 
-## Écran noir, crash ou retour au bureau
+## Black screen, crash or return to desktop
 
-- Activez `PROTON_LOG=1` et lisez les dernières lignes du journal.
-- Essayez un autre runtime Proton.
-- Essayez `PROTON_USE_WINED3D=1` uniquement comme test de compatibilité : si le
-  jeu démarre, le problème vient probablement de DXVK/VKD3D ou du pilote.
-- Mettez à jour le pilote graphique.
-- Vérifiez que le jeu n'a pas besoin d'une DLL ou d'un composant Windows
-  supplémentaire. Quark ne lance pas `winetricks` automatiquement.
-- Ne supprimez pas le préfixe immédiatement : déplacez-le d'abord pour pouvoir
-  revenir en arrière.
+- Enable `PROTON_LOG=1` and read the last lines of the log.
+- Try another Proton runtime.
+- Try `PROTON_USE_WINED3D=1` only as a compatibility test: if the game starts,
+  the problem is probably DXVK/VKD3D or the driver.
+- Update the graphics driver.
+- Check whether the game needs an extra Windows DLL or component. Quark does not
+  run `winetricks` automatically.
+- Do not delete the prefix immediately: move it first so you can roll back.
 
-## Manette, son, souris
+## Controller, sound, mouse
 
-- **Manette** : vérifier udev/Steam Input, essayer sans gamescope, vérifier le
-  journal. Un jeu qui utilise Steam Input peut nécessiter un lancement Steam.
-- **Son** : essayer `PULSE_LATENCY_MSEC=60`, vérifier le périphérique par défaut
-  du système, puis tester sans wrapper.
-- **Souris capturée** : essayer le mode fenêtre du jeu, `-windowed` dans les
-  arguments, ou désactiver gamescope.
-- **Mauvaise GPU** : décocher PRIME sur un desktop mono-GPU, ou vérifier
-  `DRI_PRIME` sur un portable AMD.
+- **Controller**: check udev/Steam Input, try without gamescope, read the log. A
+  game that uses Steam Input may require launching through Steam.
+- **Sound**: try `PULSE_LATENCY_MSEC=60`, check the system's default device, then
+  test without a wrapper.
+- **Captured mouse**: try the game's windowed mode, `-windowed` in the arguments,
+  or disable gamescope.
+- **Wrong GPU**: uncheck PRIME on a single-GPU desktop, or check `DRI_PRIME` on
+  an AMD laptop.
 
-## L'interface ne s'ouvre pas
+## The interface does not open
 
-- Vérifier que `DISPLAY` ou `WAYLAND_DISPLAY` est défini.
-- Essayer sous X11/XWayland si le compositeur Wayland refuse la création de la
-  fenêtre.
-- Vérifier OpenGL et les pilotes.
-- Lancer `quark --doctor`.
-- Consulter la sortie du terminal : une erreur de chargement de police ou de
-  contexte graphique y apparaît.
+- Check that `DISPLAY` or `WAYLAND_DISPLAY` is set.
+- Try X11/XWayland if the Wayland compositor refuses to create the window.
+- Check OpenGL and the drivers.
+- Run `quark --doctor`.
+- Read the terminal output: a font or graphics-context loading error appears
+  there.
 
-## Problème de langue
+## Language problem
 
-- L'interface se change dans **Paramètres → Apparence → Langue de
-  l'interface**.
-- La langue des fiches Steam est un réglage séparé dans **Boutiques & outils**.
-- Les noms de jeux, tags et genres personnels ne sont pas traduits.
-- Si un texte reste en français après le passage en anglais, c'est probablement
-  une donnée utilisateur ou une chaîne nouvellement ajoutée sans entrée de
-  catalogue. Notez la page et le texte exact pour le signaler.
+- The interface language is changed in **Settings → Appearance → Interface
+  language**.
+- The Steam page language is a separate setting in **Stores & tools**.
+- Game names, tags and personal genres are not translated.
+- If a text stays in French after switching to English, it is probably user data
+  or a newly added string without a catalogue entry. Note the page and exact text
+  to report it.
 
-## Le fond hero aléatoire ne s'affiche pas
+## The random hero background does not appear
 
-- Il faut au moins un artwork de type bannière dans la bibliothèque.
-- Le fond est dessiné derrière l'accueil et la bibliothèque ; il peut être
-  discret sous les cartes et le voile de lisibilité.
-- Le tirage change au redémarrage, pas à chaque navigation.
-- Augmentez le flou ou vérifiez que l'option est active dans **Apparence**.
+- The library needs at least one banner artwork.
+- The background is drawn behind Home and Library; it can be subtle under cards
+  and the readability veil.
+- The pick changes on restart, not on every navigation.
+- Increase the blur or check that the option is enabled in **Appearance**.
 
-## Paramètres
+## Settings
 
-Depuis la 1.2, les réglages remplissent la fenêtre et défilent. Si le bouton
-**Fermer** n'est pas visible, `Échap` ferme la page. Si le contenu semble coupé,
-redimensionnez la fenêtre : la mise en page est responsive mais certains
-blocs demandent une largeur minimale.
+Since 1.2, settings fill the window and scroll. If the **Close** button is not
+visible, `Escape` closes the page. If content looks cut off, resize the window:
+the layout is responsive but some blocks need a minimum width.
 
-## Legendary, gogdl et comptes
+## Legendary, gogdl and accounts
 
-- **Legendary introuvable** : vérifier `python3`, puis réinstaller l'outil dans
-  **Boutiques & outils**. Quark vérifie la somme SHA-256 avant exécution.
-- **Connexion Epic refusée** : le code d'autorisation est à durée limitée ;
-  recommencez la connexion.
-- **Session GOG expirée** : reconnecter GOG ; le jeton est dans un fichier
-  séparé, avec permissions privées.
-- **Un jeu de boutique n'apparaît pas** : lancer une synchronisation, vérifier
-  que le compte est connecté et que le jeu est bien possédé.
-- **Téléchargement bloqué** : annuler puis relancer ; vérifier l'espace disque
-  et le dossier d'installation.
+- **Legendary not found**: check `python3`, then reinstall the tool in **Stores &
+  tools**. Quark verifies the SHA-256 before running it.
+- **Epic login refused**: the authorization code is time-limited; start the
+  connection again.
+- **GOG session expired**: reconnect GOG; the token is in a separate file with
+  private permissions.
+- **A store game does not appear**: run a synchronization and check that the
+  account is connected and the game is owned.
+- **Download stuck**: cancel and start again; check disk space and the
+  installation folder.
 
-## Sauvegardes cloud
+## Cloud saves
 
-- **Epic** : `legendary sync-saves` compare le local et le cloud, le plus récent
-  gagne. Un dossier personnalisé peut être nécessaire.
-- **GOG** : gogdl exige un dossier de sauvegarde explicite. Sans lui, la
-  synchronisation ne peut pas fonctionner.
-- **Steam** : Steam Cloud reste géré par Steam ; Quark ne le synchronise pas.
-- **Conflit** : sauvegardez le dossier local avant de laisser le cloud écraser
-  quoi que ce soit. Quark n'invente jamais une sauvegarde absente.
+- **Epic**: `legendary sync-saves` compares local and cloud, the most recent
+  wins. A custom folder may be required.
+- **GOG**: gogdl requires an explicit save folder. Without it, synchronization
+  cannot work.
+- **Steam**: Steam Cloud remains managed by Steam; Quark does not synchronize it.
+- **Conflict**: back up the local folder before letting the cloud overwrite
+  anything. Quark never invents a missing save.
 
-## Instantanés Ludusavi
+## Ludusavi snapshots
 
-- **Aucun jeu détecté** : vérifier la configuration Ludusavi et le dossier de
-  sauvegarde.
-- **Restauration refusée** : les liens symboliques, `$HOME` comme racine et les
-  chemins hors des racines autorisées sont volontairement refusés.
-- **Mauvais instantané restauré** : chaque installation de boutique a son propre
-  compartiment ; vérifiez l'installation active.
-- **Configuration illisible** : Quark la conserve et signale l'erreur ; ne
-  l'écrasez pas avec une configuration vide.
+- **No game detected**: check the Ludusavi configuration and the save folder.
+- **Restore refused**: symbolic links, `$HOME` as a root and paths outside
+  allowed roots are deliberately refused.
+- **Wrong snapshot restored**: each store installation has its own compartment;
+  check the active installation.
+- **Unreadable configuration**: Quark keeps it and reports the error; do not
+  overwrite it with an empty configuration.
 
-## Mise à jour bloquée
+## Update blocked
 
-- **Binaire de développement** : la mise à jour automatique est ignorée.
-- **Dossier en lecture seule** : télécharger l'archive et remplacer le binaire
-  manuellement.
-- **Jeu en cours** : fermer le jeu avant d'installer.
-- **Somme invalide** : l'archive est refusée. Retélécharger l'archive et le
-  fichier `.sha256` depuis la release.
-- **Ancien binaire conservé** : Quark garde l'exécutable précédent jusqu'au
-  prochain démarrage réussi.
+- **Development binary**: automatic updates are ignored.
+- **Read-only folder**: download the archive and replace the binary manually.
+- **Game running**: close the game before installing.
+- **Invalid checksum**: the archive is refused. Download the archive and
+  `.sha256` again from the release.
+- **Old binary kept**: Quark keeps the previous executable until the next
+  successful start.
 
-Voir [Installation](Installation) pour la procédure manuelle.
+See [Installation](Installation) for the manual procedure.
 
-## Fichier de configuration
+## Configuration file
 
-`~/.config/quark/config.json` contient les jeux, installations, réglages et
-statistiques. En cas de corruption :
+`~/.config/quark/config.json` contains games, installations, settings and
+statistics. If it is corrupted:
 
-- Quark copie le fichier en `config.json.corrompu-<horodatage>` ;
-- la bibliothèque passe en lecture seule pour ne pas écraser les données ;
-- un fichier vide n'est jamais écrit à la place.
+- Quark copies the file to `config.json.corrompu-<timestamp>`;
+- the library switches to read-only so data is not overwritten;
+- an empty file is never written in its place.
 
-Ne supprimez pas ce fichier pour résoudre un problème de lancement : le problème
-est presque toujours dans le préfixe, le runtime ou les fichiers du jeu, pas dans
-la bibliothèque.
+Do not delete this file to solve a launch problem: the problem is almost always
+in the prefix, runtime or game files, not in the library.
 
-## Journaux et confidentialité
+## Logs and privacy
 
-Les journaux de session sont dans `~/.local/share/quark/logs/<jeu>/`, en mode
-`0600`. Ils ne contiennent pas les valeurs d'environnement complètes, les lignes
-de commande intégrales ni le jeton de succès. Avant de partager un journal,
-relisez-le : un jeu peut y écrire des chemins personnels.
+Session logs are in `~/.local/share/quark/logs/<game>/`, mode `0600`. They do not
+contain full environment values, complete command lines or the achievement
+token. Before sharing a log, read it again: a game may write personal paths
+there.
 
-## Signaler un bug
+## Report a bug
 
-Indiquez :
+Include:
 
-- la version de Quark (visible dans **À propos**) ;
-- la distribution, la session X11/Wayland et la version du pilote ;
-- le runtime Proton et les options activées ;
-- les dernières lignes du journal Proton ;
-- les étapes reproductibles.
+- the Quark version (visible in **About**);
+- the distribution, X11/Wayland session and driver version;
+- the Proton runtime and enabled options;
+- the last lines of the Proton log;
+- reproducible steps.
 
-Ne joignez pas `credentials.json`, `user.json`, `gogdl-auth.json` ni un jeton
-d'API. Ces fichiers contiennent des secrets de compte.
+Do not attach `credentials.json`, `user.json`, `gogdl-auth.json` or an API token.
+Those files contain account secrets.
 
-## Voir aussi
+## See also
 
 - [Installation](Installation)
-- [Proton, Wine et options de lancement](Proton-Wine-and-Launch-Options)
-- [Boutiques et sauvegardes](Stores-and-Saves)
-- [Overlay et succès](Overlay-and-Achievements)
+- [PlayStation 2 and RetroAchievements](PlayStation-2-and-RetroAchievements)
+- [Proton, Wine and launch options](Proton-Wine-and-Launch-Options)
+- [Stores and saves](Stores-and-Saves)
+- [Overlay and achievements](Overlay-and-Achievements)
 
 ---
 
-[Accueil](Home) · [Installation](Installation) · [Proton](Proton-Wine-and-Launch-Options) · [Boutiques](Stores-and-Saves)
+[Home](Home) · [Installation](Installation) · [Proton](Proton-Wine-and-Launch-Options) · [Stores](Stores-and-Saves)

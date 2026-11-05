@@ -277,6 +277,8 @@ pub enum LaunchKind {
     /// umu-launcher (`umu-run`) : Proton sans Steam, umu gérant le préfixe et
     /// le GAMEID.
     Umu,
+    /// Jeu PlayStation 2 lancé par PCSX2.
+    Emulator,
 }
 
 /// Outils externes trouvés sur le PATH.
@@ -325,6 +327,7 @@ impl Resolved {
     pub fn label(&self) -> String {
         let base = match (&self.kind, &self.runtime) {
             (LaunchKind::Native, _) => "Linux (natif)".to_string(),
+            (LaunchKind::Emulator, _) => "PCSX2 · PlayStation 2".to_string(),
             (LaunchKind::Proton, Some(rt)) => rt.label(),
             (LaunchKind::Proton, None) => "Proton".to_string(),
             (LaunchKind::Umu, Some(rt)) => format!("umu · {}", rt.name),
@@ -585,6 +588,11 @@ fn resolve_with_extra(
     };
 
     let mut env = launch_env(game);
+    if game.ps2.is_some() {
+        // Un émulateur natif n'hérite pas des DLL overrides Wine du jeu ; les
+        // autres variables personnalisées restent utiles à PCSX2.
+        env.retain(|(key, _)| !key.eq_ignore_ascii_case("WINEDLLOVERRIDES"));
+    }
     let mut extras: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
@@ -615,6 +623,36 @@ fn resolve_with_extra(
             crate::config::log_dir(&game.id).display().to_string(),
         ));
         extras.push("PROTON_LOG".to_string());
+    }
+
+    if let Some(ps2) = &game.ps2 {
+        let emulator = crate::ps2::check_launch(game, settings)?;
+        if ps2.serial.trim().is_empty() {
+            warnings.push(
+                "Numéro de série PS2 inconnu : jaquette et RetroAchievements indisponibles."
+                    .to_string(),
+            );
+        }
+        let mut args: Vec<OsString> = extra.into_iter().map(OsString::from).collect();
+        args.extend(crate::ps2::launch_args(&exe));
+        let spec = finalize(
+            emulator.clone(),
+            args,
+            env,
+            &game.launch,
+            tools,
+            &mut extras,
+            &mut warnings,
+        );
+        return Ok(Resolved {
+            kind: LaunchKind::Emulator,
+            spec,
+            runtime: None,
+            prefix: None,
+            anticheat: AnticheatMode::None,
+            extras,
+            warnings,
+        });
     }
 
     if !want_proton {
