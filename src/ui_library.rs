@@ -79,6 +79,12 @@ impl QuarkApp {
         ui.add_space(14.0);
         ui.horizontal(|ui| {
             ui.add_space(24.0);
+            // La vue Grille n'a pas de colonne de gauche : sans ce bouton,
+            // l'accueil n'y serait accessible que par la barre du haut.
+            if widgets::ghost_button(ui, "Accueil", &pal, Icon::Home).clicked() {
+                self.home = true;
+            }
+            ui.add_space(8.0);
             ui.label(
                 crate::i18n::rich(format!(
                     "{} jeu{} · clic pour ouvrir la fiche",
@@ -328,19 +334,16 @@ impl QuarkApp {
         let mut remove_marked = false;
         let mut clear_marked = false;
 
-        ui.add_space(12.0);
-        ui.horizontal(|ui| {
-            ui.add_space(10.0);
-            if widgets::home_button(ui, self.home, &pal).clicked() {
-                self.home = true;
-            }
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.add_space(12.0);
-                if widgets::icon_button(ui, 26.0, Icon::Plus, &pal, "Ajouter un jeu").clicked() {
-                    self.open_add_dialog();
-                }
-            });
-        });
+        // « Accueil » ouvre la liste, comme dans Steam : une vraie ligne, sur la
+        // même grille que les jeux, avec le « + » d'ajout à droite.
+        ui.add_space(8.0);
+        let (home_clicked, add_clicked) = widgets::home_row(ui, self.home, &pal);
+        if home_clicked {
+            self.home = true;
+        }
+        if add_clicked {
+            self.open_add_dialog();
+        }
 
         ui.add_space(6.0);
         if marked_count == 0 {

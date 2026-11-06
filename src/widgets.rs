@@ -699,53 +699,92 @@ pub fn setting_toggle(
     response
 }
 
-/// Bouton « Accueil » posé au-dessus de la liste des jeux : icône maison,
-/// libellé, et un trait d'accent quand la page est affichée.
-pub fn home_button(ui: &mut egui::Ui, selected: bool, pal: &Palette) -> Response {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(112.0, 30.0), Sense::click());
+/// Entrée « Accueil » : première ligne de la liste, pleine largeur comme dans
+/// Steam. Elle suit la même grille que les rangées de jeux (carré de 36 px à
+/// 16 px du bord, titre à 66 px, repère d'accent à gauche), si bien que la liste
+/// s'aligne du haut en bas. Le « + » d'ajout est posé à droite de la même ligne.
+/// Renvoie `(accueil cliqué, ajout cliqué)`.
+pub fn home_row(ui: &mut egui::Ui, selected: bool, pal: &Palette) -> (bool, bool) {
+    let (rect, resp) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 46.0), Sense::click());
     let painter = ui.painter_at(rect);
-    let hover =
-        ui.ctx()
-            .animate_bool_with_time(ui.id().with("quark-home-hover"), resp.hovered(), 0.12);
+    let id = ui.id().with("quark-home-row");
+    let hover = ui
+        .ctx()
+        .animate_bool_with_time(id.with("hover"), resp.hovered(), 0.12);
     let mark = ui
         .ctx()
-        .animate_bool_with_time(ui.id().with("quark-home-mark"), selected, 0.16);
-    let lift = hover.max(mark);
-    if lift > 0.0 {
-        painter.rect_filled(rect, 5.0, pal.surface_hover.gamma_multiply(lift * 0.8));
+        .animate_bool_with_time(id.with("selected"), selected, 0.16);
+    if hover > 0.0 {
+        painter.rect_filled(
+            rect,
+            4.0,
+            theme::lerp_color(Color32::TRANSPARENT, pal.surface_hover, hover),
+        );
     }
-    let color = if selected {
+    if mark > 0.0 {
+        painter.rect_filled(rect, 4.0, pal.row_selected.gamma_multiply(mark));
+        let height = (rect.height() - 10.0) * mark;
+        painter.rect_filled(
+            Rect::from_min_size(
+                Pos2::new(rect.left(), rect.center().y - height / 2.0),
+                Vec2::new(3.0, height),
+            ),
+            1.5,
+            pal.accent.gamma_multiply(mark),
+        );
+    }
+    let tile = Rect::from_min_size(
+        Pos2::new(rect.left() + 16.0, rect.center().y - 18.0),
+        Vec2::splat(36.0),
+    );
+    painter.rect_filled(
+        tile,
+        7.0,
+        theme::lerp_color(pal.surface, pal.surface_hover, hover),
+    );
+    let ink = if selected {
         pal.text
     } else {
         theme::lerp_color(pal.text_dim, pal.text, hover)
     };
     paint_icon(
         ui,
-        Rect::from_center_size(
-            Pos2::new(rect.left() + 16.0, rect.center().y),
-            Vec2::splat(15.0),
-        ),
+        Rect::from_center_size(tile.center(), Vec2::splat(17.0)),
         Icon::Home,
-        color,
+        if selected { pal.accent } else { ink },
     );
     painter.text(
-        Pos2::new(rect.left() + 29.0, rect.center().y),
+        Pos2::new(rect.left() + 66.0, rect.center().y),
         Align2::LEFT_CENTER,
         crate::i18n::tr("Accueil"),
-        FontId::proportional(12.5),
-        color,
+        FontId::proportional(13.5),
+        ink,
     );
-    if mark > 0.0 {
-        painter.rect_filled(
-            Rect::from_min_size(
-                Pos2::new(rect.left() + 8.0, rect.bottom() - 2.0),
-                Vec2::new((rect.width() - 16.0) * mark, 2.0),
-            ),
-            1.0,
-            pal.accent,
-        );
-    }
-    resp
+
+    // Le « + » est enregistré après la ligne : il reste au-dessus d'elle pour
+    // les clics.
+    let plus_rect = Rect::from_center_size(
+        Pos2::new(rect.right() - 26.0, rect.center().y),
+        Vec2::splat(28.0),
+    );
+    let plus = ui.interact(plus_rect, id.with("plus"), Sense::click());
+    let plus_hover = ui
+        .ctx()
+        .animate_bool_with_time(id.with("plus-hover"), plus.hovered(), 0.12);
+    painter.rect_filled(
+        plus_rect,
+        6.0,
+        theme::lerp_color(Color32::TRANSPARENT, pal.surface_hover, plus_hover),
+    );
+    paint_icon(
+        ui,
+        Rect::from_center_size(plus_rect.center(), Vec2::splat(15.0)),
+        Icon::Plus,
+        theme::lerp_color(pal.text_dim, pal.text, plus_hover),
+    );
+    let plus = plus.on_hover_text(crate::i18n::tr("Ajouter un jeu"));
+    (resp.clicked() && !plus.clicked(), plus.clicked())
 }
 
 /// Bouton icône posé **sur une image** (bannière) : un fond translucide rend le
