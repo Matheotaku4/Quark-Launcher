@@ -6,7 +6,7 @@ own, launches Windows games through Proton (or umu-launcher), and stays out of
 the way with an AMOLED interface, a store page, save snapshots and an in-game
 overlay.
 
-This is the **1.3.1** documentation. Older release notes are kept on the GitHub
+This is the **1.3.2** documentation. Older release notes are kept on the GitHub
 releases page; `docs/release-notes.md` only describes the release currently
 being published.
 
@@ -27,22 +27,12 @@ The wiki is published from the versioned source in [`wiki/`](wiki/) by the
 | --- | --- |
 | ![Onboarding](docs/images/onboarding-fr.png) | ![What's new](docs/images/whats-new-fr.png) |
 
-## What's new in 1.3.1
+## What's new in 1.3.2
 
-- **RetroAchievements in the library.** A compact `RA 3/12` badge appears
-  directly in the game list and on cover tiles. Progress loads in the
-  background for PS2 games linked to a RetroAchievements entry.
-- **A PlayStation 2 panel in My Games.** Every PS2 game with an RA entry gets
-  its own progress bar and counter, with a shortcut to open its library page.
-- **A complete PS2 achievements view.** The game header shows the RA counter and
-  the Achievements tab reads RetroAchievements instead of asking for a store
-  link. Achievements are now sorted from least rare to rarest everywhere,
-  including the in-game overlay.
-- **A PCSX2 launch regression test.** A fake PCSX2 binary and a synthetic ISO
-  verify the serial, the ISO argument, custom environment variables and the
-  removal of Wine DLL overrides, without requiring the real emulator.
-- **Compatible updates.** Existing configurations load without a reset; no
-  migration is required.
+- **Clearer navigation.** Home gets its own top-level tab; the library has a labelled Grid/List selector, an explicit Add button and a search field that adapts to narrower windows.
+- **A focused game page.** Less-used actions are grouped in a More actions menu while game information remains one click away and removal still asks for confirmation.
+- **Resilient playtime tracking.** Running sessions are checkpointed periodically; checkpoints and the final record do not double-count playtime.
+- **More readable themes.** Secondary text colours are improved and covered by WCAG AA contrast tests across themes.
 
 | PlayStation 2 |
 | --- |
@@ -50,7 +40,7 @@ The wiki is published from the versioned source in [`wiki/`](wiki/) by the
 
 ## Table of contents
 
-1. [What's new in 1.3.1](#whats-new-in-131)
+1. [What's new in 1.3.2](#whats-new-in-132)
 2. [What Quark does](#what-quark-does)
 3. [Installation](#installation)
 4. [First launch](#first-launch)
@@ -108,8 +98,8 @@ Download `quark-<version>-linux-x86_64.tar.gz` and its `.sha256` file from the
 then verify and unpack it:
 
 ```bash
-sha256sum -c quark-1.3.1-linux-x86_64.tar.gz.sha256
-tar -xzf quark-1.3.1-linux-x86_64.tar.gz
+sha256sum -c quark-1.3.2-linux-x86_64.tar.gz.sha256
+tar -xzf quark-1.3.2-linux-x86_64.tar.gz
 ./quark/quark
 ```
 
@@ -151,7 +141,7 @@ A new configuration opens a three-step welcome guide. It is not blocking:
 **Skip** closes it. The guide changes the interface language, startup page,
 theme and hero background live, then offers to add a first game. Existing
 configurations are marked as already welcomed, so updating from 1.1.4 never
-shows it unexpectedly; they still see the 1.3.1 summary once.
+shows it unexpectedly; they still see the 1.3.2 summary once.
 
 1. Open **Settings → Stores & tools** and install Legendary and/or gogdl with
    **Install / update**. Quark verifies the SHA-256 digest published by GitHub
@@ -168,7 +158,8 @@ shows it unexpectedly; they still see the 1.3.1 summary once.
 
 ### Home
 
-The home page is a carousel of recently played games. The banner is the game's
+Home has its own tab in the top bar, next to Store, My games and Library. The
+home page is a carousel of recently played games. The banner is the game's
 hero image, the logo (or title) sits above a **Continue/Stop** button, and the
 playtime, last session, ProtonDB rating and native-Linux badge are visible at a
 glance. Below the carousel, the whole library is shown as covers. Sort it by
@@ -188,8 +179,11 @@ the blur radius is adjustable from 2 to 30 px and is part of the blur cache key.
 
 ### Library
 
-The list shows one row per game with a square icon, a status dot and a blue
-selection marker. The grid shows covers and opens the game page as an overlay.
+The top bar switches between **Grid** and **List** with a labelled segmented
+control, and the **Add** button sits next to it. The search field adapts to
+narrower windows. The list shows one row per game with a square icon, a status
+dot and a blue selection marker. The grid shows covers and opens the game page
+as an overlay.
 Games with a missing executable are highlighted in red. Right-click a game for
 launch, customize, settings and remove; `Ctrl+click` marks several games for a
 batch removal.
@@ -215,9 +209,11 @@ games, use `↑`/`↓` to move, `Enter` to open and `Esc` to close.
 ### Game page
 
 The page shows the hero banner, ProtonDB/native badges, the **Play** button with
-playtime, news, achievements and history tabs, and the action buttons for logs,
-information, customization and per-game settings. **History** summarises the
-game's sessions, shows the last twelve weeks and lists its latest play sessions.
+playtime, news, achievements and history tabs. The information button stays on
+the banner; per-game settings, customization, the session log and removal live
+in a single **···** menu (removal still asks for confirmation). **History**
+summarises the game's sessions, shows the last twelve weeks and lists its latest
+play sessions.
 **Customize** replaces or
 removes the cover, hero, logo and icon; images can come from SteamGridDB,
 Steam, the store itself, or a local file.

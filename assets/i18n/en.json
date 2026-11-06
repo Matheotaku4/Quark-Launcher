@@ -578,5 +578,8 @@
   "Pseudo et clé Web API RetroAchievements à renseigner dans Paramètres → Boutiques & outils.": "Set your RetroAchievements username and Web API key in Settings → Stores & tools.",
   "Vérifie le pseudo et la clé Web API dans Paramètres → Boutiques & outils.": "Check the username and Web API key in Settings → Stores & tools.",
   "Progression lue depuis RetroAchievements ; PCSX2 gère les déblocages.": "Progress read from RetroAchievements; PCSX2 handles unlocks.",
-  "Ouvrir la fiche du jeu dans la bibliothèque": "Open the game page in the library"
+  "Ouvrir la fiche du jeu dans la bibliothèque": "Open the game page in the library",
+  "Plus d’actions": "More actions",
+  "Journal de la session": "Session log",
+  "Personnaliser (artworks, notes, tags)": "Customize (artworks, notes, tags)"
 }

@@ -33,8 +33,9 @@ pub enum Tab {
     MyGames,
 }
 
-/// Traduit la page d'ouverture en onglet et en état d'accueil. L'accueil est
-/// une page de la bibliothèque, pas un quatrième onglet.
+/// Traduit la page d'ouverture en onglet et en état d'accueil. En interne,
+/// l'accueil reste une page de la bibliothèque (`Tab::Library` + `home`) ; la
+/// barre du haut lui donne son propre onglet.
 fn startup_route(page: StartPage) -> (Tab, bool) {
     match page {
         StartPage::Home => (Tab::Library, true),
@@ -671,6 +672,9 @@ pub struct QuarkApp {
     pub toasts: Vec<Toast>,
     pub dirty: bool,
     pub last_change: Instant,
+    /// Dernier point de contrôle des sessions en cours (voir
+    /// `checkpoint_running_sessions`).
+    session_checkpoint_at: Instant,
     /// Prochaine tentative après un échec d'écriture (backoff).
     save_retry_at: Instant,
     save_backoff: Duration,
@@ -1017,6 +1021,7 @@ impl QuarkApp {
             toasts: Vec::new(),
             dirty: false,
             last_change: Instant::now(),
+            session_checkpoint_at: Instant::now(),
             save_retry_at: Instant::now(),
             save_backoff: Duration::from_secs(2),
             config_error,
@@ -1361,7 +1366,42 @@ impl QuarkApp {
         }
     }
 
+    /// Écrit chaque minute la durée des sessions en cours dans la bibliothèque.
+    ///
+    /// Sans cela, le temps de jeu n'était inscrit qu'à la fin de la partie ou à
+    /// la fermeture normale de Quark : un plantage ou un `kill` perdait toute la
+    /// session. L'enregistrement disque passe par le même mécanisme différé que
+    /// les autres changements (`touch`).
+    fn checkpoint_running_sessions(&mut self) {
+        const INTERVAL: Duration = Duration::from_secs(60);
+        if self.running.is_empty() || self.snapshot_mode {
+            return;
+        }
+        if self.session_checkpoint_at.elapsed() < INTERVAL {
+            return;
+        }
+        self.session_checkpoint_at = Instant::now();
+        let sessions: Vec<(String, u64, i64)> = self
+            .running
+            .iter()
+            .map(|(id, game)| {
+                (
+                    id.clone(),
+                    game.started.elapsed().as_secs(),
+                    game.started_ts,
+                )
+            })
+            .collect();
+        for (id, secs, started_ts) in sessions {
+            if let Some(game) = self.lib.get_mut(&id) {
+                game.record_session(started_ts, secs);
+            }
+        }
+        self.touch();
+    }
+
     fn poll_running_games(&mut self, ctx: &egui::Context) {
+        self.checkpoint_running_sessions();
         let mut finished: Vec<(String, u64, i64, Option<crate::saves::SaveIdentity>)> = Vec::new();
         for (id, game) in self.running.iter_mut() {
             match game.child.try_wait() {
@@ -2924,14 +2964,24 @@ impl QuarkApp {
                     );
                     ui.add_space(30.0);
 
+                    // L'accueil a son propre onglet : il reste une page de la
+                    // bibliothèque (`Tab::Library` + `home`), mais l'utilisateur
+                    // le trouve au même niveau que les trois autres.
+                    let home_active = self.tab == Tab::Library && self.home;
+                    let library_active = self.tab == Tab::Library && !self.home;
+                    if widgets::tab(ui, "Accueil", home_active, &pal).clicked() {
+                        self.tab = Tab::Library;
+                        self.home = true;
+                    }
                     if widgets::tab(ui, "Boutique", self.tab == Tab::Store, &pal).clicked() {
                         self.tab = Tab::Store;
                     }
                     if widgets::tab(ui, "Mes jeux", self.tab == Tab::MyGames, &pal).clicked() {
                         self.tab = Tab::MyGames;
                     }
-                    if widgets::tab(ui, "Bibliothèque", self.tab == Tab::Library, &pal).clicked() {
+                    if widgets::tab(ui, "Bibliothèque", library_active, &pal).clicked() {
                         self.tab = Tab::Library;
+                        self.home = false;
                     }
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -2984,30 +3034,37 @@ impl QuarkApp {
                         }
 
                         ui.add_space(6.0);
-                        // Seul endroit où l'on bascule de vue : la colonne de
-                        // gauche et la page grille ne les dupliquent plus.
+                        // Seul endroit où l'on bascule de vue : un contrôle
+                        // segmenté aux libellés visibles, et un bouton
+                        // « Ajouter » explicite à la place de trois icônes.
                         if self.tab == Tab::Library {
                             ui.add_space(4.0);
-                            if widgets::icon_button(ui, 28.0, Icon::Grid, &pal, "Vue grille")
-                                .clicked()
-                            {
-                                self.set_view(ViewMode::Grid);
-                            }
-                            if widgets::icon_button(ui, 28.0, Icon::List, &pal, "Vue liste (Steam)")
-                                .clicked()
-                            {
-                                self.set_view(ViewMode::List);
-                            }
-                            if widgets::icon_button(ui, 28.0, Icon::Plus, &pal, "Ajouter un jeu")
-                                .clicked()
-                            {
+                            if widgets::ghost_button(ui, "Ajouter", &pal, Icon::Plus).clicked() {
                                 self.open_add_dialog();
+                            }
+                            ui.add_space(8.0);
+                            let current = usize::from(self.lib.settings.view == ViewMode::List);
+                            if let Some(index) = widgets::segmented(
+                                ui,
+                                &pal,
+                                &[(Icon::Grid, "Grille"), (Icon::List, "Liste")],
+                                current,
+                            ) {
+                                self.set_view(if index == 0 {
+                                    ViewMode::Grid
+                                } else {
+                                    ViewMode::List
+                                });
                             }
                             ui.add_space(6.0);
                         }
                         if self.tab == Tab::Library {
+                            // La recherche cède de la place quand la fenêtre est
+                            // étroite (1024 px minimum) au lieu de chevaucher
+                            // les onglets.
+                            let search_width = (ui.available_width() - 12.0).clamp(120.0, 260.0);
                             ui.add_sized(
-                                Vec2::new(260.0, 30.0),
+                                Vec2::new(search_width, 30.0),
                                 egui::TextEdit::singleline(&mut self.filter)
                                     .id(egui::Id::new("quark_filter"))
                                     .hint_text(crate::i18n::tr(

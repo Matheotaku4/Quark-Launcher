@@ -416,6 +416,122 @@ pub fn menu_row(ui: &mut egui::Ui, pal: &Palette, icon: Icon, color: Color32, la
     resp.clicked()
 }
 
+/// Contrôle segmenté (par exemple Grille | Liste) : le libellé reste visible,
+/// contrairement à des icônes seules dont le sens ne passait que par
+/// l'infobulle. Renvoie l'index du segment cliqué, jamais celui déjà choisi.
+pub fn segmented(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    items: &[(Icon, &str)],
+    selected: usize,
+) -> Option<usize> {
+    const HEIGHT: f32 = 28.0;
+    const ICON: f32 = 13.0;
+    const GAP: f32 = 6.0;
+    const PAD: f32 = 20.0;
+    let font = FontId::proportional(12.0);
+    let galleys: Vec<_> = items
+        .iter()
+        .map(|(_, label)| {
+            ui.painter()
+                .layout_no_wrap(crate::i18n::tr(label), font.clone(), pal.text)
+        })
+        .collect();
+    let widths: Vec<f32> = galleys
+        .iter()
+        .map(|galley| galley.size().x + ICON + GAP + PAD)
+        .collect();
+    let total = widths.iter().sum::<f32>() + 4.0;
+    let (outer, _) = ui.allocate_exact_size(Vec2::new(total, HEIGHT), Sense::hover());
+    let painter = ui.painter_at(outer);
+    painter.rect_filled(outer, 8.0, pal.surface);
+    painter.rect_stroke(
+        outer,
+        8.0,
+        Stroke::new(1.0_f32, pal.border),
+        egui::StrokeKind::Inside,
+    );
+    let mut clicked = None;
+    let mut x = outer.left() + 2.0;
+    for (index, ((icon, _), galley)) in items.iter().zip(galleys).enumerate() {
+        let rect = Rect::from_min_size(
+            Pos2::new(x, outer.top() + 2.0),
+            Vec2::new(widths[index], HEIGHT - 4.0),
+        );
+        x += widths[index];
+        let resp = ui.interact(rect, ui.id().with(("quark_segment", index)), Sense::click());
+        let on = index == selected;
+        let hover = ui.ctx().animate_bool_with_time(
+            ui.id().with(("quark_segment_hover", index)),
+            resp.hovered() && !on,
+            0.12,
+        );
+        if on {
+            painter.rect_filled(rect, 6.0, pal.accent);
+        } else if hover > 0.0 {
+            painter.rect_filled(rect, 6.0, pal.surface_hover.gamma_multiply(hover));
+        }
+        let ink = if on {
+            theme::on_accent(pal.accent)
+        } else {
+            theme::lerp_color(pal.text_dim, pal.text, hover)
+        };
+        let content = ICON + GAP + galley.size().x;
+        let x0 = rect.center().x - content / 2.0;
+        paint_icon(
+            ui,
+            Rect::from_center_size(
+                Pos2::new(x0 + ICON / 2.0, rect.center().y),
+                Vec2::splat(ICON),
+            ),
+            *icon,
+            ink,
+        );
+        painter.galley(
+            Pos2::new(x0 + ICON + GAP, rect.center().y - galley.size().y / 2.0),
+            galley,
+            ink,
+        );
+        if resp.clicked() && !on {
+            clicked = Some(index);
+        }
+    }
+    clicked
+}
+
+/// Bouton « ··· » : trois points tracés à la main (la police d'icônes embarquée
+/// n'a pas de glyphe fiable pour eux). Sert à ouvrir un menu d'actions.
+pub fn more_button(ui: &mut egui::Ui, size: f32, pal: &Palette, tooltip: &str) -> Response {
+    let tooltip = crate::i18n::tr(tooltip);
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
+    let painter = ui.painter_at(rect);
+    let hover = ui.ctx().animate_bool_with_time(
+        control_id(ui, rect, &tooltip, "more"),
+        resp.hovered(),
+        0.12,
+    );
+    painter.rect_filled(
+        rect,
+        8.0,
+        theme::lerp_color(pal.surface, pal.surface_hover, hover),
+    );
+    painter.rect_stroke(
+        rect,
+        8.0,
+        Stroke::new(1.0_f32, pal.border),
+        egui::StrokeKind::Inside,
+    );
+    let ink = theme::lerp_color(pal.text_dim, pal.text, hover);
+    for offset in [-5.5_f32, 0.0, 5.5] {
+        painter.circle_filled(rect.center() + Vec2::new(offset, 0.0), 1.7, ink);
+    }
+    if tooltip.is_empty() {
+        resp
+    } else {
+        resp.on_hover_text(tooltip)
+    }
+}
+
 /// Onglet de la barre supérieure (Boutique / Bibliothèque).
 pub fn tab(ui: &mut egui::Ui, label: &str, selected: bool, pal: &Palette) -> Response {
     let label = crate::i18n::tr(label);

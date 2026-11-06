@@ -1630,11 +1630,28 @@ impl Game {
         !self.exe_path().is_file()
     }
 
-    /// Ajoute une session terminée à l'historique et au temps de jeu.
+    /// Inscrit une session à l'historique et au temps de jeu.
+    ///
+    /// L'appel est idempotent pour un même début de session : Quark écrit un
+    /// point de contrôle toutes les minutes pendant la partie, puis l'inscription
+    /// finale met simplement la durée à jour au lieu de la compter deux fois. Si
+    /// Quark est tué en cours de partie, le temps déjà joué est donc conservé.
     pub fn record_session(&mut self, start: i64, secs: u64) {
         let secs = secs.max(1);
-        self.sessions.push(PlaySession { start, secs });
-        self.playtime_secs += secs;
+        match self
+            .sessions
+            .iter_mut()
+            .find(|session| session.start == start)
+        {
+            Some(existing) => {
+                self.playtime_secs = self.playtime_secs.saturating_sub(existing.secs) + secs;
+                existing.secs = secs;
+            }
+            None => {
+                self.sessions.push(PlaySession { start, secs });
+                self.playtime_secs += secs;
+            }
+        }
         self.last_played = Some(start + secs as i64);
         // Un jeu lancé n'est plus « à jouer » : il passe « en cours » tant que
         // le joueur ne lui a pas donné un autre statut.
@@ -2768,6 +2785,25 @@ mod tests {
         // Une durée nulle ne crée jamais une session vide.
         game.record_session(2_000, 0);
         assert_eq!(game.sessions[1].secs, 1);
+    }
+
+    #[test]
+    fn un_point_de_controle_n_est_pas_compte_deux_fois() {
+        let mut game = game("a");
+        // Points de contrôle pendant la partie, puis inscription finale.
+        game.record_session(5_000, 60);
+        game.record_session(5_000, 120);
+        assert_eq!(game.sessions.len(), 1);
+        assert_eq!(game.playtime_secs, 120);
+        game.record_session(5_000, 150);
+        assert_eq!(game.sessions.len(), 1);
+        assert_eq!(game.sessions[0].secs, 150);
+        assert_eq!(game.playtime_secs, 150);
+        assert_eq!(game.last_played, Some(5_150));
+        // Une autre session s'ajoute normalement.
+        game.record_session(9_000, 30);
+        assert_eq!(game.sessions.len(), 2);
+        assert_eq!(game.playtime_secs, 180);
     }
 
     #[test]

@@ -110,7 +110,7 @@ pub fn palette(mode: ThemeMode) -> Palette {
             row_selected: rgb(0x14, 0x22, 0x2E),
             text: rgb(0xE8, 0xE8, 0xE8),
             text_dim: rgb(0x9A, 0xA0, 0xA6),
-            text_faint: rgb(0x66, 0x6C, 0x72),
+            text_faint: rgb(0x78, 0x7E, 0x84),
             accent: rgb(0x1A, 0x9F, 0xFF),
             accent_hover: rgb(0x3F, 0xB0, 0xFF),
             accent_pressed: rgb(0x0F, 0x7F, 0xD0),
@@ -126,7 +126,7 @@ pub fn palette(mode: ThemeMode) -> Palette {
             row_selected: rgb(0x1B, 0x2A, 0x38),
             text: rgb(0xE3, 0xE7, 0xEB),
             text_dim: rgb(0x98, 0xA2, 0xAC),
-            text_faint: rgb(0x6E, 0x7A, 0x86),
+            text_faint: rgb(0x7E, 0x89, 0x94),
             accent: rgb(0x1A, 0x9F, 0xFF),
             accent_hover: rgb(0x3F, 0xB0, 0xFF),
             accent_pressed: rgb(0x0F, 0x7F, 0xD0),
@@ -142,7 +142,7 @@ pub fn palette(mode: ThemeMode) -> Palette {
             row_selected: rgb(0x30, 0x38, 0x58),
             text: rgb(0xCD, 0xD6, 0xF4),
             text_dim: rgb(0xA6, 0xAD, 0xC8),
-            text_faint: rgb(0x7F, 0x84, 0x9C),
+            text_faint: rgb(0x96, 0x9C, 0xB6),
             accent: rgb(0x89, 0xB4, 0xFA),
             accent_hover: rgb(0xB4, 0xBE, 0xFE),
             accent_pressed: rgb(0x74, 0x97, 0xD4),
@@ -157,8 +157,8 @@ pub fn palette(mode: ThemeMode) -> Palette {
             border: rgb(0x5B, 0x60, 0x78),
             row_selected: rgb(0x35, 0x40, 0x62),
             text: rgb(0xCA, 0xD3, 0xF5),
-            text_dim: rgb(0xA5, 0xAD, 0xCB),
-            text_faint: rgb(0x80, 0x87, 0xA0),
+            text_dim: rgb(0xAF, 0xB7, 0xD6),
+            text_faint: rgb(0x9E, 0xA6, 0xC3),
             accent: rgb(0x8A, 0xAD, 0xF4),
             accent_hover: rgb(0xB7, 0xBD, 0xF8),
             accent_pressed: rgb(0x72, 0x8E, 0xCC),
@@ -173,8 +173,8 @@ pub fn palette(mode: ThemeMode) -> Palette {
             border: rgb(0x62, 0x68, 0x80),
             row_selected: rgb(0x3E, 0x4B, 0x6B),
             text: rgb(0xC6, 0xD0, 0xF5),
-            text_dim: rgb(0xA5, 0xAD, 0xCE),
-            text_faint: rgb(0x83, 0x8B, 0xA7),
+            text_dim: rgb(0xBD, 0xC7, 0xEA),
+            text_faint: rgb(0xAB, 0xB4, 0xD5),
             accent: rgb(0x8C, 0xAA, 0xEE),
             accent_hover: rgb(0xB5, 0xBF, 0xF4),
             accent_pressed: rgb(0x73, 0x8B, 0xC4),
@@ -190,7 +190,7 @@ pub fn palette(mode: ThemeMode) -> Palette {
             row_selected: rgb(0x38, 0x35, 0x52),
             text: rgb(0xF8, 0xF8, 0xF2),
             text_dim: rgb(0xBF, 0xC7, 0xD5),
-            text_faint: rgb(0x8B, 0x91, 0xA5),
+            text_faint: rgb(0x9B, 0xA2, 0xB4),
             accent: rgb(0xBD, 0x93, 0xF9),
             accent_hover: rgb(0xCA, 0xA9, 0xFA),
             accent_pressed: rgb(0x9B, 0x76, 0xD0),
@@ -206,7 +206,7 @@ pub fn palette(mode: ThemeMode) -> Palette {
             row_selected: rgb(0x3A, 0x4B, 0x5A),
             text: rgb(0xEC, 0xEF, 0xF4),
             text_dim: rgb(0xD8, 0xDE, 0xE9),
-            text_faint: rgb(0x9A, 0xA4, 0xB5),
+            text_faint: rgb(0xA7, 0xB0, 0xC0),
             accent: rgb(0x88, 0xC0, 0xD0),
             accent_hover: rgb(0x8F, 0xBC, 0xBB),
             accent_pressed: rgb(0x5E, 0x87, 0x97),
@@ -222,7 +222,7 @@ pub fn palette(mode: ThemeMode) -> Palette {
             row_selected: rgb(0x3D, 0x38, 0x2A),
             text: rgb(0xEB, 0xDB, 0xB2),
             text_dim: rgb(0xBD, 0xAE, 0x93),
-            text_faint: rgb(0x92, 0x86, 0x74),
+            text_faint: rgb(0xA5, 0x98, 0x82),
             accent: rgb(0xFA, 0xBD, 0x2F),
             accent_hover: rgb(0xFB, 0xD2, 0x4A),
             accent_pressed: rgb(0xD7, 0x99, 0x21),
@@ -238,7 +238,7 @@ pub fn palette(mode: ThemeMode) -> Palette {
             row_selected: rgb(0x28, 0x3A, 0x5B),
             text: rgb(0xC0, 0xCA, 0xF5),
             text_dim: rgb(0xA9, 0xB1, 0xD6),
-            text_faint: rgb(0x73, 0x7A, 0xA2),
+            text_faint: rgb(0x88, 0x8F, 0xB6),
             accent: rgb(0x7A, 0xA2, 0xF7),
             accent_hover: rgb(0x9A, 0xB8, 0xFA),
             accent_pressed: rgb(0x5E, 0x7F, 0xC9),
@@ -253,8 +253,8 @@ pub fn palette(mode: ThemeMode) -> Palette {
             border: rgb(0x40, 0x3D, 0x52),
             row_selected: rgb(0x36, 0x2F, 0x50),
             text: rgb(0xE0, 0xDE, 0xF4),
-            text_dim: rgb(0x90, 0x8C, 0xAA),
-            text_faint: rgb(0x6E, 0x6A, 0x86),
+            text_dim: rgb(0x9E, 0x9A, 0xB7),
+            text_faint: rgb(0x8F, 0x8B, 0xA7),
             accent: rgb(0xC4, 0xA7, 0xE7),
             accent_hover: rgb(0xD5, 0xBE, 0xF0),
             accent_pressed: rgb(0xA3, 0x86, 0xC4),
@@ -269,8 +269,8 @@ pub fn palette(mode: ThemeMode) -> Palette {
             border: rgb(0x47, 0x52, 0x58),
             row_selected: rgb(0x3A, 0x4A, 0x40),
             text: rgb(0xD3, 0xC6, 0xAA),
-            text_dim: rgb(0x9D, 0xA9, 0xA0),
-            text_faint: rgb(0x7A, 0x84, 0x7C),
+            text_dim: rgb(0xB8, 0xB8, 0xA5),
+            text_faint: rgb(0xA4, 0xA7, 0x97),
             accent: rgb(0xA7, 0xC0, 0x80),
             accent_hover: rgb(0xBA, 0xD1, 0x92),
             accent_pressed: rgb(0x86, 0x9D, 0x62),
@@ -285,8 +285,8 @@ pub fn palette(mode: ThemeMode) -> Palette {
             border: rgb(0x3E, 0x44, 0x51),
             row_selected: rgb(0x2F, 0x3E, 0x52),
             text: rgb(0xAB, 0xB2, 0xBF),
-            text_dim: rgb(0x82, 0x89, 0x97),
-            text_faint: rgb(0x5C, 0x63, 0x70),
+            text_dim: rgb(0xA4, 0xAB, 0xB8),
+            text_faint: rgb(0x93, 0x9A, 0xA7),
             accent: rgb(0x61, 0xAF, 0xEF),
             accent_hover: rgb(0x8A, 0xC7, 0xF5),
             accent_pressed: rgb(0x4A, 0x8C, 0xC4),
@@ -302,7 +302,7 @@ pub fn palette(mode: ThemeMode) -> Palette {
             row_selected: rgb(0x2D, 0x35, 0x52),
             text: rgb(0xDC, 0xD7, 0xBA),
             text_dim: rgb(0xC8, 0xC0, 0x93),
-            text_faint: rgb(0x8A, 0x89, 0x80),
+            text_faint: rgb(0x96, 0x94, 0x84),
             accent: rgb(0x7E, 0x9C, 0xD8),
             accent_hover: rgb(0x9B, 0xB4, 0xE8),
             accent_pressed: rgb(0x5F, 0x79, 0xAE),
@@ -485,6 +485,47 @@ mod tests {
                     palette(*other).bg,
                     "{mode:?} et {other:?} identiques"
                 );
+            }
+        }
+    }
+
+    /// Luminance relative WCAG 2.x d'une couleur opaque.
+    fn luminance(color: Color32) -> f32 {
+        let channel = |value: u8| {
+            let v = value as f32 / 255.0;
+            if v <= 0.03928 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(color.r()) + 0.7152 * channel(color.g()) + 0.0722 * channel(color.b())
+    }
+
+    fn contraste(a: Color32, b: Color32) -> f32 {
+        let (la, lb) = (luminance(a), luminance(b));
+        (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+    }
+
+    #[test]
+    fn les_textes_secondaires_restent_lisibles_dans_tous_les_themes() {
+        // WCAG AA (4,5:1) pour le texte secondaire et tertiaire sur les trois
+        // fonds qui les portent. Les états de survol sont volontairement exclus.
+        for mode in ThemeMode::ALL {
+            let pal = palette(mode);
+            for (nom, fond) in [
+                ("bg", pal.bg),
+                ("panel", pal.panel),
+                ("surface", pal.surface),
+            ] {
+                for (libelle, texte) in [("text_dim", pal.text_dim), ("text_faint", pal.text_faint)]
+                {
+                    let ratio = contraste(texte, fond);
+                    assert!(
+                        ratio >= 4.5,
+                        "{mode:?} : {libelle} sur {nom} = {ratio:.2}:1 (< 4,5:1)"
+                    );
+                }
             }
         }
     }

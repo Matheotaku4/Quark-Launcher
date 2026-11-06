@@ -1048,64 +1048,76 @@ impl QuarkApp {
                             },
                         );
 
-                        // Actions de la fiche, de droite à gauche : engrenage
-                        // bleu (configurer), crayon vert (personnaliser),
-                        // poubelle rouge (retirer), puis le journal et les
-                        // informations du jeu.
-                        let action = |ui: &mut egui::Ui,
-                                      slot: f32,
-                                      icon: Icon,
-                                      color: Color32,
-                                      tip: &str| {
-                            let rect = Rect::from_min_size(
-                                Pos2::new(hero.right() - slot, hero.top() + 14.0),
-                                Vec2::splat(34.0),
-                            );
-                            let mut clicked = false;
-                            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-                                clicked = widgets::tinted_icon_button(ui, 32.0, icon, color, tip)
-                                    .clicked();
-                            });
-                            clicked
-                        };
-                        gear_clicked = action(
-                            ui,
-                            50.0,
-                            Icon::Gear,
-                            Color32::from_rgb(0x3F, 0x9B, 0xE8),
-                            "Configurer ce jeu",
-                        );
-                        customize_clicked = action(
-                            ui,
-                            90.0,
-                            Icon::Pencil,
-                            Color32::from_rgb(0x4C, 0xB0, 0x6A),
-                            "Personnaliser (artworks, notes, tags)",
-                        );
-                        remove_clicked = action(
-                            ui,
-                            130.0,
-                            Icon::Trash,
-                            Color32::from_rgb(0xD9, 0x41, 0x41),
-                            "Retirer de la bibliothèque",
-                        );
-                        let log_rect = Rect::from_min_size(
-                            Pos2::new(hero.right() - 178.0, hero.top() + 14.0),
+                        // Actions de la fiche : « Jouer » reste l'unique action
+                        // principale. Les informations restent à un clic, et les
+                        // actions moins fréquentes (configurer, personnaliser,
+                        // journal, retirer) vivent dans un seul menu « ··· »
+                        // au lieu de cinq icônes de même poids.
+                        let more_rect = Rect::from_min_size(
+                            Pos2::new(hero.right() - 50.0, hero.top() + 14.0),
                             Vec2::splat(34.0),
                         );
-                        ui.scope_builder(egui::UiBuilder::new().max_rect(log_rect), |ui| {
-                            log_clicked = widgets::floating_icon_button(
-                                ui,
-                                34.0,
-                                Icon::Log,
-                                &pal,
-                                "Journal de la session",
-                                hero_light,
-                            )
-                            .clicked();
+                        ui.scope_builder(egui::UiBuilder::new().max_rect(more_rect), |ui| {
+                            let response = widgets::more_button(ui, 34.0, &pal, "Plus d’actions");
+                            egui::Popup::from_toggle_button_response(&response)
+                                .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
+                                .frame(
+                                    egui::Frame::menu(ui.style())
+                                        .fill(pal.header)
+                                        .stroke(egui::Stroke::new(1.0_f32, pal.border))
+                                        .corner_radius(8.0)
+                                        .inner_margin(6.0),
+                                )
+                                .show(|ui| {
+                                    ui.set_min_width(226.0);
+                                    if widgets::menu_row(
+                                        ui,
+                                        &pal,
+                                        Icon::Gear,
+                                        Color32::from_rgb(0x3F, 0x9B, 0xE8),
+                                        "Configurer ce jeu",
+                                    ) {
+                                        gear_clicked = true;
+                                        ui.close();
+                                    }
+                                    if widgets::menu_row(
+                                        ui,
+                                        &pal,
+                                        Icon::Pencil,
+                                        Color32::from_rgb(0x4C, 0xB0, 0x6A),
+                                        "Personnaliser (artworks, notes, tags)",
+                                    ) {
+                                        customize_clicked = true;
+                                        ui.close();
+                                    }
+                                    if widgets::menu_row(
+                                        ui,
+                                        &pal,
+                                        Icon::Log,
+                                        pal.text_dim,
+                                        "Journal de la session",
+                                    ) {
+                                        log_clicked = true;
+                                        ui.close();
+                                    }
+                                    ui.add_space(2.0);
+                                    ui.separator();
+                                    // La confirmation existe déjà : `request_remove`
+                                    // ouvre `confirm_remove_dialog`.
+                                    if widgets::menu_row(
+                                        ui,
+                                        &pal,
+                                        Icon::Trash,
+                                        Color32::from_rgb(0xD9, 0x41, 0x41),
+                                        "Retirer de la bibliothèque",
+                                    ) {
+                                        remove_clicked = true;
+                                        ui.close();
+                                    }
+                                });
                         });
                         let info_rect = Rect::from_min_size(
-                            Pos2::new(hero.right() - 222.0, hero.top() + 14.0),
+                            Pos2::new(hero.right() - 94.0, hero.top() + 14.0),
                             Vec2::splat(34.0),
                         );
                         ui.scope_builder(egui::UiBuilder::new().max_rect(info_rect), |ui| {
