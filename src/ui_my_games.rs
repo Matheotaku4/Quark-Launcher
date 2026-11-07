@@ -124,6 +124,20 @@ impl QuarkApp {
                                                 .hint_text(crate::i18n::tr("Rechercher un jeu"))
                                                 .font(egui::FontId::proportional(12.5)),
                                             );
+                                            ui.add_space(8.0);
+                                            let current = usize::from(self.lib.settings.my_games_list);
+                                            if let Some(index) = crate::widgets::segmented(
+                                                ui,
+                                                &pal,
+                                                &[
+                                                    (crate::widgets::Icon::Grid, "Grille"),
+                                                    (crate::widgets::Icon::List, "Liste"),
+                                                ],
+                                                current,
+                                            ) {
+                                                self.lib.settings.my_games_list = index == 1;
+                                                self.touch();
+                                            }
                                         },
                                     );
                                 });
@@ -227,6 +241,23 @@ impl QuarkApp {
                                     // Seules les lignes visibles sont construites
                                     // et décodées : une bibliothèque de plusieurs
                                     // centaines de jeux garde un défilement fluide.
+                                    if self.lib.settings.my_games_list {
+                                    self.provider_list(
+                                        ui,
+                                        &pal,
+                                        &games,
+                                        &mut install,
+                                        &mut install_request,
+                                        &mut adopt,
+                                        &mut show_achievements,
+                                        &mut uninstall,
+                                        &mut open_game,
+                                        &mut preview_save,
+                                        &mut inventory_save,
+                                        &mut choose_save_folder,
+                                        &mut remove_save_folder,
+                                    );
+                                    } else {
                                     self.provider_grid(
                                         ui,
                                         &pal,
@@ -242,6 +273,7 @@ impl QuarkApp {
                                         &mut choose_save_folder,
                                         &mut remove_save_folder,
                                     );
+                                    }
                                 }
                                 ui.add_space(16.0);
                                 for candidate in
@@ -636,6 +668,85 @@ impl QuarkApp {
 
         // Réserve la hauteur totale : la barre de défilement représente toute
         // la bibliothèque, pas seulement les lignes déjà construites.
+        ui.allocate_space(Vec2::new(width, rows as f32 * row_step));
+        self.queue_provider_covers(ui.ctx(), &visible);
+    }
+
+    /// Vue Liste de « Mes jeux » : une ligne de 64 px par jeu, avec un bouton
+    /// d'action visible (Ouvrir / Installer) et un menu « ··· ». Les actions
+    /// n'y dépendent plus du clic droit ou du double-clic, qu'on ne devine pas.
+    /// Même virtualisation que la grille : seules les lignes visibles sont
+    /// construites et leurs jaquettes décodées.
+    #[allow(clippy::too_many_arguments)]
+    fn provider_list(
+        &mut self,
+        ui: &mut egui::Ui,
+        pal: &crate::theme::Palette,
+        games: &[ProviderGame],
+        install: &mut Option<u32>,
+        install_request: &mut Option<crate::providers::ProviderGameKey>,
+        adopt: &mut Option<crate::providers::ProviderGameKey>,
+        achievements: &mut Option<crate::providers::ProviderGameKey>,
+        uninstall: &mut Option<crate::providers::ProviderGameKey>,
+        open: &mut Option<crate::providers::ProviderGameKey>,
+        preview_save: &mut Option<crate::providers::ProviderGameKey>,
+        inventory_save: &mut Option<crate::providers::ProviderGameKey>,
+        choose_save_folder: &mut Option<crate::providers::ProviderGameKey>,
+        remove_save_folder: &mut Option<(crate::providers::ProviderGameKey, PathBuf)>,
+    ) {
+        const ROW_H: f32 = 64.0;
+        const GAP: f32 = 6.0;
+        let row_step = ROW_H + GAP;
+        let rows = games.len();
+        let list_top = ui.cursor().top();
+        let width = ui.available_width();
+        let clip = ui.clip_rect();
+        let first =
+            (((clip.top() - list_top) / row_step).floor().max(0.0) as usize).saturating_sub(1);
+        let last =
+            ((((clip.bottom() - list_top) / row_step).ceil().max(0.0) as usize) + 1).min(rows);
+        let mut visible = Vec::new();
+
+        for row in first..last {
+            let Some(game) = games.get(row) else {
+                break;
+            };
+            let row_rect = Rect::from_min_size(
+                Pos2::new(ui.max_rect().left(), list_top + row as f32 * row_step),
+                Vec2::new(width, ROW_H),
+            );
+            let mut row_ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(row_rect)
+                    .layout(Layout::left_to_right(Align::Center)),
+            );
+            row_ui.set_clip_rect(row_rect.intersect(ui.clip_rect()));
+            let cover = self.cover_for(game);
+            let texture = cover
+                .as_ref()
+                .and_then(|path| self.texture_thumb(row_ui.ctx(), path));
+            visible.push(game.clone());
+            provider_row(
+                &mut row_ui,
+                pal,
+                game,
+                Vec2::new(width, ROW_H),
+                texture.as_ref(),
+                &mut *install,
+                &mut *install_request,
+                &mut *adopt,
+                &mut *achievements,
+                &mut *uninstall,
+                &mut *open,
+                &mut *preview_save,
+                &mut *inventory_save,
+                &mut *choose_save_folder,
+                &mut *remove_save_folder,
+            );
+        }
+
+        // Réserve la hauteur totale pour que la barre de défilement représente
+        // toute la bibliothèque.
         ui.allocate_space(Vec2::new(width, rows as f32 * row_step));
         self.queue_provider_covers(ui.ctx(), &visible);
     }
@@ -1125,6 +1236,235 @@ fn provider_card(
         game.title,
         provider_name(game.key.provider)
     ));
+}
+
+/// Déclenche l'action principale d'un jeu : ouvrir s'il est installé, préparer
+/// l'installation s'il est possédé, ouvrir sa fiche sinon. C'est la même règle
+/// que le double-clic sur une carte de la grille.
+fn activate_game(
+    game: &ProviderGame,
+    installed: bool,
+    busy: bool,
+    install: &mut Option<u32>,
+    install_request: &mut Option<crate::providers::ProviderGameKey>,
+    open: &mut Option<crate::providers::ProviderGameKey>,
+) {
+    if installed {
+        *open = Some(game.key.clone());
+    } else if busy {
+        // Une installation est déjà en cours : rien à relancer.
+    } else if game.owned && game.key.provider == Provider::Steam {
+        if let Ok(app_id) = game.key.product_id.parse::<u32>() {
+            *install = Some(app_id);
+        }
+    } else if game.owned {
+        *install_request = Some(game.key.clone());
+    } else {
+        *open = Some(game.key.clone());
+    }
+}
+
+/// Une ligne de la vue Liste : jaquette, titre, boutique et état, puis le
+/// bouton d'action et le menu « ··· » à droite.
+#[allow(clippy::too_many_arguments)]
+fn provider_row(
+    ui: &mut egui::Ui,
+    pal: &crate::theme::Palette,
+    game: &ProviderGame,
+    size: Vec2,
+    texture: Option<&egui::TextureHandle>,
+    install: &mut Option<u32>,
+    install_request: &mut Option<crate::providers::ProviderGameKey>,
+    adopt: &mut Option<crate::providers::ProviderGameKey>,
+    achievements: &mut Option<crate::providers::ProviderGameKey>,
+    uninstall: &mut Option<crate::providers::ProviderGameKey>,
+    open: &mut Option<crate::providers::ProviderGameKey>,
+    preview_save: &mut Option<crate::providers::ProviderGameKey>,
+    inventory_save: &mut Option<crate::providers::ProviderGameKey>,
+    choose_save_folder: &mut Option<crate::providers::ProviderGameKey>,
+    remove_save_folder: &mut Option<(crate::providers::ProviderGameKey, PathBuf)>,
+) {
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let painter = ui.painter_at(rect);
+    let id = egui::Id::new((
+        "quark-provider-row",
+        provider_name(game.key.provider),
+        game.key.product_id.as_str(),
+    ));
+    let hover = ui
+        .ctx()
+        .animate_bool_with_time(id.with("hover"), response.hovered(), 0.12);
+    painter.rect_filled(rect, 10.0, theme::lerp_color(pal.panel, pal.surface, hover));
+    painter.rect_stroke(
+        rect,
+        10.0,
+        egui::Stroke::new(1.0_f32, pal.border.gamma_multiply(0.6 + 0.4 * hover)),
+        egui::StrokeKind::Inside,
+    );
+
+    let installed = game.install_state == InstallState::Installed;
+    let busy = matches!(
+        game.install_state,
+        InstallState::Installing | InstallState::Updating | InstallState::Repairing
+    );
+    let can_install = game.owned && !installed && !busy;
+
+    // Jaquette.
+    let thumb = Rect::from_min_size(
+        Pos2::new(rect.left() + 12.0, rect.center().y - 24.0),
+        Vec2::new(36.0, 48.0),
+    );
+    match texture {
+        Some(texture) => {
+            crate::images::rounded_cover_tinted(ui, thumb, texture, 6.0, egui::Color32::WHITE)
+        }
+        None => crate::widgets::monogram(
+            &painter,
+            thumb,
+            &game.title.chars().next().unwrap_or('?').to_string(),
+            theme::monogram_color(&game.title),
+            pal,
+        ),
+    }
+
+    // Zones de droite : menu « ··· » puis bouton d'action.
+    let more_rect = Rect::from_center_size(
+        Pos2::new(rect.right() - 12.0 - 17.0, rect.center().y),
+        Vec2::splat(34.0),
+    );
+    let button_rect = Rect::from_min_size(
+        Pos2::new(more_rect.left() - 10.0 - 96.0, rect.center().y - 16.0),
+        Vec2::new(96.0, 32.0),
+    );
+
+    // Titre, boutique et état, tronqués avant le bouton d'action.
+    let text_rect = Rect::from_min_max(
+        Pos2::new(thumb.right() + 14.0, rect.top() + 12.0),
+        Pos2::new(button_rect.left() - 14.0, rect.bottom() - 8.0),
+    );
+    let mut text_ui = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(text_rect)
+            .layout(Layout::top_down(Align::Min)),
+    );
+    text_ui.set_clip_rect(text_rect.intersect(ui.clip_rect()));
+    text_ui.spacing_mut().item_spacing.y = 3.0;
+    text_ui.add(
+        egui::Label::new(
+            crate::i18n::rich(&game.title)
+                .size(14.0)
+                .strong()
+                .color(pal.text),
+        )
+        .truncate(),
+    );
+    text_ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        ui.label(
+            crate::i18n::rich(provider_name(game.key.provider))
+                .size(11.5)
+                .color(provider_color(game.key.provider)),
+        );
+        ui.label(crate::i18n::rich("·").size(11.5).color(pal.text_faint));
+        ui.label(
+            crate::i18n::rich(install_label(game.install_state))
+                .size(11.5)
+                .color(if installed { pal.accent } else { pal.text_dim }),
+        );
+    });
+
+    // Bouton d'action : accent pour « Installer », neutre pour « Ouvrir »,
+    // inerte pendant une installation.
+    let (label, enabled) = if installed {
+        ("Ouvrir", true)
+    } else if can_install {
+        ("Installer", true)
+    } else if busy {
+        (install_label(game.install_state), false)
+    } else {
+        ("Ouvrir", true)
+    };
+    let button = ui.interact(
+        button_rect,
+        id.with("primary"),
+        if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        },
+    );
+    let button_hover = ui.ctx().animate_bool_with_time(
+        id.with("primary-hover"),
+        button.hovered() && enabled,
+        0.12,
+    );
+    let (fill, ink) = if can_install {
+        (
+            theme::lerp_color(pal.accent, pal.accent_hover, button_hover),
+            theme::on_accent(pal.accent),
+        )
+    } else {
+        (
+            theme::lerp_color(pal.surface, pal.surface_hover, button_hover),
+            if enabled { pal.text } else { pal.text_dim },
+        )
+    };
+    painter.rect_filled(button_rect, 8.0, fill);
+    if !can_install {
+        painter.rect_stroke(
+            button_rect,
+            8.0,
+            egui::Stroke::new(1.0_f32, pal.border),
+            egui::StrokeKind::Inside,
+        );
+    }
+    painter.text(
+        button_rect.center(),
+        Align2::CENTER_CENTER,
+        crate::i18n::tr(label),
+        egui::FontId::proportional(12.5),
+        ink,
+    );
+    if enabled && button.clicked() {
+        activate_game(game, installed, busy, install, install_request, open);
+    }
+
+    // Menu « ··· » : les mêmes actions que le clic droit de la grille.
+    ui.scope_builder(egui::UiBuilder::new().max_rect(more_rect), |ui| {
+        let more = crate::widgets::more_button(ui, 34.0, pal, "Plus d’actions");
+        egui::Popup::from_toggle_button_response(&more)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
+            .frame(
+                egui::Frame::menu(ui.style())
+                    .fill(pal.header)
+                    .stroke(egui::Stroke::new(1.0_f32, pal.border))
+                    .corner_radius(8.0)
+                    .inner_margin(6.0),
+            )
+            .show(|ui| {
+                ui.set_min_width(210.0);
+                actions_menu_items(
+                    ui,
+                    pal,
+                    game,
+                    installed,
+                    install,
+                    install_request,
+                    adopt,
+                    achievements,
+                    uninstall,
+                    preview_save,
+                    inventory_save,
+                    choose_save_folder,
+                    remove_save_folder,
+                );
+            });
+    });
+
+    // Double-clic sur la ligne : même action que le bouton.
+    if response.double_clicked() {
+        activate_game(game, installed, busy, install, install_request, open);
+    }
 }
 
 /// Jeux de boutique à afficher : onglet de boutique, recherche par titre (sans

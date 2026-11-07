@@ -200,21 +200,21 @@ fn dynamic_english(text: &str) -> String {
 pub fn release_summary() -> [&'static str; 6] {
     if is_english() {
         [
-            "Home has its own tab in the top bar, and the library list now starts with a Home row, like Steam.",
-            "Grid and List are chosen with a labelled segmented control, and Add is a labelled button.",
-            "On a game page, the less frequent actions (settings, customize, session log, remove) live in one \"···\" menu.",
-            "On wide windows, the game page shows an overview: playtime, last session, session count and genres.",
-            "Playtime is now checkpointed every minute: a Quark crash no longer loses the whole session.",
-            "Secondary text meets WCAG AA contrast in all 13 themes. Existing configurations remain compatible.",
+            "My Games has a List view: one row per game, with an Open or Install button that is always visible.",
+            "The \"···\" menu of each row groups the actions that used to require a right-click.",
+            "Grid and List use the same segmented control as the library, and the choice is remembered.",
+            "Home has its own tab, the library list starts with a Home row, and a game page keeps its actions in one \"···\" menu.",
+            "The game page shows an overview on wide windows, and playtime is saved every minute.",
+            "Secondary text meets WCAG AA contrast in all 13 themes. Existing configurations remain compatible: My Games keeps the grid by default.",
         ]
     } else {
         [
-            "L'accueil a son propre onglet dans la barre du haut, et la liste de la bibliothèque commence par une ligne « Accueil », comme Steam.",
-            "Grille et Liste se choisissent avec un contrôle segmenté, et « Ajouter » est un bouton avec libellé.",
-            "Sur la fiche d'un jeu, les actions moins fréquentes (configurer, personnaliser, journal, retirer) sont réunies dans un menu « ··· ».",
-            "Sur les fenêtres larges, la fiche affiche un aperçu : temps de jeu, dernière session, nombre de sessions et genres.",
-            "Le temps de jeu est enregistré chaque minute : un plantage de Quark ne fait plus perdre toute la session.",
-            "Les textes secondaires respectent le contraste WCAG AA dans les 13 thèmes. Les configurations existantes restent compatibles.",
+            "« Mes jeux » a une vue Liste : une ligne par jeu, avec un bouton Ouvrir ou Installer toujours visible.",
+            "Le menu « ··· » de chaque ligne regroupe les actions autrefois réservées au clic droit.",
+            "Grille et Liste se choisissent avec le même contrôle segmenté que la bibliothèque, et le choix est mémorisé.",
+            "L'accueil a son propre onglet, la liste de la bibliothèque commence par « Accueil », et la fiche d'un jeu réunit ses actions dans un menu « ··· ».",
+            "La fiche affiche un aperçu sur les fenêtres larges, et le temps de jeu est enregistré chaque minute.",
+            "Les textes secondaires respectent le contraste WCAG AA dans les 13 thèmes. Les configurations existantes restent compatibles : Mes jeux garde la grille par défaut.",
         ]
     }
 }
@@ -268,11 +268,11 @@ mod tests {
     fn le_resume_de_version_suit_la_langue() {
         let _guard = language_lock();
         set_language(UiLanguage::French);
-        assert!(release_summary()[0].starts_with("L'accueil a son propre onglet"));
-        assert!(release_summary()[1].starts_with("Grille et Liste"));
+        assert!(release_summary()[0].starts_with("« Mes jeux » a une vue Liste"));
+        assert!(release_summary()[1].starts_with("Le menu « ··· »"));
         set_language(UiLanguage::English);
-        assert!(release_summary()[0].starts_with("Home has its own tab"));
-        assert!(release_summary()[1].starts_with("Grid and List"));
+        assert!(release_summary()[0].starts_with("My Games has a List view"));
+        assert!(release_summary()[1].starts_with("The \"···\" menu"));
         assert!(release_title().starts_with("What's new"));
         set_language(UiLanguage::French);
     }

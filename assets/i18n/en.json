@@ -583,5 +583,8 @@
   "Journal de la session": "Session log",
   "Personnaliser (artworks, notes, tags)": "Customize (artworks, notes, tags)",
   "APERÇU": "OVERVIEW",
-  "Toute la bibliothèque": "All games"
+  "Toute la bibliothèque": "All games",
+  "Installer": "Install",
+  "En attente": "Queued",
+  "Installation…": "Installing…"
 }

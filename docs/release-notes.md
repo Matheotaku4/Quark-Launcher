@@ -1,13 +1,17 @@
-## Quark 1.3.5 — Accueil, menu d'actions et sessions fiables
+## Quark 1.4.0 — Mes jeux en liste, interface complète
 
-### Interface
+### Mes jeux
 
-- L'accueil a son propre onglet dans la barre du haut ; la liste de la bibliothèque commence par une ligne « Accueil », et la vue Grille garde un bouton « Accueil ».
-- Grille et Liste se choisissent avec un contrôle segmenté, et « Ajouter » est un bouton avec libellé.
-- Sur la fiche d'un jeu, configurer, personnaliser, le journal de session et le retrait sont réunis dans un menu « ··· » (le retrait demande toujours confirmation).
-- Sur la page d'accueil, « Toute la bibliothèque » est un vrai titre de section, avec des puces de tri et des légendes de jaquettes plus lisibles.
-- Les textes secondaires respectent le contraste WCAG AA dans les 13 thèmes.
+- Nouvelle vue **Liste** : une ligne de 64 px par jeu (jaquette, titre, boutique, état) avec un bouton **Ouvrir** ou **Installer** toujours visible.
+- Le menu « ··· » de chaque ligne regroupe les actions qui demandaient un clic droit ou un double-clic : installation, désinstallation, succès, sauvegardes.
+- Grille et Liste se choisissent avec le même contrôle segmenté que la bibliothèque ; le choix est mémorisé. La grille reste l'affichage par défaut, aucune migration n'est nécessaire.
+
+### Interface (récapitulatif depuis la 1.3.2)
+
+- Onglet Accueil dans la barre du haut, ligne « Accueil » en tête de la liste de la bibliothèque.
+- Menu « ··· » sur la fiche d'un jeu, carte d'aperçu sur les fenêtres larges.
+- Contraste WCAG AA des textes secondaires dans les 13 thèmes.
 
 ### Fiabilité
 
-- Le temps de jeu est enregistré chaque minute pendant une partie : un plantage ou un arrêt brutal de Quark ne fait perdre qu'une minute au maximum.
+- Le temps de jeu est enregistré chaque minute pendant une partie.

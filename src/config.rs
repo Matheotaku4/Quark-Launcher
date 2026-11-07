@@ -983,6 +983,9 @@ pub struct Settings {
     /// Dernière version dont le résumé a été lu. Vide sur une installation
     /// neuve ou une configuration antérieure à 1.2.
     pub last_seen_version: String,
+    /// « Mes jeux » en liste (une ligne par jeu, bouton d'action visible) au lieu
+    /// de la grille de jaquettes. Faux par défaut : l'affichage historique.
+    pub my_games_list: bool,
     /// Affiche un hero aléatoire flouté derrière l'accueil et la bibliothèque.
     pub hero_background: bool,
     /// Rayon du flou du fond, en pixels logiques.
@@ -1090,6 +1093,7 @@ impl Default for Settings {
             ui_language: UiLanguage::French,
             onboarding_done: false,
             last_seen_version: String::new(),
+            my_games_list: false,
             hero_background: false,
             hero_background_blur: 14.0,
             sgdb_api_key: String::new(),
@@ -2804,6 +2808,12 @@ mod tests {
         game.record_session(9_000, 30);
         assert_eq!(game.sessions.len(), 2);
         assert_eq!(game.playtime_secs, 180);
+    }
+
+    #[test]
+    fn mes_jeux_s_ouvre_en_grille_par_defaut() {
+        // Les configurations existantes n'ont pas ce réglage : elles gardent la grille.
+        assert!(!Settings::default().my_games_list);
     }
 
     #[test]

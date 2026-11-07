@@ -6,7 +6,7 @@ own, launches Windows games through Proton (or umu-launcher), and stays out of
 the way with an AMOLED interface, a store page, save snapshots and an in-game
 overlay.
 
-This is the **1.3.5** documentation. Older release notes are kept on the GitHub
+This is the **1.4.0** documentation. Older release notes are kept on the GitHub
 releases page; `docs/release-notes.md` only describes the release currently
 being published.
 
@@ -27,12 +27,11 @@ The wiki is published from the versioned source in [`wiki/`](wiki/) by the
 | --- | --- |
 | ![Onboarding](docs/images/onboarding-fr.png) | ![What's new](docs/images/whats-new-fr.png) |
 
-## What's new in 1.3.5
+## What's new in 1.4.0
 
-- **Home tab.** Home sits in the top bar next to Store, My games and Library; the library list starts with a Home row and the Grid view keeps a Home button.
-- **Clearer controls.** Grid / List is a labelled segmented control, Add is a labelled button, and a game page keeps its secondary actions in one **···** menu.
+- **My games list view.** A new **List** view shows one row per game with an always-visible **Open** or **Install** button and a **···** menu holding the actions that used to need a right-click. Grid / List uses the same segmented control as the library and is remembered; the grid stays the default.
+- **Complete interface pass.** Home tab, a Home row at the top of the library list, a **···** menu on the game page, an overview card on wide windows, and WCAG AA contrast in all 13 themes.
 - **Reliable playtime.** The running session is saved every minute, so a crash loses at most the last minute.
-- **Readable text.** Secondary text meets WCAG AA contrast in all 13 themes.
 
 | PlayStation 2 |
 | --- |
@@ -40,7 +39,7 @@ The wiki is published from the versioned source in [`wiki/`](wiki/) by the
 
 ## Table of contents
 
-1. [What's new in 1.3.5](#whats-new-in-135)
+1. [What's new in 1.4.0](#whats-new-in-140)
 2. [What Quark does](#what-quark-does)
 3. [Installation](#installation)
 4. [First launch](#first-launch)
@@ -98,8 +97,8 @@ Download `quark-<version>-linux-x86_64.tar.gz` and its `.sha256` file from the
 then verify and unpack it:
 
 ```bash
-sha256sum -c quark-1.3.5-linux-x86_64.tar.gz.sha256
-tar -xzf quark-1.3.5-linux-x86_64.tar.gz
+sha256sum -c quark-1.4.0-linux-x86_64.tar.gz.sha256
+tar -xzf quark-1.4.0-linux-x86_64.tar.gz
 ./quark/quark
 ```
 
@@ -141,7 +140,7 @@ A new configuration opens a three-step welcome guide. It is not blocking:
 **Skip** closes it. The guide changes the interface language, startup page,
 theme and hero background live, then offers to add a first game. Existing
 configurations are marked as already welcomed, so updating from 1.1.4 never
-shows it unexpectedly; they still see the 1.3.5 summary once.
+shows it unexpectedly; they still see the 1.4.0 summary once.
 
 1. Open **Settings → Stores & tools** and install Legendary and/or gogdl with
    **Install / update**. Quark verifies the SHA-256 digest published by GitHub
@@ -234,6 +233,9 @@ or right click on an uninstalled game opens the install sheet; an installed game
 opens its actions. Up to three Epic/GOG downloads run at once, each with its own
 progress, speed, ETA and **Cancel** button. The download icon in the top bar
 lists every transfer.
+The segmented control next to the search field switches between the cover grid
+and a **List** view with one row per game, an **Open** / **Install** button and
+a **···** menu with the same actions as the right-click menu.
 
 ## One game, several installations
 
