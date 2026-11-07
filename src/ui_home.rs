@@ -488,17 +488,17 @@ impl QuarkApp {
         let mut new_sort: Option<HomeSort> = None;
 
         self.filter_menu(ui, PADDING);
-        ui.add_space(6.0);
+        ui.add_space(10.0);
         ui.horizontal(|ui| {
             ui.add_space(PADDING);
+            // Vrai titre de section (comme la maquette) : le tri choisi est
+            // déjà lisible sur les puces à droite, inutile de le répéter en
+            // petites capitales grises.
             ui.label(
-                crate::i18n::rich(match sort {
-                    HomeSort::Recent => "TOUS LES JEUX \u{b7} DERNI\u{c8}RE SESSION",
-                    HomeSort::Added => "TOUS LES JEUX \u{b7} AJOUT\u{c9}S R\u{c9}C\u{c9}MMENT",
-                    HomeSort::Playtime => "TOUS LES JEUX \u{b7} LES PLUS JOU\u{c9}S",
-                })
-                .size(11.0)
-                .color(pal.text_faint),
+                crate::i18n::rich("Toute la bibliothèque")
+                    .size(18.0)
+                    .strong()
+                    .color(pal.text),
             );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add_space(PADDING);
@@ -540,7 +540,7 @@ impl QuarkApp {
             .floor()
             .max(96.0);
         let cover_h = tile_w * theme::COVER_RATIO;
-        let row_h = cover_h + 34.0;
+        let row_h = cover_h + 40.0;
 
         // Entrée en cascade : chaque tuile apparaît un peu après la précédente.
         // Une fois l'animation finie, plus aucune image n'est demandée.
@@ -615,7 +615,7 @@ impl QuarkApp {
                     }
                     let title_color =
                         theme::lerp_color(pal.text_dim, pal.text, anim).gamma_multiply(appear);
-                    let job = single_line(&game.name, 12.5, title_color, tile_w);
+                    let job = single_line(&game.name, 13.0, title_color, tile_w);
                     let galley = painter.layout_job(job);
                     painter.galley(
                         Pos2::new(tile.left(), cover.bottom() + 7.0),
@@ -623,15 +623,15 @@ impl QuarkApp {
                         title_color,
                     );
                     painter.text(
-                        Pos2::new(tile.left(), cover.bottom() + 22.0),
+                        Pos2::new(tile.left(), cover.bottom() + 25.0),
                         Align2::LEFT_TOP,
                         if game.playtime_secs == 0 {
                             "jamais lanc\u{e9}".to_string()
                         } else {
                             game.playtime_label()
                         },
-                        FontId::proportional(10.5),
-                        pal.text_faint.gamma_multiply(appear),
+                        FontId::proportional(11.5),
+                        pal.text_dim.gamma_multiply(appear),
                     );
                     if game.exe_missing() {
                         painter.rect_stroke(
@@ -696,14 +696,14 @@ fn sort_chip(ui: &mut egui::Ui, label: &str, selected: bool, pal: &Palette) -> b
         pal.text_dim
     };
     ui.add(
-        egui::Button::new(crate::i18n::rich(label).size(11.0).color(ink))
+        egui::Button::new(crate::i18n::rich(label).size(12.0).color(ink))
             .fill(if selected { pal.accent } else { pal.surface })
             .stroke(egui::Stroke::new(
                 1.0_f32,
                 if selected { pal.accent } else { pal.border },
             ))
-            .corner_radius(9.0)
-            .min_size(Vec2::new(0.0, 22.0)),
+            .corner_radius(14.0)
+            .min_size(Vec2::new(0.0, 28.0)),
     )
     .clicked()
 }
