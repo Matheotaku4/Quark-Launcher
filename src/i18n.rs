@@ -200,21 +200,21 @@ fn dynamic_english(text: &str) -> String {
 pub fn release_summary() -> [&'static str; 6] {
     if is_english() {
         [
-            "RetroAchievements progress is now shown directly in the library list and on cover tiles.",
-            "My Games groups PS2 games in a RetroAchievements panel with one progress bar per game.",
-            "A PS2 game page shows its RA counter, and its Achievements tab now reads RetroAchievements.",
-            "Achievements are sorted from least rare to rarest in game pages and the overlay.",
-            "PCSX2 launching is covered by a test using a fake binary and a synthetic ISO, without a real emulator.",
-            "Existing configurations remain compatible; no migration is required.",
+            "Home has its own tab in the top bar, and the library list now starts with a Home row, like Steam.",
+            "Grid and List are chosen with a labelled segmented control, and Add is a labelled button.",
+            "On a game page, the less frequent actions (settings, customize, session log, remove) live in one \"···\" menu.",
+            "On wide windows, the game page shows an overview: playtime, last session, session count and genres.",
+            "Playtime is now checkpointed every minute: a Quark crash no longer loses the whole session.",
+            "Secondary text meets WCAG AA contrast in all 13 themes. Existing configurations remain compatible.",
         ]
     } else {
         [
-            "La progression RetroAchievements s'affiche directement dans la liste et sur les jaquettes de la bibliothèque.",
-            "La vue Mes jeux regroupe les jeux PS2 dans un panneau RetroAchievements avec une barre par jeu.",
-            "La fiche d'un jeu PS2 affiche son compteur RA et son onglet Succès utilise RetroAchievements.",
-            "Les succès sont triés du moins rare au plus rare dans les fiches et l'overlay.",
-            "Le lancement PCSX2 est couvert par un test avec un faux binaire et une ISO synthétique, sans émulateur réel.",
-            "Les configurations existantes restent compatibles ; aucune migration n'est nécessaire.",
+            "L'accueil a son propre onglet dans la barre du haut, et la liste de la bibliothèque commence par une ligne « Accueil », comme Steam.",
+            "Grille et Liste se choisissent avec un contrôle segmenté, et « Ajouter » est un bouton avec libellé.",
+            "Sur la fiche d'un jeu, les actions moins fréquentes (configurer, personnaliser, journal, retirer) sont réunies dans un menu « ··· ».",
+            "Sur les fenêtres larges, la fiche affiche un aperçu : temps de jeu, dernière session, nombre de sessions et genres.",
+            "Le temps de jeu est enregistré chaque minute : un plantage de Quark ne fait plus perdre toute la session.",
+            "Les textes secondaires respectent le contraste WCAG AA dans les 13 thèmes. Les configurations existantes restent compatibles.",
         ]
     }
 }
@@ -268,11 +268,11 @@ mod tests {
     fn le_resume_de_version_suit_la_langue() {
         let _guard = language_lock();
         set_language(UiLanguage::French);
-        assert!(release_summary()[0].starts_with("La progression RetroAchievements"));
-        assert!(release_summary()[1].starts_with("La vue Mes jeux"));
+        assert!(release_summary()[0].starts_with("L'accueil a son propre onglet"));
+        assert!(release_summary()[1].starts_with("Grille et Liste"));
         set_language(UiLanguage::English);
-        assert!(release_summary()[0].starts_with("RetroAchievements progress"));
-        assert!(release_summary()[1].starts_with("My Games groups PS2"));
+        assert!(release_summary()[0].starts_with("Home has its own tab"));
+        assert!(release_summary()[1].starts_with("Grid and List"));
         assert!(release_title().starts_with("What's new"));
         set_language(UiLanguage::French);
     }
