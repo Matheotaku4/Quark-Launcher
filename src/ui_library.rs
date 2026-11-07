@@ -1205,7 +1205,29 @@ impl QuarkApp {
                     }
                 });
                 match self.detail_tab {
-                    crate::app::DetailTab::News => self.news_section(ui, &game, &pal, width),
+                    crate::app::DetailTab::News => {
+                        // Fenêtre large : les actualités à gauche, un aperçu du
+                        // jeu à droite (temps de jeu, dernière session, genres).
+                        // En dessous de 900 px, les actualités gardent toute la
+                        // largeur comme avant.
+                        const SIDE: f32 = 300.0;
+                        if width >= 900.0 {
+                            let main_width = width - SIDE - 32.0;
+                            ui.horizontal_top(|ui| {
+                                ui.vertical(|ui| {
+                                    ui.set_width(main_width);
+                                    self.news_section(ui, &game, &pal, main_width);
+                                });
+                                ui.vertical(|ui| {
+                                    ui.set_width(SIDE);
+                                    ui.add_space(26.0);
+                                    overview_card(ui, &game, &pal, &playtime_text);
+                                });
+                            });
+                        } else {
+                            self.news_section(ui, &game, &pal, width);
+                        }
+                    }
                     crate::app::DetailTab::Achievements => {
                         self.achievements_section(ui, &game, store_record.as_ref(), &pal, width);
                     }
@@ -2522,6 +2544,45 @@ fn library_section(
 // ---------------------------------------------------------------------------
 // Lignes / tuiles
 // ---------------------------------------------------------------------------
+
+/// Carte « Aperçu » de la fiche : l'essentiel d'un coup d'œil, sans ouvrir le
+/// bloc d'informations. `playtime` est déjà adapté à la boutique liée.
+fn overview_card(ui: &mut egui::Ui, game: &Game, pal: &Palette, playtime: &str) {
+    egui::Frame::new()
+        .fill(pal.surface)
+        .stroke(egui::Stroke::new(1.0_f32, pal.border))
+        .corner_radius(14.0)
+        .inner_margin(egui::Margin::symmetric(18, 16))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(crate::i18n::rich("APERÇU").size(11.0).color(pal.text_faint));
+            ui.add_space(8.0);
+            overview_line(ui, pal, "Temps de jeu", playtime);
+            overview_line(ui, pal, "Dernière session", &game.last_played_label());
+            overview_line(ui, pal, "Sessions", &game.sessions.len().to_string());
+            if !game.genres.is_empty() {
+                ui.add_space(10.0);
+                ui.label(crate::i18n::rich("Genres").size(12.0).color(pal.text_dim));
+                ui.add_space(2.0);
+                ui.label(
+                    crate::i18n::rich(game.genres.join(" · "))
+                        .size(12.5)
+                        .color(pal.text),
+                );
+            }
+        });
+}
+
+/// Une ligne « libellé … valeur » de la carte d'aperçu.
+fn overview_line(ui: &mut egui::Ui, pal: &Palette, label: &str, value: &str) {
+    ui.horizontal(|ui| {
+        ui.label(crate::i18n::rich(label).size(12.0).color(pal.text_dim));
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.label(crate::i18n::rich(value).size(12.5).color(pal.text));
+        });
+    });
+    ui.add_space(4.0);
+}
 
 /// Ligne de la vue liste : vignette à gauche, titre à côté (comme Steam).
 fn game_row(

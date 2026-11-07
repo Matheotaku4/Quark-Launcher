@@ -1,6 +1,6 @@
-## Quark 1.3.3 — Accueil et ajout intégrés à la bibliothèque
+## Quark 1.3.4 — Aperçu de la fiche de jeu
 
-### Navigation de la bibliothèque
+### Vue d'ensemble
 
-- En vue Grille, un bouton **Accueil** est accessible dans l'en-tête, même sans colonne latérale.
-- En vue Liste, **Accueil** devient une ligne pleine largeur alignée sur les rangées des jeux ; le bouton **+** d'ajout est intégré à cette même ligne.
+- Sur les fenêtres larges, la fiche du jeu affiche une carte d'aperçu à côté des actualités : temps de jeu, dernière session, nombre de sessions et genres.
+- Sur les fenêtres de moins de 900 px, les actualités conservent toute la largeur.
